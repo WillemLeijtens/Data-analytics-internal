@@ -13,7 +13,8 @@ services:
     image: caddy:2
     restart: unless-stopped
     ports:
-      - "80:80"
+      # Only 443: this droplet's host port 80 is already used by an
+      # existing nginx instance for another app — left untouched.
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro

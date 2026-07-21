@@ -2,11 +2,10 @@
 	auto_https disable_redirects
 }
 
+# Port 80 is intentionally NOT bound here: this droplet already runs an
+# nginx instance on host port 80 for another app. Only 443 is used, which
+# was free at deploy time.
 :443 {
 	tls internal
 	reverse_proxy app:8501
-}
-
-:80 {
-	redir https://{host}{uri} permanent
 }
