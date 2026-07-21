@@ -12,6 +12,8 @@ services:
   caddy:
     image: caddy:2
     restart: unless-stopped
+    environment:
+      - SITE_ADDRESS=${SITE_ADDRESS:-188.166.88.105}
     ports:
       # Only 443: this droplet's host port 80 is already used by an
       # existing nginx instance for another app — left untouched.

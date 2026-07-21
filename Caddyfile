@@ -5,7 +5,14 @@
 # Port 80 is intentionally NOT bound here: this droplet already runs an
 # nginx instance on host port 80 for another app. Only 443 is used, which
 # was free at deploy time.
-:443 {
+#
+# The site address MUST be the actual IP/hostname (not a bare ":443") —
+# otherwise Caddy has no name to put in the certificate's SAN and the TLS
+# handshake fails with "internal error" even though the server starts up
+# looking healthy. SITE_ADDRESS comes from .env (set by deploy/bootstrap.sh
+# to the droplet's detected public IP); the literal default below is a
+# fallback for this specific droplet only.
+{$SITE_ADDRESS:188.166.88.105} {
 	tls internal
 	reverse_proxy app:8501
 }
