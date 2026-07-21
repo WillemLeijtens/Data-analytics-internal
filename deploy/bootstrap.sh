@@ -33,7 +33,11 @@ if [ ! -f .env ]; then
         echo "STREAMLIT_APP_PASSWORD=${STREAMLIT_APP_PASSWORD}" > .env
         echo "Wrote .env from STREAMLIT_APP_PASSWORD env var."
     else
-        GENERATED_PW=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
+        # head -c32 reads a fixed, finite amount so nothing downstream
+        # closes the pipe early — piping straight into `head -c20` from
+        # an unbounded /dev/urandom source causes a SIGPIPE that, under
+        # `set -o pipefail`, aborts the whole script.
+        GENERATED_PW=$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-20)
         echo "STREAMLIT_APP_PASSWORD=${GENERATED_PW}" > .env
         echo ""
         echo "!!! No password provided, generated one for you: ${GENERATED_PW}"
