@@ -6,13 +6,14 @@
 # nginx instance on host port 80 for another app. Only 443 is used, which
 # was free at deploy time.
 #
-# The site address MUST be the actual IP/hostname (not a bare ":443") —
-# otherwise Caddy has no name to put in the certificate's SAN and the TLS
-# handshake fails with "internal error" even though the server starts up
-# looking healthy. SITE_ADDRESS comes from .env (set by deploy/bootstrap.sh
-# to the droplet's detected public IP); the literal default below is a
-# fallback for this specific droplet only.
+# We use an explicitly pre-generated self-signed cert (see
+# deploy/gen-cert.sh, run by bootstrap.sh) rather than Caddy's `tls
+# internal`. Caddy's internal CA does not reliably mint a leaf certificate
+# for a bare IP-address site, which left the TLS handshake failing with
+# "internal error". Pointing `tls` at a cert/key file we control sidesteps
+# that entirely. SITE_ADDRESS still names the site so Caddy binds/serves
+# it correctly.
 {$SITE_ADDRESS:188.166.88.105} {
-	tls internal
+	tls /certs/site.crt /certs/site.key
 	reverse_proxy app:8501
 }

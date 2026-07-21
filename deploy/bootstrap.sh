@@ -9,7 +9,7 @@ REPO_DIR="/opt/Data-analytics-internal"
 BRANCH="claude/outlook-attachment-analytics-g14jvk"
 REPO_URL="https://github.com/WillemLeijtens/Data-analytics-internal.git"
 
-echo "== 1/5: Docker =="
+echo "== 1/6: Docker =="
 if ! command -v docker >/dev/null 2>&1; then
     echo "Docker not found, installing..."
     curl -fsSL https://get.docker.com | sh
@@ -17,7 +17,7 @@ else
     echo "Docker already installed, skipping."
 fi
 
-echo "== 2/5: Repo =="
+echo "== 2/6: Repo =="
 if [ ! -d "$REPO_DIR/.git" ]; then
     echo "Cloning repo into $REPO_DIR..."
     git clone "$REPO_URL" "$REPO_DIR"
@@ -27,7 +27,7 @@ git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 git pull origin "$BRANCH"
 
-echo "== 3/5: Password + site address =="
+echo "== 3/6: Password + site address =="
 touch .env
 
 if ! grep -q '^STREAMLIT_APP_PASSWORD=' .env; then
@@ -67,10 +67,15 @@ else
     echo "SITE_ADDRESS already set in .env, leaving as-is."
 fi
 
-echo "== 4/5: Build and start =="
-docker compose up -d --build
+echo "== 4/6: TLS certificate =="
+# Source SITE_ADDRESS from .env so gen-cert puts the right IP in the SAN.
+SITE_ADDRESS=$(grep '^SITE_ADDRESS=' .env | cut -d= -f2-)
+bash deploy/gen-cert.sh "${SITE_ADDRESS}"
 
-echo "== 5/5: Status =="
+echo "== 5/6: Build and start =="
+docker compose up -d --build --force-recreate
+
+echo "== 6/6: Status =="
 echo "--- our containers ---"
 docker compose ps
 echo "--- all containers (checking nothing else was disturbed) ---"
