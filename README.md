@@ -49,14 +49,30 @@ is still encrypted, just not verified by a public authority. Swap in a
 real domain + Let's Encrypt later by pointing DNS at the droplet and
 replacing `tls internal` with your email/domain in the Caddyfile.
 
-Steps, on a fresh Ubuntu droplet:
+**One-shot setup:** `deploy/bootstrap.sh` does everything below in one
+idempotent run — installs Docker if missing, clones/pulls the repo,
+generates a password if you don't supply one, builds, starts, and prints
+status (including a check that nothing else on the host was disturbed).
+Safe to re-run any time (e.g. after a `git pull` to redeploy).
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/WillemLeijtens/Data-analytics-internal/claude/outlook-attachment-analytics-g14jvk/deploy/bootstrap.sh | bash
+```
+
+Or, to set your own password instead of a generated one:
+```bash
+STREAMLIT_APP_PASSWORD=your-password-here \
+  bash -c "$(curl -fsSL https://raw.githubusercontent.com/WillemLeijtens/Data-analytics-internal/claude/outlook-attachment-analytics-g14jvk/deploy/bootstrap.sh)"
+```
+
+**Manual steps**, if you'd rather run them individually:
 ```bash
 # 1. Install Docker + Compose plugin
 curl -fsSL https://get.docker.com | sh
 
 # 2. Clone this repo and switch to this branch
-git clone https://github.com/WillemLeijtens/Data-analytics-internal.git
-cd Data-analytics-internal
+git clone https://github.com/WillemLeijtens/Data-analytics-internal.git /opt/Data-analytics-internal
+cd /opt/Data-analytics-internal
 git checkout claude/outlook-attachment-analytics-g14jvk
 
 # 3. Set your app password (never commit this file)
@@ -67,7 +83,8 @@ nano .env   # set STREAMLIT_APP_PASSWORD to a real password
 docker compose up -d --build
 ```
 Then open `https://<droplet-ip>` (accept the self-signed cert warning
-once). Port 80 auto-redirects to 443.
+once). Only port 443 is bound — port 80 is deliberately left alone since
+another app's nginx may already be using it on a shared droplet.
 
 `docker-compose.yml` bind-mounts `./data` on the droplet's own disk into
 the container, so `analytics.db` survives container restarts and
