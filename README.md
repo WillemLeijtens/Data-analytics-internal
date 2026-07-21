@@ -21,7 +21,36 @@ pip install -r requirements.txt
 streamlit run app/streamlit_app.py
 ```
 
-The SQLite database is created at `data/analytics.db` on first run.
+The SQLite database is created at `data/analytics.db` on first run. Set
+`STREAMLIT_APP_PASSWORD` in the environment to require a password before the
+app loads (recommended once any real data is in it); without it, the app
+runs with no login and shows a warning.
+
+## Deploying (Render.com)
+
+This repo includes a `Dockerfile` and `render.yaml` set up for Render, with
+a **persistent disk** mounted at `/app/data` — required so the SQLite
+database (and all accumulated weekly history) survives future deploys.
+Plain Streamlit Community Cloud is not used here because its filesystem
+resets on every redeploy, which would silently wipe historical data.
+
+Steps:
+1. Push this repo to GitHub (already done if you're reading this from the
+   deployed branch).
+2. In the Render dashboard: New → Blueprint → connect this repo. Render
+   will read `render.yaml` and provision the web service + disk
+   automatically (uses their "Starter" plan, the cheapest tier that
+   supports a persistent disk — check current pricing on Render's site).
+3. In the service's Environment tab, set `STREAMLIT_APP_PASSWORD` to a
+   password of your choice (marked `sync: false` in render.yaml so Render
+   prompts you for it rather than storing it in the repo).
+4. Deploy. Render gives you a public `https://<service-name>.onrender.com`
+   URL — that's the "access from anywhere" link. Bookmark it; share the
+   password separately (e.g. a password manager), not over email/chat.
+
+To redeploy after future code changes, just push to this branch (or merge
+to main and point Render at that branch) — the persistent disk means
+`data/analytics.db` is untouched by the redeploy.
 
 ## Project layout
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -11,6 +12,42 @@ import ingestion
 import kpi
 
 st.set_page_config(page_title="Sellout Analytics", layout="wide")
+
+
+def _check_password() -> bool:
+    """Simple shared-password gate. The password is read from
+    st.secrets['app_password'] (set via Render's environment/secrets, or
+    .streamlit/secrets.toml locally) — never hardcoded in source."""
+    configured = os.environ.get("STREAMLIT_APP_PASSWORD")
+    if not configured:
+        try:
+            configured = st.secrets.get("app_password")
+        except FileNotFoundError:
+            configured = None
+    if not configured:
+        st.warning(
+            "No app_password configured in secrets — running without a "
+            "login gate. Set app_password before deploying publicly."
+        )
+        return True
+
+    if st.session_state.get("authenticated"):
+        return True
+
+    st.title("Sellout Analytics — sign in")
+    pwd = st.text_input("Password", type="password")
+    if st.button("Sign in"):
+        if pwd == configured:
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("Incorrect password.")
+    return False
+
+
+if not _check_password():
+    st.stop()
+
 db.init_db()
 
 
