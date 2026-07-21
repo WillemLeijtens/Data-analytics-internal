@@ -26,31 +26,69 @@ The SQLite database is created at `data/analytics.db` on first run. Set
 app loads (recommended once any real data is in it); without it, the app
 runs with no login and shows a warning.
 
-## Deploying (Render.com)
+## Deploying — current plan: a Droplet (interim), proper internal web app later
 
-This repo includes a `Dockerfile` and `render.yaml` set up for Render, with
-a **persistent disk** mounted at `/app/data` — required so the SQLite
-database (and all accumulated weekly history) survives future deploys.
-Plain Streamlit Community Cloud is not used here because its filesystem
-resets on every redeploy, which would silently wipe historical data.
+**Now:** run this on a single DigitalOcean Droplet (or any VM you already
+have), reachable at `https://<droplet-ip>`. Storage lives on the droplet's
+own disk, so history persists across restarts as long as you don't destroy
+the droplet.
 
-Steps:
-1. Push this repo to GitHub (already done if you're reading this from the
-   deployed branch).
-2. In the Render dashboard: New → Blueprint → connect this repo. Render
-   will read `render.yaml` and provision the web service + disk
-   automatically (uses their "Starter" plan, the cheapest tier that
-   supports a persistent disk — check current pricing on Render's site).
-3. In the service's Environment tab, set `STREAMLIT_APP_PASSWORD` to a
-   password of your choice (marked `sync: false` in render.yaml so Render
-   prompts you for it rather than storing it in the repo).
-4. Deploy. Render gives you a public `https://<service-name>.onrender.com`
-   URL — that's the "access from anywhere" link. Bookmark it; share the
-   password separately (e.g. a password manager), not over email/chat.
+**Later:** once this is validated, move to a proper internal web app (real
+domain, likely SSO instead of a shared password, possibly the Render setup
+below or similar) — not built yet, revisit when Phase 1 usage proves out.
 
-To redeploy after future code changes, just push to this branch (or merge
-to main and point Render at that branch) — the persistent disk means
-`data/analytics.db` is untouched by the redeploy.
+### Droplet setup
+
+This repo ships `docker-compose.yml` + `Caddyfile` for this: Caddy
+terminates TLS with a **self-signed certificate** (via `tls internal`) and
+reverse-proxies to the Streamlit app. A bare IP address can't get a
+publicly-trusted certificate (Let's Encrypt requires a domain name), so
+your browser will show a one-time "not trusted" warning the first time you
+visit — click through (or install Caddy's local CA cert) — the connection
+is still encrypted, just not verified by a public authority. Swap in a
+real domain + Let's Encrypt later by pointing DNS at the droplet and
+replacing `tls internal` with your email/domain in the Caddyfile.
+
+Steps, on a fresh Ubuntu droplet:
+```bash
+# 1. Install Docker + Compose plugin
+curl -fsSL https://get.docker.com | sh
+
+# 2. Clone this repo and switch to this branch
+git clone https://github.com/WillemLeijtens/Data-analytics-internal.git
+cd Data-analytics-internal
+git checkout claude/outlook-attachment-analytics-g14jvk
+
+# 3. Set your app password (never commit this file)
+cp .env.example .env
+nano .env   # set STREAMLIT_APP_PASSWORD to a real password
+
+# 4. Build and start (app + Caddy reverse proxy with TLS)
+docker compose up -d --build
+```
+Then open `https://<droplet-ip>` (accept the self-signed cert warning
+once). Port 80 auto-redirects to 443.
+
+`docker-compose.yml` bind-mounts `./data` on the droplet's own disk into
+the container, so `analytics.db` survives container restarts and
+`docker compose up -d --build` redeploys (pushing new code + rerunning
+this command does **not** wipe history). It's only lost if you delete the
+droplet or the `data/` directory yourself — back it up periodically
+(`scp` the `data/analytics.db` file off the droplet) since a single
+droplet has no built-in redundancy.
+
+To redeploy after a code change: `git pull && docker compose up -d --build`.
+
+<details>
+<summary>Alternative considered: Render.com (parked for now)</summary>
+
+This repo also includes a `render.yaml` for Render, with a persistent disk
+mounted at `/app/data` — useful if you'd rather not manage a VM yourself.
+Plain Streamlit Community Cloud was ruled out regardless of host, since its
+filesystem resets on every redeploy, wiping historical data. Revisit this
+option for the "later" internal-web-app phase if you'd rather not run your
+own server long-term.
+</details>
 
 ## Project layout
 
