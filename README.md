@@ -55,14 +55,23 @@ generates a password if you don't supply one, builds, starts, and prints
 status (including a check that nothing else on the host was disturbed).
 Safe to re-run any time (e.g. after a `git pull` to redeploy).
 
+This repo is **private**, so `raw.githubusercontent.com` can't serve the
+script directly (it 404s without auth) — clone first, then run it locally:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/WillemLeijtens/Data-analytics-internal/claude/outlook-attachment-analytics-g14jvk/deploy/bootstrap.sh | bash
+git clone https://github.com/WillemLeijtens/Data-analytics-internal.git /opt/Data-analytics-internal
+# ^ if prompted for credentials: username = your GitHub username,
+#   password = a GitHub Personal Access Token (Settings → Developer
+#   settings → Personal access tokens), NOT your account password —
+#   GitHub no longer accepts the latter for git operations.
+cd /opt/Data-analytics-internal
+git checkout claude/outlook-attachment-analytics-g14jvk
+bash deploy/bootstrap.sh
 ```
 
 Or, to set your own password instead of a generated one:
 ```bash
-STREAMLIT_APP_PASSWORD=your-password-here \
-  bash -c "$(curl -fsSL https://raw.githubusercontent.com/WillemLeijtens/Data-analytics-internal/claude/outlook-attachment-analytics-g14jvk/deploy/bootstrap.sh)"
+STREAMLIT_APP_PASSWORD=your-password-here bash deploy/bootstrap.sh
 ```
 
 **Manual steps**, if you'd rather run them individually:
