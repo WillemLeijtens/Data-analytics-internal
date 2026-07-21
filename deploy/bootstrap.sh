@@ -50,27 +50,39 @@ else
     echo "STREAMLIT_APP_PASSWORD already set in .env, leaving as-is."
 fi
 
-if ! grep -q '^SITE_ADDRESS=' .env; then
-    DETECTED_IP=$(curl -s -4 --max-time 5 ifconfig.me || true)
+# Determine a resolvable hostname for TLS. Browsers/curl send no SNI for a
+# bare IP, so Caddy can't serve a cert for one — we use a free sslip.io
+# hostname (<ip-with-dashes>.sslip.io) that resolves to the droplet IP.
+ip_to_sslip() { echo "$(echo "$1" | tr '.' '-').sslip.io"; }
+
+CURRENT_SITE=$(grep '^SITE_ADDRESS=' .env | cut -d= -f2- || true)
+if echo "$CURRENT_SITE" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    # Existing value is a bare IP from an earlier run — migrate it.
+    NEW_SITE=$(ip_to_sslip "$CURRENT_SITE")
+    sed -i "s|^SITE_ADDRESS=.*|SITE_ADDRESS=${NEW_SITE}|" .env
+    echo "Migrated SITE_ADDRESS from bare IP to ${NEW_SITE}."
+elif [ -z "$CURRENT_SITE" ]; then
     if [ -n "${SITE_ADDRESS:-}" ]; then
-        echo "SITE_ADDRESS=${SITE_ADDRESS}" >> .env
-        echo "Wrote SITE_ADDRESS from env var (${SITE_ADDRESS})."
-    elif [ -n "$DETECTED_IP" ]; then
-        echo "SITE_ADDRESS=${DETECTED_IP}" >> .env
-        echo "Wrote SITE_ADDRESS from detected public IP (${DETECTED_IP})."
+        NEW_SITE="${SITE_ADDRESS}"
     else
-        echo "Could not auto-detect public IP — Caddy will fall back to the"
-        echo "default baked into the Caddyfile. Set SITE_ADDRESS in .env"
-        echo "manually if that's wrong for this droplet, then re-run."
+        DETECTED_IP=$(curl -s -4 --max-time 5 ifconfig.me || true)
+        if [ -n "$DETECTED_IP" ]; then
+            NEW_SITE=$(ip_to_sslip "$DETECTED_IP")
+        else
+            NEW_SITE=""
+        fi
+    fi
+    if [ -n "$NEW_SITE" ]; then
+        echo "SITE_ADDRESS=${NEW_SITE}" >> .env
+        echo "Wrote SITE_ADDRESS=${NEW_SITE}."
+    else
+        echo "Could not determine SITE_ADDRESS — set it manually in .env, then re-run."
     fi
 else
-    echo "SITE_ADDRESS already set in .env, leaving as-is."
+    echo "SITE_ADDRESS already set to a hostname (${CURRENT_SITE}), leaving as-is."
 fi
 
-echo "== 4/6: TLS certificate =="
-# Source SITE_ADDRESS from .env so gen-cert puts the right IP in the SAN.
-SITE_ADDRESS=$(grep '^SITE_ADDRESS=' .env | cut -d= -f2-)
-bash deploy/gen-cert.sh "${SITE_ADDRESS}"
+echo "== 4/6: (TLS handled automatically by Caddy via Let's Encrypt) =="
 
 echo "== 5/6: Build and start =="
 docker compose up -d --build --force-recreate
@@ -83,6 +95,9 @@ docker ps -a
 echo "--- listening ports ---"
 ss -tlnp 2>/dev/null || sudo ss -tlnp
 
+FINAL_SITE=$(grep '^SITE_ADDRESS=' .env | cut -d= -f2- || true)
 echo ""
-echo "Done. App should be reachable at: https://$(curl -s -4 ifconfig.me || echo '<droplet-ip>')"
-echo "(browser will warn about the self-signed cert once — that's expected)"
+echo "Done. App should be reachable at: https://${FINAL_SITE:-<site-address>}"
+echo "Caddy fetches a Let's Encrypt certificate on first request — the very"
+echo "first load may take 10-30s while that happens. After that the padlock"
+echo "should be green (trusted), no warning."

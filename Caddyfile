@@ -1,19 +1,19 @@
 {
+	# Port 80 on this droplet is used by another app's nginx, so we cannot
+	# serve the ACME HTTP-01 challenge or an HTTP->HTTPS redirect there.
+	# Caddy obtains a publicly-trusted Let's Encrypt certificate using the
+	# TLS-ALPN-01 challenge on port 443 (which we own) instead.
 	auto_https disable_redirects
 }
 
-# Port 80 is intentionally NOT bound here: this droplet already runs an
-# nginx instance on host port 80 for another app. Only 443 is used, which
-# was free at deploy time.
-#
-# We use an explicitly pre-generated self-signed cert (see
-# deploy/gen-cert.sh, run by bootstrap.sh) rather than Caddy's `tls
-# internal`. Caddy's internal CA does not reliably mint a leaf certificate
-# for a bare IP-address site, which left the TLS handshake failing with
-# "internal error". Pointing `tls` at a cert/key file we control sidesteps
-# that entirely. SITE_ADDRESS still names the site so Caddy binds/serves
-# it correctly.
-{$SITE_ADDRESS:188.166.88.105} {
-	tls /certs/site.crt /certs/site.key
+# The site is addressed by a hostname, not a bare IP, for two reasons:
+#   1. Browsers/curl do NOT send an SNI server-name when connecting to an
+#      IP literal (the TLS spec forbids it), so Caddy cannot select a
+#      certificate and the handshake fails with "internal error".
+#   2. A resolvable hostname lets Caddy get a real trusted certificate.
+# sslip.io is a free wildcard-DNS service: <ip-with-dashes>.sslip.io
+# resolves to that IP with no registration. SITE_ADDRESS is set by
+# deploy/bootstrap.sh to the sslip.io name for this droplet's IP.
+{$SITE_ADDRESS:188-166-88-105.sslip.io} {
 	reverse_proxy app:8501
 }
