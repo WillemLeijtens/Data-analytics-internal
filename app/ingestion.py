@@ -1,0 +1,289 @@
+"""Parse DWH sellout export files (.xlsx) into a normalized long-format
+fact table plus item attributes.
+
+Real export format (confirmed against sample files):
+  - Rows ~1-7: metadata block with labelled cells ("Country:", "Formula:",
+    "Weeks:", "Brand:", "SKU no.:", "Date:") in some column, value in the
+    next column.
+  - Multiple sheets can exist; the authoritative one is the one whose data
+    row count matches the SKU-count printed in its own trailing "Total"
+    row (other sheets may repeat each SKU per GTIN/PLU variant).
+  - A two-row column header: item attribute columns, then paired
+    "Sales Volume" / "Sales Value" columns per year-week (format YYYYWW),
+    with the week label only present on the first cell of each pair
+    (merged cell) and needing forward-fill.
+  - A trailing "Total" row whose SKU cell holds a row count, not a SKU.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+import openpyxl
+
+
+LABELS = {"Country:", "Formula:", "Weeks:", "Brand:", "SKU no.:", "Date:"}
+BANNER_NAMES = {"KV": "Kruidvat", "TP": "Trekpleister"}
+
+FILENAME_RE = re.compile(
+    r"([A-Za-z]+)_([A-Z]{2})([A-Z]{2})_(\d+)", re.IGNORECASE
+)
+
+
+@dataclass
+class ParsedFile:
+    brand: str
+    country: str
+    banner: str
+    source_filename: str
+    items: list[dict] = field(default_factory=list)
+    facts: list[dict] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+def _cell_metadata(ws) -> dict:
+    meta = {}
+    for row in ws.iter_rows(min_row=1, max_row=10):
+        for cell in row:
+            if cell.value in LABELS:
+                value_cell = ws.cell(row=cell.row, column=cell.column + 1)
+                meta[cell.value.rstrip(":")] = value_cell.value
+    return meta
+
+
+def _find_header_rows(ws) -> tuple[int, int]:
+    for row in ws.iter_rows(min_row=1, max_row=20):
+        for cell in row:
+            if cell.value == "SKU No.":
+                return cell.row, cell.row + 1
+    raise ValueError("Could not locate 'SKU No.' header row")
+
+
+def _week_columns(ws, header_row1: int, header_row2: int, max_col: int):
+    """Return list of (year_week, volume_col, value_col).
+
+    The header row's week label is only set on the first cell of each
+    merged Volume/Value pair, so a valid week label must be forward-filled
+    across the pair — but a *non-week* label (e.g. a trailing "Total"
+    column giving a per-SKU grand total across all weeks) must invalidate
+    the carried-forward week rather than being mistaken for a repeat of
+    the previous week.
+    """
+    weeks = []
+    current_week = None
+    col = 1
+    while col <= max_col:
+        top = ws.cell(row=header_row1, column=col).value
+        if top is not None:
+            if re.fullmatch(r"\d{6}", str(top)):
+                current_week = str(top)
+            else:
+                current_week = None  # non-week header (e.g. "Total" column)
+        sub = ws.cell(row=header_row2, column=col).value
+        if sub == "Sales Volume" and current_week is not None:
+            vol_col = col
+            val_col = None
+            nxt = ws.cell(row=header_row2, column=col + 1).value
+            if nxt == "Sales Value":
+                val_col = col + 1
+            weeks.append((current_week, vol_col, val_col))
+        col += 1
+    return weeks
+
+
+def _attribute_columns(ws, header_row1: int, header_row2: int, first_week_col: int):
+    """Map known item-attribute header labels to their column index,
+    restricted to columns before the first week column."""
+    cols = {}
+    for c in range(1, first_week_col):
+        label = ws.cell(row=header_row1, column=c).value
+        sub = ws.cell(row=header_row2, column=c).value
+        name = label or sub
+        if name:
+            name = str(name).strip()
+            cols.setdefault(name, c)  # first occurrence wins (e.g. two "Size" columns)
+    return cols
+
+
+def _select_authoritative_sheet(wb):
+    """Pick the sheet whose data-row SKU count matches its own Total row."""
+    candidates = []
+    for ws in wb.worksheets:
+        try:
+            header_row1, header_row2 = _find_header_rows(ws)
+        except ValueError:
+            continue
+        data_start = header_row2 + 1
+        total_row = None
+        n_data_rows = 0
+        for r in range(data_start, ws.max_row + 1):
+            desc_like = None
+            sku_cell = ws.cell(row=r, column=3).value  # 'SKU No.' column is col C
+            is_total = any(
+                ws.cell(row=r, column=c).value == "Total"
+                for c in range(1, 8)
+            )
+            if is_total:
+                total_row = r
+                break
+            if sku_cell is not None:
+                n_data_rows += 1
+        expected = None
+        if total_row is not None:
+            expected = ws.cell(row=total_row, column=3).value
+        candidates.append((ws, header_row1, header_row2, n_data_rows, expected, total_row))
+
+    for ws, h1, h2, n_data_rows, expected, total_row in candidates:
+        if expected is not None and int(expected) == n_data_rows:
+            return ws, h1, h2, total_row
+    # fallback: first parseable sheet
+    if candidates:
+        ws, h1, h2, _, _, total_row = candidates[0]
+        return ws, h1, h2, total_row
+    raise ValueError("No parseable sheet found in workbook")
+
+
+def parse_filename(filename: str) -> dict | None:
+    m = FILENAME_RE.search(filename)
+    if not m:
+        return None
+    brand, banner, country, _num = m.groups()
+    return {"brand": brand.upper(), "banner": banner.upper(), "country": country.upper()}
+
+
+def _country_to_iso2(country3: str) -> str:
+    mapping = {"BEL": "BE", "NLD": "NL"}
+    return mapping.get(country3.upper(), country3.upper()[:2])
+
+
+def parse_workbook(path: str, filename: str) -> ParsedFile:
+    wb = openpyxl.load_workbook(path, data_only=True)
+    meta = _cell_metadata(wb.worksheets[0])
+
+    brand = str(meta.get("Brand", "")).strip()
+    country3 = str(meta.get("Country", "")).strip()
+    banner = str(meta.get("Formula", "")).strip()
+    country = _country_to_iso2(country3)
+
+    result = ParsedFile(brand=brand, country=country, banner=banner, source_filename=filename)
+
+    fn_info = parse_filename(filename)
+    if fn_info:
+        if fn_info["country"] != country:
+            result.warnings.append(
+                f"Filename country '{fn_info['country']}' does not match "
+                f"in-file country '{country}' ({country3})."
+            )
+        if fn_info["banner"] != banner:
+            result.warnings.append(
+                f"Filename banner '{fn_info['banner']}' does not match "
+                f"in-file formula '{banner}'."
+            )
+
+    ws, header_row1, header_row2, total_row = _select_authoritative_sheet(wb)
+
+    weeks = _week_columns(ws, header_row1, header_row2, ws.max_column)
+    if not weeks:
+        raise ValueError("No year-week columns detected")
+    first_week_col = weeks[0][1]
+    attr_cols = _attribute_columns(ws, header_row1, header_row2, first_week_col)
+
+    sku_col = attr_cols.get("SKU No.", 3)
+    desc_col = attr_cols.get("Article Description")
+    headgroup_col = attr_cols.get("Headgroup")
+    size_col = attr_cols.get("Size")
+    colour_col = attr_cols.get("Colour")
+    type_col = attr_cols.get("Type")
+    package_col = attr_cols.get("Content") or attr_cols.get("Package")
+    price_col = attr_cols.get("Price") or attr_cols.get("Consumer")
+    gtin_col = attr_cols.get("GTIN/PLU")
+
+    seen_skus = set()
+    duplicate_rows = 0
+    data_start = header_row2 + 1
+    data_end = (total_row - 1) if total_row else ws.max_row
+
+    for r in range(data_start, data_end + 1):
+        sku = ws.cell(row=r, column=sku_col).value
+        if sku is None:
+            continue
+        try:
+            sku = str(int(sku))
+        except (TypeError, ValueError):
+            result.warnings.append(f"Row {r}: non-numeric SKU '{sku}', skipped.")
+            continue
+
+        if sku in seen_skus:
+            duplicate_rows += 1
+            continue
+        seen_skus.add(sku)
+
+        result.items.append(
+            {
+                "sku": sku,
+                "brand": brand,
+                "article_description": ws.cell(row=r, column=desc_col).value if desc_col else None,
+                "headgroup": ws.cell(row=r, column=headgroup_col).value if headgroup_col else None,
+                "size": ws.cell(row=r, column=size_col).value if size_col else None,
+                "colour": ws.cell(row=r, column=colour_col).value if colour_col else None,
+                "type": ws.cell(row=r, column=type_col).value if type_col else None,
+                "package_content": ws.cell(row=r, column=package_col).value if package_col else None,
+                "consumer_price": ws.cell(row=r, column=price_col).value if price_col else None,
+                "gtin": str(ws.cell(row=r, column=gtin_col).value) if gtin_col and ws.cell(row=r, column=gtin_col).value else None,
+            }
+        )
+
+        for year_week, vol_col, val_col in weeks:
+            vol = ws.cell(row=r, column=vol_col).value
+            val = ws.cell(row=r, column=val_col).value if val_col else None
+            if vol is None and val is None:
+                continue
+            result.facts.append(
+                {
+                    "brand": brand,
+                    "country": country,
+                    "banner": banner,
+                    "sku": sku,
+                    "year_week": year_week,
+                    "sales_volume": vol or 0,
+                    "sales_value": val or 0,
+                }
+            )
+
+    if duplicate_rows:
+        result.warnings.append(
+            f"Skipped {duplicate_rows} duplicate SKU row(s) found after the "
+            "first occurrence (same SKU repeated, e.g. differing GTIN)."
+        )
+
+    # Reconcile against the printed Total row per week, if present.
+    if total_row:
+        totals_by_week = {}
+        for year_week, vol_col, val_col in weeks:
+            totals_by_week[year_week] = ws.cell(row=total_row, column=vol_col).value
+
+        computed = {}
+        for f in result.facts:
+            computed[f["year_week"]] = computed.get(f["year_week"], 0) + (f["sales_volume"] or 0)
+
+        mismatches = 0
+        for year_week, expected_total in totals_by_week.items():
+            if expected_total is None:
+                continue
+            got = computed.get(year_week, 0)
+            if abs(got - expected_total) > 0.01:
+                mismatches += 1
+        if mismatches:
+            result.warnings.append(
+                f"{mismatches} week(s) had a sales-volume total that did not "
+                "reconcile with the file's own Total row — review before trusting."
+            )
+
+    if not brand or not country3 or not banner:
+        result.warnings.append(
+            "Could not read Brand/Country/Formula from the metadata block "
+            "(rows 1-7) — check the file layout."
+        )
+
+    return result
