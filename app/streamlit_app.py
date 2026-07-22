@@ -21,6 +21,46 @@ def eur(value: float) -> str:
     """Format a number as euros for st.metric tiles and text."""
     return f"€ {value:,.0f}"
 
+
+def fmt_yw(year_week) -> str:
+    """Display a canonical YYYYWW value as YYYY-WW (e.g. 202601 -> 2026-01)."""
+    s = str(year_week)
+    return f"{s[:4]}-{s[4:]}" if len(s) >= 6 else s
+
+
+def _augment_year_week(df: pd.DataFrame) -> pd.DataFrame:
+    """Add year / week / yw_label columns derived from the canonical YYYYWW
+    year_week, so visuals can compare the same week number across years."""
+    out = df.copy()
+    yw = out["year_week"].astype(str)
+    out["year"] = yw.str[:4]
+    out["week"] = pd.to_numeric(yw.str[4:], errors="coerce")
+    out["yw_label"] = yw.str[:4] + "-" + yw.str[4:]
+    return out
+
+
+def _yoy_chart(data: pd.DataFrame, value_col: str, y_title: str, money: bool):
+    """Year-over-year line chart: week number on the x-axis, one coloured line
+    per year with a legend. `data` must already have year / week columns."""
+    agg = data.groupby(["year", "week"], as_index=False)[value_col].sum()
+    y_axis = alt.Axis(labelExpr=EUR_AXIS_LABEL) if money else alt.Axis()
+    tip_fmt = ",.0f"
+    return (
+        alt.Chart(agg)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("week:Q", title="Week number", scale=alt.Scale(domain=[1, 53])),
+            y=alt.Y(f"{value_col}:Q", title=y_title, axis=y_axis),
+            color=alt.Color("year:N", title="Year"),
+            tooltip=[
+                alt.Tooltip("year:N", title="Year"),
+                alt.Tooltip("week:Q", title="Week"),
+                alt.Tooltip(f"{value_col}:Q", title=y_title, format=tip_fmt),
+            ],
+        )
+        .properties(height=300)
+    )
+
 st.set_page_config(page_title="Sellout Analytics", layout="wide")
 
 
@@ -247,6 +287,8 @@ def page_dashboard():
         st.warning("No data matches the current filter selection.")
         return
 
+    scoped = _augment_year_week(scoped)
+
     # Store counts and targets, summed/weighted over the brand+country+banner
     # combinations actually present in the current selection.
     scoped_combos = list(
@@ -267,46 +309,45 @@ def page_dashboard():
     _highlight_tiles(scoped, num_stores_total)
 
     weekly_totals = (
-        scoped.groupby("year_week")[["sales_volume", "sales_value"]]
+        scoped.groupby(["year_week", "yw_label"], as_index=False)[["sales_volume", "sales_value"]]
         .sum()
-        .sort_index()
-        .reset_index()
+        .sort_values("year_week")
     )
 
     st.subheader(
         "Total sellout per week",
         help=(
             "Total sellout volume (units sold) summed across every SKU in the "
-            "current filter selection, per year-week."
+            "current filter selection, per year-week (YYYY-WW)."
         ),
     )
-    st.line_chart(weekly_totals.set_index("year_week")["sales_volume"], height=300)
-
-    st.subheader(
-        "Total sales value per week",
-        help=(
-            "Total sales value in euros summed across every SKU in the current "
-            "filter selection, per year-week."
-        ),
-    )
-    value_chart = (
+    volume_chart = (
         alt.Chart(weekly_totals)
         .mark_line(point=True)
         .encode(
-            x=alt.X("year_week:O", title="Year-week"),
-            y=alt.Y(
-                "sales_value:Q",
-                title="Sales value (€)",
-                axis=alt.Axis(labelExpr=EUR_AXIS_LABEL),
-            ),
+            x=alt.X("yw_label:O", title="Year-week", sort=None),
+            y=alt.Y("sales_volume:Q", title="Sellout volume (units)"),
             tooltip=[
-                alt.Tooltip("year_week:O", title="Week"),
-                alt.Tooltip("sales_value:Q", title="Value (€)", format=",.0f"),
+                alt.Tooltip("yw_label:O", title="Year-week"),
+                alt.Tooltip("sales_volume:Q", title="Volume", format=",.0f"),
             ],
         )
         .properties(height=300)
     )
-    st.altair_chart(value_chart, use_container_width=True)
+    st.altair_chart(volume_chart, use_container_width=True)
+
+    st.subheader(
+        "Total sales value per week — year-over-year",
+        help=(
+            "Total sales value (€) per week number, with one coloured line per "
+            "year so the same week compares across years (e.g. week 1 of 2025 "
+            "vs 2026). Summed across every SKU in the current selection."
+        ),
+    )
+    st.altair_chart(
+        _yoy_chart(scoped, "sales_value", "Sales value (€)", money=True),
+        use_container_width=True,
+    )
 
     # Average revenue per store per week, with a settable target line.
     st.subheader(
@@ -325,14 +366,14 @@ def page_dashboard():
             alt.Chart(avg_df)
             .mark_line(point=True)
             .encode(
-                x=alt.X("year_week:O", title="Year-week"),
+                x=alt.X("yw_label:O", title="Year-week", sort=None),
                 y=alt.Y(
                     "avg_rev:Q",
                     title="Avg revenue / store (€)",
                     axis=alt.Axis(labelExpr=EUR_AXIS_LABEL),
                 ),
                 tooltip=[
-                    alt.Tooltip("year_week:O", title="Week"),
+                    alt.Tooltip("yw_label:O", title="Year-week"),
                     alt.Tooltip("avg_rev:Q", title="Avg € / store", format=",.0f"),
                 ],
             )
@@ -354,11 +395,46 @@ def page_dashboard():
     else:
         st.caption("Set store counts in Settings to see this chart.")
 
+    # Per-item analysis with year-over-year comparison (volume + value).
     st.subheader(
-        "Sellout per item per week",
+        "Item analysis — year-over-year",
+        help=(
+            "Pick an item to see its sellout volume and sales value per week "
+            "number, with one coloured line per year so weeks compare across "
+            "years. Below, the full per-item volume table for all items."
+        ),
+    )
+    item_options = (
+        scoped[["sku", "article_description"]]
+        .drop_duplicates()
+        .sort_values("article_description")
+    )
+    item_labels = {
+        f"{r.sku} — {r.article_description}": r.sku for r in item_options.itertuples()
+    }
+    chosen_label = st.selectbox("Item", list(item_labels.keys()))
+    chosen_sku = item_labels[chosen_label]
+    item_df = scoped[scoped["sku"] == chosen_sku]
+
+    ic1, ic2 = st.columns(2)
+    with ic1:
+        st.caption("Volume per week")
+        st.altair_chart(
+            _yoy_chart(item_df, "sales_volume", "Volume (units)", money=False),
+            use_container_width=True,
+        )
+    with ic2:
+        st.caption("Value per week (€)")
+        st.altair_chart(
+            _yoy_chart(item_df, "sales_value", "Value (€)", money=True),
+            use_container_width=True,
+        )
+
+    st.subheader(
+        "Sellout per item per week (all items)",
         help=(
             "Sellout volume (units) broken down per SKU (rows) and year-week "
-            "(columns) for the current selection."
+            "(columns, YYYY-WW) for the current selection."
         ),
     )
     item_pivot = scoped.pivot_table(
@@ -368,6 +444,7 @@ def page_dashboard():
         aggfunc="sum",
         fill_value=0,
     )
+    item_pivot.columns = [fmt_yw(c) for c in item_pivot.columns]
     st.dataframe(item_pivot, use_container_width=True)
 
     st.subheader(
