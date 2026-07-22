@@ -61,7 +61,7 @@ def _yoy_chart(data: pd.DataFrame, value_col: str, y_title: str, money: bool):
         .properties(height=300)
     )
 
-st.set_page_config(page_title="Sellout Analytics", layout="wide")
+st.set_page_config(page_title="Data analyse agent", layout="wide")
 
 
 def _check_password() -> bool:
@@ -84,7 +84,7 @@ def _check_password() -> bool:
     if st.session_state.get("authenticated"):
         return True
 
-    st.title("Sellout Analytics — sign in")
+    st.title("Data analyse agent — sign in")
     pwd = st.text_input("Password", type="password")
     if st.button("Sign in"):
         if pwd == configured:
@@ -257,7 +257,7 @@ def _highlight_tiles(scoped: pd.DataFrame, num_stores_total: int):
 
 
 def page_dashboard():
-    st.header("Dashboard")
+    st.header("Data analyse agent")
     c1, c2 = st.columns(2)
     c1.metric("Last data received", _fmt_ts(db.get_meta("last_received_at")))
     c2.metric("Last analyzed / updated", _fmt_ts(db.get_meta("last_analyzed_at")))
@@ -348,6 +348,17 @@ def page_dashboard():
         _yoy_chart(scoped, "sales_value", "Sales value (€)", money=True),
         use_container_width=True,
     )
+    years_in_view = sorted(scoped["year"].unique())
+    if len(years_in_view) < 2:
+        st.info(
+            f"Only **{years_in_view[0]}** is in view, so there is a single "
+            "line. These DWH exports label weeks by ISO year-week, so week "
+            "**2026-01 starts on 29 Dec 2025** — that date in the file header "
+            "is *not* separate 2025 data; every week column in these files is "
+            "labelled 2026. A second year line appears automatically once you "
+            "import a file that actually contains 2025 week columns "
+            "(e.g. 2025-48 … 2025-52)."
+        )
 
     # Average revenue per store per week, with a settable target line.
     st.subheader(
@@ -562,6 +573,6 @@ PAGES = {
     "Settings": page_settings,
 }
 
-st.sidebar.title("Sellout Analytics")
+st.sidebar.title("Data analyse agent")
 choice = st.sidebar.radio("Navigate", list(PAGES.keys()))
 PAGES[choice]()
