@@ -308,33 +308,19 @@ def page_dashboard():
 
     _highlight_tiles(scoped, num_stores_total)
 
-    weekly_totals = (
-        scoped.groupby(["year_week", "yw_label"], as_index=False)[["sales_volume", "sales_value"]]
-        .sum()
-        .sort_values("year_week")
-    )
-
     st.subheader(
-        "Total sellout per week",
+        "Total sellout per week — year-over-year",
         help=(
-            "Total sellout volume (units sold) summed across every SKU in the "
-            "current filter selection, per year-week (YYYY-WW)."
+            "Total sellout volume (units sold) per week number, with one "
+            "coloured line per year so the same week compares across years "
+            "(e.g. week 1 of 2025 vs 2026). Summed across every SKU in the "
+            "current selection."
         ),
     )
-    volume_chart = (
-        alt.Chart(weekly_totals)
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("yw_label:O", title="Year-week", sort=None),
-            y=alt.Y("sales_volume:Q", title="Sellout volume (units)"),
-            tooltip=[
-                alt.Tooltip("yw_label:O", title="Year-week"),
-                alt.Tooltip("sales_volume:Q", title="Volume", format=",.0f"),
-            ],
-        )
-        .properties(height=300)
+    st.altair_chart(
+        _yoy_chart(scoped, "sales_volume", "Sellout volume (units)", money=False),
+        use_container_width=True,
     )
-    st.altair_chart(volume_chart, use_container_width=True)
 
     st.subheader(
         "Total sales value per week — year-over-year",
@@ -360,31 +346,34 @@ def page_dashboard():
             "(e.g. 2025-48 … 2025-52)."
         )
 
-    # Average revenue per store per week, with a settable target line.
+    # Average revenue per store per week, year-over-year, with a target line.
     st.subheader(
-        "Avg revenue per store per week",
+        "Avg revenue per store per week — year-over-year",
         help=(
             "Total sales value that week ÷ number of stores (from Settings), "
-            "for the current selection. The dashed line is the target set per "
-            "brand in Settings (weighted by store count when several brands "
-            "are selected)."
+            "per week number with one coloured line per year so weeks compare "
+            "across years. The dashed line is the target set per brand in "
+            "Settings (weighted by store count when several brands are "
+            "selected)."
         ),
     )
     if num_stores_total:
-        avg_df = weekly_totals.copy()
+        avg_df = scoped.groupby(["year", "week"], as_index=False)["sales_value"].sum()
         avg_df["avg_rev"] = avg_df["sales_value"] / num_stores_total
         avg_line = (
             alt.Chart(avg_df)
             .mark_line(point=True)
             .encode(
-                x=alt.X("yw_label:O", title="Year-week", sort=None),
+                x=alt.X("week:Q", title="Week number", scale=alt.Scale(domain=[1, 53])),
                 y=alt.Y(
                     "avg_rev:Q",
                     title="Avg revenue / store (€)",
                     axis=alt.Axis(labelExpr=EUR_AXIS_LABEL),
                 ),
+                color=alt.Color("year:N", title="Year"),
                 tooltip=[
-                    alt.Tooltip("yw_label:O", title="Year-week"),
+                    alt.Tooltip("year:N", title="Year"),
+                    alt.Tooltip("week:Q", title="Week"),
                     alt.Tooltip("avg_rev:Q", title="Avg € / store", format=",.0f"),
                 ],
             )
