@@ -90,9 +90,20 @@ def get_conn():
         conn.close()
 
 
+def _migrate(conn):
+    """Lightweight, idempotent schema migrations for databases created by an
+    earlier version (CREATE TABLE IF NOT EXISTS never adds new columns)."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(store_counts)")}
+    if "target_rev_per_store" not in existing:
+        # Per brand+country+banner target for average revenue per store per
+        # week — drawn as a target line on the KPI chart. Set in Settings.
+        conn.execute("ALTER TABLE store_counts ADD COLUMN target_rev_per_store REAL")
+
+
 def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
         for name, expr, desc in DEFAULT_KPIS:
             conn.execute(
                 "INSERT OR IGNORE INTO kpi_definitions (name, expression, description) "
@@ -223,3 +234,49 @@ def set_store_count(brand: str, country: str, banner: str, year_week: str, num_s
             """,
             (brand, country, banner, year_week, num_stores),
         )
+
+
+def get_target(brand: str, country: str, banner: str) -> float | None:
+    """Target average revenue per store per week for a brand+country+banner
+    (stored on the DEFAULT row). None if unset."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT target_rev_per_store FROM store_counts "
+            "WHERE brand=? AND country=? AND banner=? AND year_week='DEFAULT'",
+            (brand, country, banner),
+        ).fetchone()
+        return row["target_rev_per_store"] if row and row["target_rev_per_store"] is not None else None
+
+
+def set_target(brand: str, country: str, banner: str, target: float | None):
+    """Set (or clear, with None) the revenue-per-store target on the DEFAULT
+    row, creating that row if it does not exist yet."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO store_counts (brand, country, banner, year_week, num_stores, target_rev_per_store)
+            VALUES (?, ?, ?, 'DEFAULT', 0, ?)
+            ON CONFLICT(brand, country, banner, year_week) DO UPDATE SET
+                target_rev_per_store=excluded.target_rev_per_store
+            """,
+            (brand, country, banner, target),
+        )
+
+
+def get_last_imports() -> list[dict]:
+    """Most recent import per brand+country+banner, with its status — used
+    for the per-brand freshness indicator on the dashboard."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT brand, country, banner, imported_at, status, rows_loaded
+            FROM import_log
+            WHERE id IN (
+                SELECT MAX(id) FROM import_log
+                WHERE brand IS NOT NULL
+                GROUP BY brand, country, banner
+            )
+            ORDER BY brand, country, banner
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]

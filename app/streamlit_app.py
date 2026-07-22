@@ -4,12 +4,22 @@ import os
 import tempfile
 from pathlib import Path
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
 import db
 import ingestion
 import kpi
+
+# Vega-Lite axis that prefixes every tick label with a euro sign, so money
+# charts are visually distinct from unit/volume charts.
+EUR_AXIS_LABEL = "'€ ' + format(datum.value, ',.0f')"
+
+
+def eur(value: float) -> str:
+    """Format a number as euros for st.metric tiles and text."""
+    return f"€ {value:,.0f}"
 
 st.set_page_config(page_title="Sellout Analytics", layout="wide")
 
@@ -126,11 +136,66 @@ def _load_facts() -> pd.DataFrame:
         )
 
 
+def _import_freshness_panel():
+    """Per brand+country+banner, show when its most recent import happened,
+    coloured green if that import succeeded and red otherwise."""
+    st.subheader(
+        "Import status per brand",
+        help=(
+            "The most recent import for each brand / country / banner feed. "
+            "Green means that latest import succeeded; red means it failed "
+            "(or the newest attempt errored). Use it to spot a brand whose "
+            "weekly Monday file didn't come through."
+        ),
+    )
+    last_imports = db.get_last_imports()
+    if not last_imports:
+        st.caption("No imports recorded yet.")
+        return
+    cols = st.columns(min(len(last_imports), 3))
+    for i, imp in enumerate(last_imports):
+        ok = str(imp.get("status", "")).startswith("ok")
+        dot = "🟢" if ok else "🔴"
+        ts = _fmt_ts(imp.get("imported_at"))
+        label = f"{imp['brand']} · {imp['country']}/{imp['banner']}"
+        with cols[i % len(cols)]:
+            st.markdown(f"{dot} **{label}**")
+            colour = "green" if ok else "red"
+            st.markdown(f":{colour}[{ts}]")
+
+
+def _highlight_tiles(scoped: pd.DataFrame, num_stores_total: int):
+    """Top-of-dashboard KPI tiles for the single most recent week in scope."""
+    most_recent_week = scoped["year_week"].max()
+    week_df = scoped[scoped["year_week"] == most_recent_week]
+    total_value = float(week_df["sales_value"].sum())
+    total_volume = float(week_df["sales_volume"].sum())
+
+    st.subheader(
+        f"Most recent week — {most_recent_week}",
+        help=(
+            "Headline figures for the latest year-week present in the current "
+            "filter selection: total sales value (€), total sellout volume "
+            "(units), and average revenue per store that week (value ÷ number "
+            "of stores configured in Settings)."
+        ),
+    )
+    t1, t2, t3 = st.columns(3)
+    t1.metric("Sales value (this week)", eur(total_value))
+    t2.metric("Sellout volume (this week)", f"{total_volume:,.0f}")
+    if num_stores_total:
+        t3.metric("Avg revenue / store", eur(total_value / num_stores_total))
+    else:
+        t3.metric("Avg revenue / store", "—", help="Set store counts in Settings.")
+
+
 def page_dashboard():
     st.header("Dashboard")
     c1, c2 = st.columns(2)
     c1.metric("Last data received", _fmt_ts(db.get_meta("last_received_at")))
     c2.metric("Last analyzed / updated", _fmt_ts(db.get_meta("last_analyzed_at")))
+
+    _import_freshness_panel()
 
     df = _load_facts()
     if df.empty:
@@ -155,6 +220,25 @@ def page_dashboard():
         st.warning("No data matches the current filter selection.")
         return
 
+    # Store counts and targets, summed/weighted over the brand+country+banner
+    # combinations actually present in the current selection.
+    scoped_combos = list(
+        scoped[["brand", "country", "banner"]].drop_duplicates().itertuples(index=False)
+    )
+    num_stores_total = 0
+    target_num = 0.0
+    target_den = 0
+    for b, c, bn in scoped_combos:
+        n = db.get_store_count(b, c, bn, "DEFAULT") or 0
+        t = db.get_target(b, c, bn)
+        num_stores_total += n
+        if t is not None and n:
+            target_num += t * n
+            target_den += n
+    combined_target = (target_num / target_den) if target_den else None
+
+    _highlight_tiles(scoped, num_stores_total)
+
     weekly_totals = (
         scoped.groupby("year_week")[["sales_volume", "sales_value"]]
         .sum()
@@ -162,13 +246,94 @@ def page_dashboard():
         .reset_index()
     )
 
-    st.subheader("Total sellout per week")
+    st.subheader(
+        "Total sellout per week",
+        help=(
+            "Total sellout volume (units sold) summed across every SKU in the "
+            "current filter selection, per year-week."
+        ),
+    )
     st.line_chart(weekly_totals.set_index("year_week")["sales_volume"], height=300)
 
-    st.subheader("Total sales value per week")
-    st.line_chart(weekly_totals.set_index("year_week")["sales_value"], height=300)
+    st.subheader(
+        "Total sales value per week",
+        help=(
+            "Total sales value in euros summed across every SKU in the current "
+            "filter selection, per year-week."
+        ),
+    )
+    value_chart = (
+        alt.Chart(weekly_totals)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("year_week:O", title="Year-week"),
+            y=alt.Y(
+                "sales_value:Q",
+                title="Sales value (€)",
+                axis=alt.Axis(labelExpr=EUR_AXIS_LABEL),
+            ),
+            tooltip=[
+                alt.Tooltip("year_week:O", title="Week"),
+                alt.Tooltip("sales_value:Q", title="Value (€)", format=",.0f"),
+            ],
+        )
+        .properties(height=300)
+    )
+    st.altair_chart(value_chart, use_container_width=True)
 
-    st.subheader("Sellout per item per week")
+    # Average revenue per store per week, with a settable target line.
+    st.subheader(
+        "Avg revenue per store per week",
+        help=(
+            "Total sales value that week ÷ number of stores (from Settings), "
+            "for the current selection. The dashed line is the target set per "
+            "brand in Settings (weighted by store count when several brands "
+            "are selected)."
+        ),
+    )
+    if num_stores_total:
+        avg_df = weekly_totals.copy()
+        avg_df["avg_rev"] = avg_df["sales_value"] / num_stores_total
+        avg_line = (
+            alt.Chart(avg_df)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("year_week:O", title="Year-week"),
+                y=alt.Y(
+                    "avg_rev:Q",
+                    title="Avg revenue / store (€)",
+                    axis=alt.Axis(labelExpr=EUR_AXIS_LABEL),
+                ),
+                tooltip=[
+                    alt.Tooltip("year_week:O", title="Week"),
+                    alt.Tooltip("avg_rev:Q", title="Avg € / store", format=",.0f"),
+                ],
+            )
+            .properties(height=300)
+        )
+        if combined_target is not None:
+            rule = (
+                alt.Chart(pd.DataFrame({"target": [combined_target]}))
+                .mark_rule(color="red", strokeDash=[6, 4])
+                .encode(y="target:Q")
+            )
+            text = (
+                alt.Chart(pd.DataFrame({"target": [combined_target]}))
+                .mark_text(align="left", dx=5, dy=-5, color="red")
+                .encode(y="target:Q", text=alt.value(f"target € {combined_target:,.0f}"))
+            )
+            avg_line = avg_line + rule + text
+        st.altair_chart(avg_line, use_container_width=True)
+    else:
+        st.caption("Set store counts in Settings to see this chart.")
+
+    st.subheader(
+        "Sellout per item per week",
+        help=(
+            "Sellout volume (units) broken down per SKU (rows) and year-week "
+            "(columns) for the current selection."
+        ),
+    )
     item_pivot = scoped.pivot_table(
         index=["sku", "article_description"],
         columns="year_week",
@@ -178,17 +343,15 @@ def page_dashboard():
     )
     st.dataframe(item_pivot, use_container_width=True)
 
-    st.subheader("KPIs")
+    st.subheader(
+        "KPIs",
+        help=(
+            "Configurable KPIs (defined in Settings), evaluated over the whole "
+            "current filter selection across all weeks shown."
+        ),
+    )
     with db.get_conn() as conn:
         kpi_defs = pd.read_sql_query("SELECT name, expression, description FROM kpi_definitions", conn)
-
-    num_stores_total = 0
-    for brand in sel_brands:
-        for country in sel_countries:
-            for banner in sel_banners:
-                n = db.get_store_count(brand, country, banner, "DEFAULT")
-                if n:
-                    num_stores_total += n
 
     variables = {
         "total_sales_volume": float(scoped["sales_volume"].sum()),
@@ -216,24 +379,37 @@ def page_dashboard():
 def page_settings():
     st.header("Settings")
 
-    st.subheader("Store counts")
+    st.subheader("Store counts & targets")
     st.caption(
-        "Number of stores per brand + country + banner (used by store-based "
-        "KPIs). Not present in the source files — set manually. A 'DEFAULT' "
-        "row applies unless a specific year-week override exists."
+        "Per brand + country + banner: the number of stores (used by "
+        "store-based KPIs) and the weekly target for average revenue per "
+        "store (drawn as a target line on the dashboard). Neither is present "
+        "in the source files — set them manually here."
     )
     df = _load_facts()
     combos = sorted(set(zip(df["brand"], df["country"], df["banner"]))) if not df.empty else []
 
+    hdr = st.columns([3, 2, 2, 1])
+    hdr[0].markdown("**Brand / country / banner**")
+    hdr[1].markdown("**# stores**")
+    hdr[2].markdown("**Target avg € / store / week**")
+
     for brand, country, banner in combos:
         current = db.get_store_count(brand, country, banner, "DEFAULT") or 0
-        cols = st.columns([2, 1, 1, 1, 1])
+        current_target = db.get_target(brand, country, banner) or 0.0
+        cols = st.columns([3, 2, 2, 1])
         cols[0].write(f"**{brand}** / {country} / {banner}")
         new_val = cols[1].number_input(
-            "Stores", min_value=0, value=int(current), key=f"stores_{brand}_{country}_{banner}", label_visibility="collapsed"
+            "Stores", min_value=0, value=int(current),
+            key=f"stores_{brand}_{country}_{banner}", label_visibility="collapsed",
         )
-        if cols[2].button("Save", key=f"save_{brand}_{country}_{banner}"):
+        new_target = cols[2].number_input(
+            "Target", min_value=0.0, value=float(current_target), step=100.0,
+            key=f"target_{brand}_{country}_{banner}", label_visibility="collapsed",
+        )
+        if cols[3].button("Save", key=f"save_{brand}_{country}_{banner}"):
             db.set_store_count(brand, country, banner, "DEFAULT", int(new_val))
+            db.set_target(brand, country, banner, float(new_target) if new_target > 0 else None)
             st.success("Saved.")
 
     if not combos:
