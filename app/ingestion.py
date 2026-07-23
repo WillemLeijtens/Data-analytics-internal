@@ -135,7 +135,13 @@ def _select_authoritative_sheet(wb):
         candidates.append((ws, header_row1, header_row2, n_data_rows, expected, total_row))
 
     for ws, h1, h2, n_data_rows, expected, total_row in candidates:
-        if expected is not None and int(expected) == n_data_rows:
+        # A malformed Total cell (text instead of the row count) must make
+        # this sheet fail the match, not crash the whole parse.
+        try:
+            matches = expected is not None and int(expected) == n_data_rows
+        except (TypeError, ValueError):
+            matches = False
+        if matches:
             return ws, h1, h2, total_row
     # fallback: first parseable sheet
     if candidates:
@@ -155,6 +161,22 @@ def parse_filename(filename: str) -> dict | None:
 def _country_to_iso2(country3: str) -> str:
     mapping = {"BEL": "BE", "NLD": "NL"}
     return mapping.get(country3.upper(), country3.upper()[:2])
+
+
+def _to_number(raw):
+    """Coerce a cell value to float, or None if it isn't numeric. Without
+    this, a text cell (e.g. 'n/a' or a stray '-') would flow straight into
+    the sales_volume/sales_value REAL columns as a string — SQLite stores it
+    happily, and pandas aggregations over the column then misbehave."""
+    if raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    s = str(raw).strip().replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return None
 
 
 def parse_workbook(path: str, filename: str) -> ParsedFile:
@@ -201,6 +223,7 @@ def parse_workbook(path: str, filename: str) -> ParsedFile:
 
     seen_skus = set()
     duplicate_rows = 0
+    non_numeric_cells = 0
     data_start = header_row2 + 1
     data_end = (total_row - 1) if total_row else ws.max_row
 
@@ -235,10 +258,16 @@ def parse_workbook(path: str, filename: str) -> ParsedFile:
         )
 
         for year_week, vol_col, val_col in weeks:
-            vol = ws.cell(row=r, column=vol_col).value
-            val = ws.cell(row=r, column=val_col).value if val_col else None
-            if vol is None and val is None:
+            raw_vol = ws.cell(row=r, column=vol_col).value
+            raw_val = ws.cell(row=r, column=val_col).value if val_col else None
+            if raw_vol is None and raw_val is None:
                 continue
+            vol = _to_number(raw_vol)
+            val = _to_number(raw_val)
+            if vol is None and raw_vol is not None:
+                non_numeric_cells += 1
+            if val is None and raw_val is not None:
+                non_numeric_cells += 1
             result.facts.append(
                 {
                     "brand": brand,
@@ -246,8 +275,8 @@ def parse_workbook(path: str, filename: str) -> ParsedFile:
                     "banner": banner,
                     "sku": sku,
                     "year_week": year_week,
-                    "sales_volume": vol or 0,
-                    "sales_value": val or 0,
+                    "sales_volume": vol if vol is not None else 0,
+                    "sales_value": val if val is not None else 0,
                 }
             )
 
@@ -255,6 +284,11 @@ def parse_workbook(path: str, filename: str) -> ParsedFile:
         result.warnings.append(
             f"Skipped {duplicate_rows} duplicate SKU row(s) found after the "
             "first occurrence (same SKU repeated, e.g. differing GTIN)."
+        )
+    if non_numeric_cells:
+        result.warnings.append(
+            f"{non_numeric_cells} volume/value cell(s) contained non-numeric "
+            "text and were treated as 0 — check the source file."
         )
 
     # Reconcile against the printed Total row per week, if present.

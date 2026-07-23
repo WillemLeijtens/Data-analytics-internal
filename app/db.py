@@ -68,16 +68,28 @@ CREATE TABLE IF NOT EXISTS app_meta (
 );
 """
 
-_OLD_AVG_SELLOUT_EXPR = "total_sales_volume / num_stores"
+# Superseded default expressions for avg_sellout_per_store, in historical
+# order. A deployed database whose stored expression still matches one of
+# these gets auto-upgraded to the current default; a user-edited expression
+# never matches and is left untouched.
+_OLD_AVG_SELLOUT_EXPRS = [
+    # v1: divided ALL selected brands' volume by only the configured stores.
+    "total_sales_volume / num_stores",
+    # v2: fixed the numerator scope, but despite being named/described
+    # "per store per week" it summed volume across every week in the
+    # selection without dividing by the number of weeks.
+    "store_sales_volume / num_stores",
+]
 
 DEFAULT_KPIS = [
     (
         "avg_sellout_per_store",
-        "store_sales_volume / num_stores",
+        "store_sales_volume / num_stores / num_weeks",
         "Average sellout (units) per store per week: sales volume from "
         "brand/country/banner combos that have a configured store count, "
-        "divided by that store count. Combos without a store count are "
-        "excluded from both sides so they can't skew the average.",
+        "divided by that store count and by the number of weeks in the "
+        "current selection. Combos without a store count are excluded from "
+        "both sides so they can't skew the average.",
     ),
 ]
 
@@ -103,16 +115,17 @@ def _migrate(conn):
         # week — drawn as a target line on the KPI chart. Set in Settings.
         conn.execute("ALTER TABLE store_counts ADD COLUMN target_rev_per_store REAL")
 
-    # The built-in avg_sellout_per_store KPI used to divide *all* selected
-    # brands' volume by only the stores that had a count configured,
-    # inflating the result whenever some brands lacked a store count. Fix
-    # already-deployed databases by updating the expression in place — but
-    # only if it still matches the old default, so a user's own edit to
-    # this KPI is never silently overwritten.
+    # Upgrade the built-in avg_sellout_per_store KPI on already-deployed
+    # databases whenever its stored expression still matches a superseded
+    # default (see _OLD_AVG_SELLOUT_EXPRS for what each old version got
+    # wrong) — a user's own edit never matches and is never overwritten.
+    # The description is refreshed along with the expression so the shown
+    # explanation always matches the formula actually being evaluated.
+    placeholders = ",".join("?" for _ in _OLD_AVG_SELLOUT_EXPRS)
     conn.execute(
-        "UPDATE kpi_definitions SET expression = ? "
-        "WHERE name = 'avg_sellout_per_store' AND expression = ?",
-        (DEFAULT_KPIS[0][1], _OLD_AVG_SELLOUT_EXPR),
+        f"UPDATE kpi_definitions SET expression = ?, description = ? "
+        f"WHERE name = 'avg_sellout_per_store' AND expression IN ({placeholders})",
+        (DEFAULT_KPIS[0][1], DEFAULT_KPIS[0][2], *_OLD_AVG_SELLOUT_EXPRS),
     )
 
 

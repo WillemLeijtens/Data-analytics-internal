@@ -542,8 +542,10 @@ def _sum_rows(df_slice, dim, col, colors, fmt):
         return []
     mx = g[col].max() or 1
     return [
+        # Clamp to [0, 100]: a negative weekly total (returns exceeding
+        # sales) would otherwise emit an invalid negative CSS width.
         {"name": r[dim], "value": fmt(r[col]), "color": colors[r[dim]]["row"],
-         "share": r[col] / mx * 100}
+         "share": max(0.0, min(100.0, r[col] / mx * 100))}
         for _, r in g.iterrows()
     ]
 
@@ -568,7 +570,7 @@ def _avg_rows(store_slice, dim, combos_stores, colors, fmt):
     rows.sort(key=lambda r: -r["amt"])
     return [
         {"name": r["val"], "value": fmt(r["amt"]), "color": colors[r["val"]]["row"],
-         "share": r["amt"] / mx * 100}
+         "share": max(0.0, min(100.0, r["amt"] / mx * 100))}
         for r in rows
     ]
 
@@ -601,10 +603,17 @@ def _tile(label, big=None, delta=None, rows_html="", footer=None, footer_alpha="
             f'<div style="font-size:{big_size}px;font-weight:800;letter-spacing:-0.01em">{big}</div>'
         )
     if delta is not None:
+        # Arrow and colour must follow the sign — the old st.metric widget
+        # did this automatically; a hardcoded green ↑ showed declines as
+        # green gains.
+        down = str(delta).lstrip().startswith("-")
+        badge_bg = "rgba(180,60,40,0.16)" if down else "rgba(46,138,90,0.16)"
+        badge_fg = "oklch(70% 0.15 30)" if down else "oklch(74% 0.15 150)"
+        arrow = "↓" if down else "↑"
         body += (
             '<div style="align-self:flex-start;display:flex;align-items:center;gap:6px;'
-            'background:rgba(46,138,90,0.16);color:oklch(74% 0.15 150);padding:6px 12px;'
-            f'border-radius:8px;font-size:13px;font-weight:700">↑ {delta} vs YTD last year</div>'
+            f'background:{badge_bg};color:{badge_fg};padding:6px 12px;'
+            f'border-radius:8px;font-size:13px;font-weight:700">{arrow} {delta} vs YTD last year</div>'
         )
     body += rows_html
     if footer:
