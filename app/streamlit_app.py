@@ -370,34 +370,27 @@ def _relative_time(iso_str: str | None) -> str:
     return f"{days} day{'s' if days != 1 else ''} ago"
 
 
-def _dashboard_notices(df: pd.DataFrame) -> list[str]:
-    """Data-quality notices across the WHOLE dataset (not just the current
-    filter selection) — failed brand imports, and brand/country/banner
-    combos with no store count configured yet."""
+def _import_failure_notices() -> list[str]:
+    """Failed-import notices — global, not scoped to the current filter
+    selection, since a failed brand import is worth surfacing regardless of
+    what's currently filtered."""
     notices = []
     for imp in db.get_last_imports():
         if not str(imp.get("status", "")).startswith("ok"):
             label = f"{imp['brand']} / {imp['country']}/{imp['banner']}"
             reason = imp.get("message") or "see the Import status tab for details"
             notices.append(f"Import failed for **{label}**: {reason}")
-
-    if not df.empty:
-        combos = df[["brand", "country", "banner"]].drop_duplicates().itertuples(index=False)
-        missing = [(b, c, bn) for b, c, bn in combos if not db.get_store_count(b, c, bn, "DEFAULT")]
-        if missing:
-            names = ", ".join(f"{b}/{c}/{bn}" for b, c, bn in missing)
-            notices.append(
-                f"No store count configured for: **{names}** — set it in "
-                "Settings to enable avg-revenue-per-store figures for them."
-            )
     return notices
 
 
-def _status_bar(df: pd.DataFrame):
+def _status_bar(notices: list[str]):
     """One compact status bar: overall import health (dot + text), when the
     data last came in, and a notices count — replacing what used to be two
-    separate metric tiles plus a standalone import-health line. Click
-    'Details' for the exact timestamps and the full notice text."""
+    separate metric tiles, a standalone import-health line, and an inline
+    warning banner. Click 'Details' for the exact timestamps and the full
+    notice text. `notices` combines global notices (failed imports) with
+    ones scoped to the current brand/country/banner filter selection (e.g.
+    missing store counts), passed in by the caller."""
     ok, total = _import_health()
     if total == 0:
         dot, colour, status_text = "⚪", "#888", "No imports yet"
@@ -409,7 +402,6 @@ def _status_bar(df: pd.DataFrame):
         dot, colour, status_text = "🟡", "#f59e0b", "Some imports failed"
 
     updated_ago = _relative_time(db.get_meta("last_received_at"))
-    notices = _dashboard_notices(df)
     n = len(notices)
     notice_html = (
         f'<span style="color:#f59e0b;">⚠ {n} notice{"s" if n != 1 else ""}</span>'
@@ -562,10 +554,18 @@ def _ytd_tiles(scoped: pd.DataFrame, store_scoped: pd.DataFrame, num_stores_tota
 def page_dashboard():
     st.header("Data analyse agent")
 
-    df = _load_facts()
-    _status_bar(df)
+    # The status bar must render above the brand/country/banner filters, but
+    # some of its notices (e.g. missing store counts) depend on which
+    # brands are currently selected — known only after those filter widgets
+    # run, further down this function. st.empty() reserves the visual slot
+    # here; filling it later still draws in this position.
+    status_placeholder = st.empty()
+    global_notices = _import_failure_notices()
 
+    df = _load_facts()
     if df.empty:
+        with status_placeholder.container():
+            _status_bar(global_notices)
         st.info("No data loaded yet — go to 'Import' to upload files.")
         return
 
@@ -584,6 +584,8 @@ def page_dashboard():
         & df["banner"].isin(sel_banners)
     ]
     if scoped.empty:
+        with status_placeholder.container():
+            _status_bar(global_notices)
         st.warning("No data matches the current filter selection.")
         return
 
@@ -624,15 +626,19 @@ def page_dashboard():
     else:
         store_scoped = scoped.iloc[0:0]
 
+    scope_notices = list(global_notices)
     if combos_without_stores:
         names = ", ".join(f"{b}/{c}/{bn}" for b, c, bn in combos_without_stores)
-        st.warning(
-            f"No store count configured for: **{names}**. These are included "
-            "in sellout volume/value totals below, but excluded from every "
-            "'avg revenue per store' figure (tiles, chart, KPIs) so their "
-            "revenue doesn't inflate an average against a store count they "
-            "don't have. Set their store count in Settings to include them."
+        scope_notices.append(
+            f"No store count configured for: **{names}** (currently selected). "
+            "These are included in sellout volume/value totals below, but "
+            "excluded from every 'avg revenue per store' figure (tiles, "
+            "chart, KPIs) so their revenue doesn't inflate an average "
+            "against a store count they don't have. Set their store count "
+            "in Settings to include them."
         )
+    with status_placeholder.container():
+        _status_bar(scope_notices)
 
     _highlight_tiles(scoped, store_scoped, num_stores_total)
     _ytd_tiles(scoped, store_scoped, num_stores_total)
