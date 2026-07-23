@@ -584,36 +584,48 @@ def page_settings():
         "Per brand + country + banner: the number of stores (used by "
         "store-based KPIs) and the weekly target for average revenue per "
         "store (drawn as a target line on the dashboard). Neither is present "
-        "in the source files — set them manually here."
+        "in the source files — set them manually here. Edit as many rows as "
+        "you like, then click **Save all** once at the bottom — a single "
+        "atomic save avoids the easy mistake of editing several rows but "
+        "only clicking one row's save button."
     )
     df = _load_facts()
     combos = sorted(set(zip(df["brand"], df["country"], df["banner"]))) if not df.empty else []
 
-    hdr = st.columns([3, 2, 2, 1])
-    hdr[0].markdown("**Brand / country / banner**")
-    hdr[1].markdown("**# stores**")
-    hdr[2].markdown("**Target avg € / store / week**")
-
-    for brand, country, banner in combos:
-        current = db.get_store_count(brand, country, banner, "DEFAULT") or 0
-        current_target = db.get_target(brand, country, banner) or 0.0
-        cols = st.columns([3, 2, 2, 1])
-        cols[0].write(f"**{brand}** / {country} / {banner}")
-        new_val = cols[1].number_input(
-            "Stores", min_value=0, value=int(current),
-            key=f"stores_{brand}_{country}_{banner}", label_visibility="collapsed",
-        )
-        new_target = cols[2].number_input(
-            "Target", min_value=0.0, value=float(current_target), step=100.0,
-            key=f"target_{brand}_{country}_{banner}", label_visibility="collapsed",
-        )
-        if cols[3].button("Save", key=f"save_{brand}_{country}_{banner}"):
-            db.set_store_count(brand, country, banner, "DEFAULT", int(new_val))
-            db.set_target(brand, country, banner, float(new_target) if new_target > 0 else None)
-            st.success("Saved.")
-
     if not combos:
         st.info("Import data first to configure store counts per brand/country/banner.")
+    else:
+        with st.form("store_counts_form"):
+            hdr = st.columns([3, 2, 2])
+            hdr[0].markdown("**Brand / country / banner**")
+            hdr[1].markdown("**# stores**")
+            hdr[2].markdown("**Target avg € / store / week**")
+
+            field_keys = []
+            for brand, country, banner in combos:
+                current = db.get_store_count(brand, country, banner, "DEFAULT") or 0
+                current_target = db.get_target(brand, country, banner) or 0.0
+                cols = st.columns([3, 2, 2])
+                cols[0].write(f"**{brand}** / {country} / {banner}")
+                stores_key = f"stores_{brand}_{country}_{banner}"
+                target_key = f"target_{brand}_{country}_{banner}"
+                cols[1].number_input(
+                    "Stores", min_value=0, value=int(current),
+                    key=stores_key, label_visibility="collapsed",
+                )
+                cols[2].number_input(
+                    "Target", min_value=0.0, value=float(current_target), step=100.0,
+                    key=target_key, label_visibility="collapsed",
+                )
+                field_keys.append((brand, country, banner, stores_key, target_key))
+
+            submitted = st.form_submit_button("Save all")
+            if submitted:
+                for brand, country, banner, stores_key, target_key in field_keys:
+                    db.set_store_count(brand, country, banner, "DEFAULT", int(st.session_state[stores_key]))
+                    new_target = float(st.session_state[target_key])
+                    db.set_target(brand, country, banner, new_target if new_target > 0 else None)
+                st.success(f"Saved {len(field_keys)} row(s).")
 
     st.divider()
     st.subheader("KPI definitions")
