@@ -231,12 +231,15 @@ def _import_status_detail():
         st.markdown(f"{dot} **{label}** — :{colour}[{ts}] {detail}")
 
 
-def _highlight_tiles(scoped: pd.DataFrame, num_stores_total: int):
+def _highlight_tiles(scoped: pd.DataFrame, store_scoped: pd.DataFrame, num_stores_total: int):
     """Top-of-dashboard KPI tiles for the single most recent week in scope."""
     most_recent_week = scoped["year_week"].max()
     week_df = scoped[scoped["year_week"] == most_recent_week]
     total_value = float(week_df["sales_value"].sum())
     total_volume = float(week_df["sales_volume"].sum())
+    store_week_value = float(
+        store_scoped.loc[store_scoped["year_week"] == most_recent_week, "sales_value"].sum()
+    )
 
     st.subheader(
         f"Most recent week — {most_recent_week}",
@@ -244,14 +247,18 @@ def _highlight_tiles(scoped: pd.DataFrame, num_stores_total: int):
             "Headline figures for the latest year-week present in the current "
             "filter selection: total sales value (€), total sellout volume "
             "(units), and average revenue per store that week (value ÷ number "
-            "of stores configured in Settings)."
+            "of stores configured in Settings). The avg-per-store figure only "
+            "counts brand/country/banner combinations that actually have a "
+            "store count set — others are excluded from both the euro total "
+            "and the store count for this figure, so it stays a fair average "
+            "rather than diluting it with unconfigured brands' revenue."
         ),
     )
     t1, t2, t3 = st.columns(3)
     t1.metric("Sales value (this week)", eur(total_value))
     t2.metric("Sellout volume (this week)", f"{total_volume:,.0f}")
     if num_stores_total:
-        t3.metric("Avg revenue / store", eur(total_value / num_stores_total))
+        t3.metric("Avg revenue / store", eur(store_week_value / num_stores_total))
     else:
         t3.metric("Avg revenue / store", "—", help="Set store counts in Settings.")
 
@@ -265,28 +272,34 @@ def _pct_delta(this: float, last: float) -> str | None:
     return f"{pct:+.1f}% vs YTD last year"
 
 
-def _ytd_tiles(scoped: pd.DataFrame, num_stores_total: int):
+def _ytd_slice(df: pd.DataFrame, current_year: str, current_week: int, prior_year: str):
+    this_df = df[(df["year"] == current_year) & (df["week"] <= current_week)]
+    last_df = df[(df["year"] == prior_year) & (df["week"] <= current_week)]
+    return this_df, last_df
+
+
+def _ytd_tiles(scoped: pd.DataFrame, store_scoped: pd.DataFrame, num_stores_total: int):
     """Year-to-date tiles: sum of weeks 1..N of the latest year present vs.
     the same weeks 1..N of the prior year, where N is the latest week
     number actually present for the current year (not the calendar week) —
     so it stays a fair like-for-like comparison regardless of when the app
     is opened."""
     current_year = scoped["year"].max()
-    current_year_df = scoped[scoped["year"] == current_year]
-    current_week = int(current_year_df["week"].max())
+    current_week = int(scoped.loc[scoped["year"] == current_year, "week"].max())
     prior_year = str(int(current_year) - 1)
 
-    ytd_this = current_year_df[current_year_df["week"] <= current_week]
-    ytd_last = scoped[(scoped["year"] == prior_year) & (scoped["week"] <= current_week)]
+    ytd_this, ytd_last = _ytd_slice(scoped, current_year, current_week, prior_year)
+    store_ytd_this, store_ytd_last = _ytd_slice(store_scoped, current_year, current_week, prior_year)
 
     st.subheader(
         f"YTD {current_year} vs YTD {prior_year} (weeks 1–{current_week})",
         help=(
             "Year-to-date comparison: weeks 1 through the latest week number "
             "present for the current year, summed, versus the same weeks 1 "
-            "through that number in the prior year. The store count used for "
-            "'avg revenue / store' is the currently configured count applied "
-            "to both years (store counts aren't tracked historically)."
+            "through that number in the prior year. 'Avg revenue / store' "
+            "only counts brand/country/banner combinations that have a store "
+            "count configured, using the count currently set in Settings for "
+            "both years (store counts aren't tracked historically)."
         ),
     )
 
@@ -298,13 +311,15 @@ def _ytd_tiles(scoped: pd.DataFrame, num_stores_total: int):
     value_last = float(ytd_last["sales_value"].sum())
     volume_this = float(ytd_this["sales_volume"].sum())
     volume_last = float(ytd_last["sales_volume"].sum())
+    store_value_this = float(store_ytd_this["sales_value"].sum())
+    store_value_last = float(store_ytd_last["sales_value"].sum())
 
     y1, y2, y3 = st.columns(3)
     y1.metric("YTD sales value", eur(value_this), delta=_pct_delta(value_this, value_last))
     y2.metric("YTD sellout volume", f"{volume_this:,.0f}", delta=_pct_delta(volume_this, volume_last))
     if num_stores_total:
-        avg_this = value_this / num_stores_total
-        avg_last = value_last / num_stores_total
+        avg_this = store_value_this / num_stores_total
+        avg_last = store_value_last / num_stores_total
         y3.metric("YTD avg revenue / store", eur(avg_this), delta=_pct_delta(avg_this, avg_last))
     else:
         y3.metric("YTD avg revenue / store", "—", help="Set store counts in Settings.")
@@ -344,24 +359,52 @@ def page_dashboard():
     scoped = _augment_year_week(scoped)
 
     # Store counts and targets, summed/weighted over the brand+country+banner
-    # combinations actually present in the current selection.
+    # combinations actually present in the current selection. Combinations
+    # without a configured store count are tracked separately: they must be
+    # excluded from BOTH the euro numerator and the store-count denominator
+    # of every "per store" figure below. Including their revenue in the
+    # numerator while their stores are missing from the denominator would
+    # silently inflate every average — mixing full-scope totals with a
+    # partial-scope store count.
     scoped_combos = list(
         scoped[["brand", "country", "banner"]].drop_duplicates().itertuples(index=False)
     )
+    combos_with_stores = []
+    combos_without_stores = []
     num_stores_total = 0
     target_num = 0.0
     target_den = 0
     for b, c, bn in scoped_combos:
         n = db.get_store_count(b, c, bn, "DEFAULT") or 0
         t = db.get_target(b, c, bn)
-        num_stores_total += n
-        if t is not None and n:
-            target_num += t * n
-            target_den += n
+        if n:
+            combos_with_stores.append((b, c, bn))
+            num_stores_total += n
+            if t is not None:
+                target_num += t * n
+                target_den += n
+        else:
+            combos_without_stores.append((b, c, bn))
     combined_target = (target_num / target_den) if target_den else None
 
-    _highlight_tiles(scoped, num_stores_total)
-    _ytd_tiles(scoped, num_stores_total)
+    if combos_with_stores:
+        store_combo_df = pd.DataFrame(combos_with_stores, columns=["brand", "country", "banner"])
+        store_scoped = scoped.merge(store_combo_df, on=["brand", "country", "banner"], how="inner")
+    else:
+        store_scoped = scoped.iloc[0:0]
+
+    if combos_without_stores:
+        names = ", ".join(f"{b}/{c}/{bn}" for b, c, bn in combos_without_stores)
+        st.warning(
+            f"No store count configured for: **{names}**. These are included "
+            "in sellout volume/value totals below, but excluded from every "
+            "'avg revenue per store' figure (tiles, chart, KPIs) so their "
+            "revenue doesn't inflate an average against a store count they "
+            "don't have. Set their store count in Settings to include them."
+        )
+
+    _highlight_tiles(scoped, store_scoped, num_stores_total)
+    _ytd_tiles(scoped, store_scoped, num_stores_total)
 
     st.subheader(
         "Total sellout per week — year-over-year",
@@ -405,15 +448,16 @@ def page_dashboard():
     st.subheader(
         "Avg revenue per store per week — year-over-year",
         help=(
-            "Total sales value that week ÷ number of stores (from Settings), "
-            "per week number with one coloured line per year so weeks compare "
-            "across years. The dashed line is the target set per brand in "
-            "Settings (weighted by store count when several brands are "
-            "selected)."
+            "Sales value that week ÷ number of stores (from Settings), per "
+            "week number with one coloured line per year so weeks compare "
+            "across years. Only counts brand/country/banner combinations "
+            "with a configured store count. The dashed line is the target "
+            "set per brand in Settings (weighted by store count when "
+            "several brands are selected)."
         ),
     )
     if num_stores_total:
-        avg_df = scoped.groupby(["year", "week"], as_index=False)["sales_value"].sum()
+        avg_df = store_scoped.groupby(["year", "week"], as_index=False)["sales_value"].sum()
         avg_df["avg_rev"] = avg_df["sales_value"] / num_stores_total
         avg_line = (
             alt.Chart(avg_df)
@@ -556,6 +600,12 @@ def page_dashboard():
     variables = {
         "total_sales_volume": float(scoped["sales_volume"].sum()),
         "total_sales_value": float(scoped["sales_value"].sum()),
+        # Same two totals but restricted to brand/country/banner combos that
+        # have a configured store count — pair these with num_stores in any
+        # formula that divides by store count, so brands without a count
+        # don't inflate the average (see the warning above when partial).
+        "store_sales_volume": float(store_scoped["sales_volume"].sum()),
+        "store_sales_value": float(store_scoped["sales_value"].sum()),
         "num_stores": float(num_stores_total) if num_stores_total else float("nan"),
         "num_skus": float(scoped["sku"].nunique()),
         "num_weeks": float(scoped["year_week"].nunique()),
@@ -630,8 +680,12 @@ def page_settings():
     st.divider()
     st.subheader("KPI definitions")
     st.caption(
-        "Available variables: total_sales_volume, total_sales_value, "
-        "num_stores, num_skus, num_weeks. Only + - * / and parentheses are allowed."
+        "Available variables: total_sales_volume, total_sales_value "
+        "(everything in the current filter selection), store_sales_volume, "
+        "store_sales_value (same, but only brand/country/banner combos that "
+        "have a store count configured — pair these with num_stores in any "
+        "formula that divides by store count), num_stores, num_skus, "
+        "num_weeks. Only + - * / and parentheses are allowed."
     )
     with db.get_conn() as conn:
         kpi_df = pd.read_sql_query("SELECT name, expression, description FROM kpi_definitions", conn)

@@ -60,6 +60,8 @@ def validate_expression(expression: str) -> str | None:
     dummy_vars = {
         "total_sales_volume": 1.0,
         "total_sales_value": 1.0,
+        "store_sales_volume": 1.0,
+        "store_sales_value": 1.0,
         "num_stores": 1.0,
         "num_skus": 1.0,
         "num_weeks": 1.0,

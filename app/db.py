@@ -68,12 +68,16 @@ CREATE TABLE IF NOT EXISTS app_meta (
 );
 """
 
+_OLD_AVG_SELLOUT_EXPR = "total_sales_volume / num_stores"
+
 DEFAULT_KPIS = [
     (
         "avg_sellout_per_store",
-        "total_sales_volume / num_stores",
-        "Average sellout (units) per store per week: total sales volume in "
-        "scope divided by configured number of stores.",
+        "store_sales_volume / num_stores",
+        "Average sellout (units) per store per week: sales volume from "
+        "brand/country/banner combos that have a configured store count, "
+        "divided by that store count. Combos without a store count are "
+        "excluded from both sides so they can't skew the average.",
     ),
 ]
 
@@ -98,6 +102,18 @@ def _migrate(conn):
         # Per brand+country+banner target for average revenue per store per
         # week — drawn as a target line on the KPI chart. Set in Settings.
         conn.execute("ALTER TABLE store_counts ADD COLUMN target_rev_per_store REAL")
+
+    # The built-in avg_sellout_per_store KPI used to divide *all* selected
+    # brands' volume by only the stores that had a count configured,
+    # inflating the result whenever some brands lacked a store count. Fix
+    # already-deployed databases by updating the expression in place — but
+    # only if it still matches the old default, so a user's own edit to
+    # this KPI is never silently overwritten.
+    conn.execute(
+        "UPDATE kpi_definitions SET expression = ? "
+        "WHERE name = 'avg_sellout_per_store' AND expression = ?",
+        (DEFAULT_KPIS[0][1], _OLD_AVG_SELLOUT_EXPR),
+    )
 
 
 def init_db():
