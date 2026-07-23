@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import html
 import os
 import tempfile
@@ -345,26 +346,99 @@ def _import_health():
     return ok, total
 
 
-def _import_summary_indicator():
-    """One combined status light for the dashboard: green if every feed's
-    latest import succeeded, yellow if some did, red if none did."""
+def _relative_time(iso_str: str | None) -> str:
+    """'2 hours ago' style relative time from an ISO timestamp, for the
+    compact status bar (the exact timestamp is still available in Details)."""
+    if not iso_str:
+        return "never"
+    try:
+        ts = dt.datetime.fromisoformat(iso_str)
+    except ValueError:
+        return "never"
+    secs = (dt.datetime.utcnow() - ts).total_seconds()
+    if secs < 0:
+        secs = 0
+    if secs < 60:
+        return "just now"
+    mins = int(secs // 60)
+    if mins < 60:
+        return f"{mins} minute{'s' if mins != 1 else ''} ago"
+    hours = int(mins // 60)
+    if hours < 24:
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = int(hours // 24)
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
+def _dashboard_notices(df: pd.DataFrame) -> list[str]:
+    """Data-quality notices across the WHOLE dataset (not just the current
+    filter selection) — failed brand imports, and brand/country/banner
+    combos with no store count configured yet."""
+    notices = []
+    for imp in db.get_last_imports():
+        if not str(imp.get("status", "")).startswith("ok"):
+            label = f"{imp['brand']} / {imp['country']}/{imp['banner']}"
+            reason = imp.get("message") or "see the Import status tab for details"
+            notices.append(f"Import failed for **{label}**: {reason}")
+
+    if not df.empty:
+        combos = df[["brand", "country", "banner"]].drop_duplicates().itertuples(index=False)
+        missing = [(b, c, bn) for b, c, bn in combos if not db.get_store_count(b, c, bn, "DEFAULT")]
+        if missing:
+            names = ", ".join(f"{b}/{c}/{bn}" for b, c, bn in missing)
+            notices.append(
+                f"No store count configured for: **{names}** — set it in "
+                "Settings to enable avg-revenue-per-store figures for them."
+            )
+    return notices
+
+
+def _status_bar(df: pd.DataFrame):
+    """One compact status bar: overall import health (dot + text), when the
+    data last came in, and a notices count — replacing what used to be two
+    separate metric tiles plus a standalone import-health line. Click
+    'Details' for the exact timestamps and the full notice text."""
     ok, total = _import_health()
-    help_text = (
-        "Overall import health across all brand feeds. Green: every brand's "
-        "most recent import succeeded. Yellow: one or more failed. Red: all "
-        "failed. See the 'Import status' tab for the per-brand breakdown."
-    )
     if total == 0:
-        st.info("No imports recorded yet — upload files on the Import tab.")
-        return
-    if ok == total:
-        dot, colour, msg = "🟢", "green", "All imports OK"
+        dot, colour, status_text = "⚪", "#888", "No imports yet"
+    elif ok == total:
+        dot, colour, status_text = "🟢", "#22c55e", "Data up to date"
     elif ok == 0:
-        dot, colour, msg = "🔴", "red", "All imports failed"
+        dot, colour, status_text = "🔴", "#ef4444", "All imports failed"
     else:
-        dot, colour, msg = "🟡", "orange", "Some imports failed"
-    st.subheader("Import status", help=help_text)
-    st.markdown(f"{dot} :{colour}[**{msg}** — {ok}/{total} brand feeds OK]")
+        dot, colour, status_text = "🟡", "#f59e0b", "Some imports failed"
+
+    updated_ago = _relative_time(db.get_meta("last_received_at"))
+    notices = _dashboard_notices(df)
+    n = len(notices)
+    notice_html = (
+        f'<span style="color:#f59e0b;">⚠ {n} notice{"s" if n != 1 else ""}</span>'
+        if n else '<span style="color:#666;">No notices</span>'
+    )
+
+    bar_html = f"""
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+                background:rgba(128,128,128,0.08);border:1px solid rgba(128,128,128,0.18);
+                border-radius:10px;padding:12px 18px;margin-bottom:14px;">
+      <span style="color:{colour};font-weight:600;">{dot} {status_text}</span>
+      <span style="color:#666;">|</span>
+      <span style="color:#999;">Updated {updated_ago}</span>
+      <span style="color:#666;">|</span>
+      {notice_html}
+    </div>
+    """
+    st.markdown(_strip_line_indent(bar_html), unsafe_allow_html=True)
+
+    with st.expander(f"Details ({n})" if n else "Details"):
+        st.caption(
+            f"Last data received: {_fmt_ts(db.get_meta('last_received_at'))} · "
+            f"Last analyzed/updated: {_fmt_ts(db.get_meta('last_analyzed_at'))}"
+        )
+        if notices:
+            for note in notices:
+                st.markdown(f"- {note}")
+        else:
+            st.markdown("No outstanding notices.")
 
 
 def _import_status_detail():
@@ -487,13 +561,10 @@ def _ytd_tiles(scoped: pd.DataFrame, store_scoped: pd.DataFrame, num_stores_tota
 
 def page_dashboard():
     st.header("Data analyse agent")
-    c1, c2 = st.columns(2)
-    c1.metric("Last data received", _fmt_ts(db.get_meta("last_received_at")))
-    c2.metric("Last analyzed / updated", _fmt_ts(db.get_meta("last_analyzed_at")))
-
-    _import_summary_indicator()
 
     df = _load_facts()
+    _status_bar(df)
+
     if df.empty:
         st.info("No data loaded yet — go to 'Import' to upload files.")
         return
