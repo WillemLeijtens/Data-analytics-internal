@@ -457,34 +457,70 @@ def _import_status_detail():
         st.markdown(f"{dot} **{label}** — :{colour}[{ts}] {detail}")
 
 
-def _highlight_tiles(scoped: pd.DataFrame, store_scoped: pd.DataFrame, num_stores_total: int):
+AVG_METHOD_HELP = (
+    "How 'avg revenue per store' combines multiple selected brands:\n\n"
+    "• **Blended** — total revenue of all selected brands ÷ total stores of "
+    "all selected brands. Answers *“what does one average store across the "
+    "whole portfolio turn over?”* One brand with far more stores pulls the "
+    "average toward its own figure.\n\n"
+    "• **Combined (summed)** — each brand's own revenue-per-store is worked "
+    "out separately, then those per-brand figures are added up. Answers "
+    "*“what do one store of each selected brand turn over together?”* — "
+    "useful when a single location stocks several of the selected brands.\n\n"
+    "Both only count brand/country/banner combinations that have a store "
+    "count configured in Settings."
+)
+
+
+def _avg_per_store(df_slice: pd.DataFrame, combos_stores: dict, method: str) -> float:
+    """Average revenue per store for a slice of the (store-configured) data.
+
+    combos_stores maps (brand, country, banner) -> store count, for combos
+    that have one. 'Blended' = total value ÷ total stores. 'Combined' = sum
+    of each combo's own value-per-store. Returns NaN when nothing qualifies."""
+    if not combos_stores:
+        return float("nan")
+    if method == "Combined":
+        total = 0.0
+        for (b, c, bn), n in combos_stores.items():
+            mask = (
+                (df_slice["brand"] == b)
+                & (df_slice["country"] == c)
+                & (df_slice["banner"] == bn)
+            )
+            total += float(df_slice.loc[mask, "sales_value"].sum()) / n
+        return total
+    total_stores = sum(combos_stores.values())
+    return float(df_slice["sales_value"].sum()) / total_stores if total_stores else float("nan")
+
+
+def _highlight_tiles(scoped, store_scoped, combos_stores: dict, method: str):
     """Top-of-dashboard KPI tiles for the single most recent week in scope."""
     most_recent_week = scoped["year_week"].max()
     week_df = scoped[scoped["year_week"] == most_recent_week]
     total_value = float(week_df["sales_value"].sum())
     total_volume = float(week_df["sales_volume"].sum())
-    store_week_value = float(
-        store_scoped.loc[store_scoped["year_week"] == most_recent_week, "sales_value"].sum()
-    )
+    store_week = store_scoped[store_scoped["year_week"] == most_recent_week]
 
     st.subheader(
         f"Most recent week — {most_recent_week}",
         help=(
             "Headline figures for the latest year-week present in the current "
             "filter selection: total sales value (€), total sellout volume "
-            "(units), and average revenue per store that week (value ÷ number "
-            "of stores configured in Settings). The avg-per-store figure only "
-            "counts brand/country/banner combinations that actually have a "
-            "store count set — others are excluded from both the euro total "
-            "and the store count for this figure, so it stays a fair average "
-            "rather than diluting it with unconfigured brands' revenue."
+            "(units), and average revenue per store that week. The "
+            "avg-per-store figure only counts brand/country/banner "
+            "combinations that have a store count set, and uses the "
+            "Blended/Combined method selected above."
         ),
     )
     t1, t2, t3 = st.columns(3)
     t1.metric("Sales value (this week)", eur(total_value))
     t2.metric("Sellout volume (this week)", f"{total_volume:,.0f}")
-    if num_stores_total:
-        t3.metric("Avg revenue / store", eur(store_week_value / num_stores_total))
+    if combos_stores:
+        t3.metric(
+            f"Avg revenue / store ({method.lower()})",
+            eur(_avg_per_store(store_week, combos_stores, method)),
+        )
     else:
         t3.metric("Avg revenue / store", "—", help="Set store counts in Settings.")
 
@@ -504,7 +540,7 @@ def _ytd_slice(df: pd.DataFrame, current_year: str, current_week: int, prior_yea
     return this_df, last_df
 
 
-def _ytd_tiles(scoped: pd.DataFrame, store_scoped: pd.DataFrame, num_stores_total: int):
+def _ytd_tiles(scoped, store_scoped, combos_stores: dict, method: str):
     """Year-to-date tiles: sum of weeks 1..N of the latest year present vs.
     the same weeks 1..N of the prior year, where N is the latest week
     number actually present for the current year (not the calendar week) —
@@ -524,8 +560,8 @@ def _ytd_tiles(scoped: pd.DataFrame, store_scoped: pd.DataFrame, num_stores_tota
             "present for the current year, summed, versus the same weeks 1 "
             "through that number in the prior year. 'Avg revenue / store' "
             "only counts brand/country/banner combinations that have a store "
-            "count configured, using the count currently set in Settings for "
-            "both years (store counts aren't tracked historically)."
+            "count configured (using the count currently set in Settings for "
+            "both years), and the Blended/Combined method selected above."
         ),
     )
 
@@ -537,16 +573,18 @@ def _ytd_tiles(scoped: pd.DataFrame, store_scoped: pd.DataFrame, num_stores_tota
     value_last = float(ytd_last["sales_value"].sum())
     volume_this = float(ytd_this["sales_volume"].sum())
     volume_last = float(ytd_last["sales_volume"].sum())
-    store_value_this = float(store_ytd_this["sales_value"].sum())
-    store_value_last = float(store_ytd_last["sales_value"].sum())
 
     y1, y2, y3 = st.columns(3)
     y1.metric("YTD sales value", eur(value_this), delta=_pct_delta(value_this, value_last))
     y2.metric("YTD sellout volume", f"{volume_this:,.0f}", delta=_pct_delta(volume_this, volume_last))
-    if num_stores_total:
-        avg_this = store_value_this / num_stores_total
-        avg_last = store_value_last / num_stores_total
-        y3.metric("YTD avg revenue / store", eur(avg_this), delta=_pct_delta(avg_this, avg_last))
+    if combos_stores:
+        avg_this = _avg_per_store(store_ytd_this, combos_stores, method)
+        avg_last = _avg_per_store(store_ytd_last, combos_stores, method)
+        y3.metric(
+            f"YTD avg revenue / store ({method.lower()})",
+            eur(avg_this),
+            delta=_pct_delta(avg_this, avg_last),
+        )
     else:
         y3.metric("YTD avg revenue / store", "—", help="Set store counts in Settings.")
 
@@ -602,23 +640,32 @@ def page_dashboard():
     scoped_combos = list(
         scoped[["brand", "country", "banner"]].drop_duplicates().itertuples(index=False)
     )
-    combos_with_stores = []
+    combos_stores = {}          # (brand,country,banner) -> store count, configured combos only
     combos_without_stores = []
     num_stores_total = 0
     target_num = 0.0
     target_den = 0
+    target_sum = 0.0            # plain sum of per-brand targets, for the Combined method
+    any_target = False
     for b, c, bn in scoped_combos:
         n = db.get_store_count(b, c, bn, "DEFAULT") or 0
         t = db.get_target(b, c, bn)
         if n:
-            combos_with_stores.append((b, c, bn))
+            combos_stores[(b, c, bn)] = n
             num_stores_total += n
             if t is not None:
                 target_num += t * n
                 target_den += n
+                target_sum += t
+                any_target = True
         else:
             combos_without_stores.append((b, c, bn))
-    combined_target = (target_num / target_den) if target_den else None
+    combos_with_stores = list(combos_stores.keys())
+    # Blended target line = store-weighted average of per-brand targets;
+    # Combined target line = plain sum of per-brand targets (matching how the
+    # Combined avg sums per-brand per-store figures).
+    target_blended = (target_num / target_den) if target_den else None
+    target_combined = target_sum if any_target else None
 
     if combos_with_stores:
         store_combo_df = pd.DataFrame(combos_with_stores, columns=["brand", "country", "banner"])
@@ -640,8 +687,19 @@ def page_dashboard():
     with status_placeholder.container():
         _status_bar(scope_notices)
 
-    _highlight_tiles(scoped, store_scoped, num_stores_total)
-    _ytd_tiles(scoped, store_scoped, num_stores_total)
+    # How to combine multiple brands into one "avg revenue per store" figure.
+    if len(combos_stores) > 1:
+        method = st.radio(
+            "Avg revenue per store — method",
+            ["Blended", "Combined"],
+            horizontal=True,
+            help=AVG_METHOD_HELP,
+        )
+    else:
+        method = "Blended"  # single (or zero) configured brand: both methods coincide
+
+    _highlight_tiles(scoped, store_scoped, combos_stores, method)
+    _ytd_tiles(scoped, store_scoped, combos_stores, method)
 
     st.subheader(
         "Total sellout per week — year-over-year",
@@ -683,19 +741,32 @@ def page_dashboard():
 
     # Average revenue per store per week, year-over-year, with a target line.
     st.subheader(
-        "Avg revenue per store per week — year-over-year",
+        f"Avg revenue per store per week — year-over-year ({method.lower()})",
         help=(
-            "Sales value that week ÷ number of stores (from Settings), per "
-            "week number with one coloured line per year so weeks compare "
-            "across years. Only counts brand/country/banner combinations "
-            "with a configured store count. The dashed line is the target "
-            "set per brand in Settings (weighted by store count when "
-            "several brands are selected)."
+            "Average revenue per store per week number, one coloured line per "
+            "year. Uses the Blended/Combined method selected above and only "
+            "counts brand/country/banner combinations with a configured store "
+            "count. The dashed line is the target from Settings: store-weighted "
+            "average of the per-brand targets in Blended mode, or their plain "
+            "sum in Combined mode."
         ),
     )
-    if num_stores_total:
-        avg_df = store_scoped.groupby(["year", "week"], as_index=False)["sales_value"].sum()
-        avg_df["avg_rev"] = avg_df["sales_value"] / num_stores_total
+    target_line = target_combined if method == "Combined" else target_blended
+    if combos_stores:
+        if method == "Combined":
+            parts = []
+            for (b, c, bn), n in combos_stores.items():
+                sub = store_scoped[
+                    (store_scoped["brand"] == b)
+                    & (store_scoped["country"] == c)
+                    & (store_scoped["banner"] == bn)
+                ].groupby(["year", "week"], as_index=False)["sales_value"].sum()
+                sub["avg_rev"] = sub["sales_value"] / n
+                parts.append(sub[["year", "week", "avg_rev"]])
+            avg_df = pd.concat(parts).groupby(["year", "week"], as_index=False)["avg_rev"].sum()
+        else:
+            avg_df = store_scoped.groupby(["year", "week"], as_index=False)["sales_value"].sum()
+            avg_df["avg_rev"] = avg_df["sales_value"] / num_stores_total
         avg_line = (
             alt.Chart(avg_df)
             .mark_line(point=True, interpolate="monotone")
@@ -715,16 +786,16 @@ def page_dashboard():
             )
             .properties(height=300)
         )
-        if combined_target is not None:
+        if target_line is not None:
             rule = (
-                alt.Chart(pd.DataFrame({"target": [combined_target]}))
+                alt.Chart(pd.DataFrame({"target": [target_line]}))
                 .mark_rule(color="red", strokeDash=[6, 4])
                 .encode(y="target:Q")
             )
             text = (
-                alt.Chart(pd.DataFrame({"target": [combined_target]}))
+                alt.Chart(pd.DataFrame({"target": [target_line]}))
                 .mark_text(align="left", dx=5, dy=-5, color="red")
-                .encode(y="target:Q", text=alt.value(f"target € {combined_target:,.0f}"))
+                .encode(y="target:Q", text=alt.value(f"target € {target_line:,.0f}"))
             )
             avg_line = avg_line + rule + text
         st.altair_chart(avg_line, use_container_width=True)
