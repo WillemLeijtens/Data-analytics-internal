@@ -109,7 +109,12 @@ def _dual_year_sparkline_svg(cur_vals: list[float], prior_vals: list[float],
         )
         svg.append(
             f'<rect x="{x:.1f}" y="0" width="{slice_width:.1f}" height="{height}" '
-            f'fill="transparent"><title>{html.escape(tooltip)}</title></rect>'
+            # fill="transparent" alone is unreliable for hit-testing in some
+            # browsers (an unpainted-looking fill can fail to register
+            # pointer events under the default `visiblePainted` behaviour) —
+            # pointer-events="all" forces the rect to always be hoverable
+            # regardless of how "transparent" is interpreted for painting.
+            f'fill="transparent" pointer-events="all"><title>{html.escape(tooltip)}</title></rect>'
         )
     svg.append("</svg>")
     return "".join(svg)
@@ -642,8 +647,10 @@ def page_dashboard():
             "'LYTD'), with a percentage badge for that YTD-vs-LYTD total — "
             "both sides cover the same week range, so a partial current year "
             "is never compared against a full prior year. Hover any point on "
-            "a sparkline for that week's numbers. Switch to the full data "
-            "table for exact numbers per week."
+            "a sparkline for that week's numbers. 'Latest week' is the single "
+            "most recent imported week; 'Total (YTD)' sums only the current "
+            "year's weeks shown in the sparkline, not the item's full import "
+            "history. Switch to the full data table for exact numbers per week."
         ),
     )
     view_col, metric_col_ui, _spacer = st.columns([1, 1, 3])
@@ -721,7 +728,7 @@ def page_dashboard():
             )
             badge = _yoy_badge_html(sum(cur_vals), sum(prior_vals))
             latest_val = all_time.loc[(sku, desc), all_week_cols[-1]] if all_week_cols else 0
-            total_val = all_time.loc[(sku, desc), all_week_cols].sum() if all_week_cols else 0
+            total_val = sum(cur_vals)  # YTD only (current year, weeks 1..N) — not all-time history
             rows_html.append(
                 "<tr>"
                 f'<td style="padding:8px 12px;white-space:nowrap;">{html.escape(str(sku))}</td>'
@@ -743,8 +750,8 @@ def page_dashboard():
         <th style="padding:8px 12px;">Item</th>
         <th style="padding:8px 12px;">{metric_choice} trend (YTD)</th>
         <th style="padding:8px 12px;">YTD vs LYTD</th>
-        <th style="padding:8px 12px;text-align:right;">Latest week</th>
-        <th style="padding:8px 12px;text-align:right;">Total</th>
+        <th style="padding:8px 12px;text-align:right;" title="The single most recent imported week for this item.">Latest week</th>
+        <th style="padding:8px 12px;text-align:right;" title="Sum of the current year's weeks 1..N shown in the sparkline (YTD) — not the item's full import history.">Total (YTD)</th>
         </tr>
         </thead>
         <tbody>
