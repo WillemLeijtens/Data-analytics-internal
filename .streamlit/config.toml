@@ -1,0 +1,9 @@
+# Dark theme matching the approved design handoff (Dashboard.dc.html):
+# page bg #0a0b0f, tile bg #14161d, near-white text.
+[theme]
+base = "dark"
+primaryColor = "#e0567a"
+backgroundColor = "#0a0b0f"
+secondaryBackgroundColor = "#14161d"
+textColor = "#f2f2f4"
+font = "sans serif"

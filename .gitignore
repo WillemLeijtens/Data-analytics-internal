@@ -1,6 +1,6 @@
 __pycache__/
 *.pyc
 data/*.db
-.streamlit/
+.streamlit/secrets.toml
 .env
 certs/

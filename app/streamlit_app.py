@@ -494,44 +494,13 @@ def _avg_per_store(df_slice: pd.DataFrame, combos_stores: dict, method: str) -> 
     return float(df_slice["sales_value"].sum()) / total_stores if total_stores else float("nan")
 
 
-def _highlight_tiles(scoped, store_scoped, combos_stores: dict, method: str):
-    """Top-of-dashboard KPI tiles for the single most recent week in scope."""
-    most_recent_week = scoped["year_week"].max()
-    week_df = scoped[scoped["year_week"] == most_recent_week]
-    total_value = float(week_df["sales_value"].sum())
-    total_volume = float(week_df["sales_volume"].sum())
-    store_week = store_scoped[store_scoped["year_week"] == most_recent_week]
-
-    st.subheader(
-        f"Most recent week — {most_recent_week}",
-        help=(
-            "Headline figures for the latest year-week present in the current "
-            "filter selection: total sales value (€), total sellout volume "
-            "(units), and average revenue per store that week. The "
-            "avg-per-store figure only counts brand/country/banner "
-            "combinations that have a store count set, and uses the "
-            "Blended/Combined method selected above."
-        ),
-    )
-    t1, t2, t3 = st.columns(3)
-    t1.metric("Sales value (this week)", eur(total_value))
-    t2.metric("Sellout volume (this week)", f"{total_volume:,.0f}")
-    if combos_stores:
-        t3.metric(
-            f"Avg revenue / store ({method.lower()})",
-            eur(_avg_per_store(store_week, combos_stores, method)),
-        )
-    else:
-        t3.metric("Avg revenue / store", "—", help="Set store counts in Settings.")
-
-
 def _pct_delta(this: float, last: float) -> str | None:
-    """'+12.3% vs YTD last year' style delta string for st.metric, or None
-    if there's nothing to compare against (avoids a bogus divide-by-zero)."""
+    """'+12.3% vs YTD last year' style delta string, or None if there's
+    nothing to compare against (avoids a bogus divide-by-zero)."""
     if last == 0:
         return None
     pct = (this - last) / last * 100
-    return f"{pct:+.1f}% vs YTD last year"
+    return f"{pct:+.1f}%"
 
 
 def _ytd_slice(df: pd.DataFrame, current_year: str, current_week: int, prior_year: str):
@@ -540,53 +509,248 @@ def _ytd_slice(df: pd.DataFrame, current_year: str, current_week: int, prior_yea
     return this_df, last_df
 
 
-def _ytd_tiles(scoped, store_scoped, combos_stores: dict, method: str):
-    """Year-to-date tiles: sum of weeks 1..N of the latest year present vs.
-    the same weeks 1..N of the prior year, where N is the latest week
-    number actually present for the current year (not the calendar week) —
-    so it stays a fair like-for-like comparison regardless of when the app
-    is opened."""
+# ---- Redesigned KPI tiles (per design_handoff_dashboard_filters) ----------
+# Categorical colour palette: a fixed hue per dimension value, reused between
+# the breakdown rows here (and, conceptually, the filter chips) so a value's
+# colour is stable wherever it appears.
+_HUES = {"brand": [25, 80, 170, 290], "country": [200, 140], "banner": [320, 60, 250]}
+_DIM_KEY = {"Brand": "brand", "Country": "country", "Banner": "banner"}
+
+
+def _fmt_num(n: float) -> str:
+    """Whole number with comma thousands separators, per the design spec."""
+    return f"{n:,.0f}"
+
+
+def _value_colors(dim: str, values) -> dict:
+    """Map each value of a dimension to its palette colours, assigned by
+    sorted order so the colour ↔ value pairing is stable across reruns."""
+    hues = _HUES[dim]
+    out = {}
+    for i, v in enumerate(sorted(values)):
+        h = hues[i % len(hues)]
+        out[v] = {"row": f"oklch(68% 0.15 {h})"}
+    return out
+
+
+def _sum_rows(df_slice, dim, col, colors, fmt):
+    """Breakdown rows for an additive metric (value/volume): group-sum by the
+    dimension, sorted high→low, with each bar relative to the row max."""
+    g = df_slice.groupby(dim, as_index=False)[col].sum()
+    g = g[g[col] != 0].sort_values(col, ascending=False)
+    if g.empty:
+        return []
+    mx = g[col].max() or 1
+    return [
+        {"name": r[dim], "value": fmt(r[col]), "color": colors[r[dim]]["row"],
+         "share": r[col] / mx * 100}
+        for _, r in g.iterrows()
+    ]
+
+
+def _avg_rows(store_slice, dim, combos_stores, colors, fmt):
+    """Breakdown rows for avg revenue per store: each dimension value's own
+    revenue ÷ its own store count — independent averages, NOT a sum."""
+    rows = []
+    for val in store_slice[dim].unique():
+        stores = sum(
+            n for (b, c, bn), n in combos_stores.items()
+            if {"brand": b, "country": c, "banner": bn}[dim] == val
+        )
+        if not stores:
+            continue
+        amt = float(store_slice[store_slice[dim] == val]["sales_value"].sum()) / stores
+        if amt:
+            rows.append({"val": val, "amt": amt})
+    if not rows:
+        return []
+    mx = max(r["amt"] for r in rows)
+    rows.sort(key=lambda r: -r["amt"])
+    return [
+        {"name": r["val"], "value": fmt(r["amt"]), "color": colors[r["val"]]["row"],
+         "share": r["amt"] / mx * 100}
+        for r in rows
+    ]
+
+
+def _rows_block(rows, divider=True):
+    inner = ""
+    for r in rows:
+        inner += (
+            '<div style="display:flex;flex-direction:column;gap:5px">'
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px">'
+            '<div style="display:flex;align-items:center;gap:8px;min-width:0">'
+            f'<span style="width:9px;height:9px;border-radius:50%;background:{r["color"]};flex:none"></span>'
+            '<span style="font-size:13.5px;font-weight:600;color:rgba(255,255,255,0.85);'
+            f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{html.escape(str(r["name"]))}</span>'
+            '</div>'
+            f'<span style="font-size:14px;font-weight:700;color:#fff;white-space:nowrap">{r["value"]}</span>'
+            '</div>'
+            '<div style="height:4px;border-radius:2px;background:rgba(255,255,255,0.06);overflow:hidden">'
+            f'<div style="height:100%;border-radius:2px;background:{r["color"]};width:{r["share"]:.0f}%"></div>'
+            '</div></div>'
+        )
+    border = "border-top:1px solid rgba(255,255,255,0.07);padding-top:16px;" if divider else ""
+    return f'<div style="display:flex;flex-direction:column;gap:10px;{border}">{inner}</div>'
+
+
+def _tile(label, big=None, delta=None, rows_html="", footer=None, footer_alpha="0.4", big_size=44):
+    body = f'<div style="font-size:15px;font-weight:600;color:rgba(255,255,255,0.65)">{label}</div>'
+    if big is not None:
+        body += (
+            f'<div style="font-size:{big_size}px;font-weight:800;letter-spacing:-0.01em">{big}</div>'
+        )
+    if delta is not None:
+        body += (
+            '<div style="align-self:flex-start;display:flex;align-items:center;gap:6px;'
+            'background:rgba(46,138,90,0.16);color:oklch(74% 0.15 150);padding:6px 12px;'
+            f'border-radius:8px;font-size:13px;font-weight:700">↑ {delta} vs YTD last year</div>'
+        )
+    body += rows_html
+    if footer:
+        body += f'<div style="font-size:11.5px;color:rgba(255,255,255,{footer_alpha})">{footer}</div>'
+    return (
+        '<div style="background:#14161d;border:1px solid rgba(255,255,255,0.06);border-radius:16px;'
+        f'padding:26px 28px;display:flex;flex-direction:column;gap:16px;height:100%">{body}</div>'
+    )
+
+
+def _section_header(title: str, tooltip: str, key: str) -> str:
+    """Title + info-dot on the left, segmented control on the right. Returns
+    the chosen dimension key (brand/country/banner)."""
+    hc1, hc2 = st.columns([3, 2], vertical_alignment="center")
+    with hc1:
+        st.markdown(
+            _strip_line_indent(
+                '<div style="display:flex;align-items:center;gap:10px">'
+                f'<h2 style="margin:0;font-size:26px;font-weight:800;letter-spacing:-0.01em">{title}</h2>'
+                '<span title="' + html.escape(tooltip) + '" style="width:20px;height:20px;'
+                'border-radius:50%;border:1.5px solid rgba(255,255,255,0.35);display:inline-flex;'
+                'align-items:center;justify-content:center;font-size:12px;color:rgba(255,255,255,0.55);'
+                'cursor:help">?</span></div>'
+            ),
+            unsafe_allow_html=True,
+        )
+    with hc2:
+        choice = st.segmented_control(
+            "Breakdown", ["Brand", "Country", "Banner"],
+            default="Brand", key=key, label_visibility="collapsed",
+        )
+    return _DIM_KEY.get(choice or "Brand", "brand")
+
+
+def _avg_tile(label, store_slice, dim, combos_stores, colors, combine, delta=None, big_size=44):
+    """Avg-revenue-per-store tile: blended single figure when combine is on,
+    per-value independent averages (not summed) when off."""
+    if not combos_stores:
+        return _tile(label, big="—", footer="Set store counts in Settings", big_size=big_size)
+    if combine:
+        avg = _avg_per_store(store_slice, combos_stores, "Blended")
+        return _tile(
+            label, big=eur(avg), delta=delta,
+            footer="Blended across selected filters", big_size=big_size,
+        )
+    rows = _avg_rows(store_slice, dim, combos_stores, colors, eur)
+    return _tile(
+        label, rows_html=_rows_block(rows, divider=False),
+        footer="Individual averages — not summed", footer_alpha="0.35", big_size=big_size,
+    )
+
+
+def _week_section(scoped, store_scoped, combos_stores):
+    most_recent_week = scoped["year_week"].max()
+    dim = _section_header(
+        f"Most recent week — {most_recent_week}",
+        f"Headline figures for ISO week {most_recent_week}. The segmented "
+        "control picks which dimension the per-value breakdown splits by.",
+        key="dim_week",
+    )
+    colors = _value_colors(dim, scoped[dim].unique())
+    week_df = scoped[scoped["year_week"] == most_recent_week]
+    store_week = store_scoped[store_scoped["year_week"] == most_recent_week]
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(
+            _strip_line_indent(_tile(
+                "Sales value (this week)", big=eur(week_df["sales_value"].sum()),
+                rows_html=_rows_block(_sum_rows(week_df, dim, "sales_value", colors, eur)),
+            )),
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            _strip_line_indent(_tile(
+                "Sellout volume (this week)", big=_fmt_num(week_df["sales_volume"].sum()),
+                rows_html=_rows_block(_sum_rows(week_df, dim, "sales_volume", colors, _fmt_num)),
+            )),
+            unsafe_allow_html=True,
+        )
+    with c3:
+        combine = st.toggle("Combine avg / store", value=True, key="avg_combine_week")
+        st.markdown(
+            _strip_line_indent(_avg_tile(
+                "Avg revenue / store", store_week, dim, combos_stores, colors, combine,
+            )),
+            unsafe_allow_html=True,
+        )
+
+
+def _ytd_section(scoped, store_scoped, combos_stores):
     current_year = scoped["year"].max()
     current_week = int(scoped.loc[scoped["year"] == current_year, "week"].max())
     prior_year = str(int(current_year) - 1)
-
     ytd_this, ytd_last = _ytd_slice(scoped, current_year, current_week, prior_year)
     store_ytd_this, store_ytd_last = _ytd_slice(store_scoped, current_year, current_week, prior_year)
 
-    st.subheader(
+    dim = _section_header(
         f"YTD {current_year} vs YTD {prior_year} (weeks 1–{current_week})",
-        help=(
-            "Year-to-date comparison: weeks 1 through the latest week number "
-            "present for the current year, summed, versus the same weeks 1 "
-            "through that number in the prior year. 'Avg revenue / store' "
-            "only counts brand/country/banner combinations that have a store "
-            "count configured (using the count currently set in Settings for "
-            "both years), and the Blended/Combined method selected above."
-        ),
+        "Year-to-date vs the same weeks last year. The segmented control "
+        "picks which dimension the per-value breakdown splits by.",
+        key="dim_ytd",
     )
-
     if ytd_last.empty:
         st.caption(f"No {prior_year} data in this selection to compare against yet.")
-        return
 
+    colors = _value_colors(dim, scoped[dim].unique())
     value_this = float(ytd_this["sales_value"].sum())
     value_last = float(ytd_last["sales_value"].sum())
     volume_this = float(ytd_this["sales_volume"].sum())
     volume_last = float(ytd_last["sales_volume"].sum())
 
-    y1, y2, y3 = st.columns(3)
-    y1.metric("YTD sales value", eur(value_this), delta=_pct_delta(value_this, value_last))
-    y2.metric("YTD sellout volume", f"{volume_this:,.0f}", delta=_pct_delta(volume_this, volume_last))
-    if combos_stores:
-        avg_this = _avg_per_store(store_ytd_this, combos_stores, method)
-        avg_last = _avg_per_store(store_ytd_last, combos_stores, method)
-        y3.metric(
-            f"YTD avg revenue / store ({method.lower()})",
-            eur(avg_this),
-            delta=_pct_delta(avg_this, avg_last),
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(
+            _strip_line_indent(_tile(
+                "YTD sales value", big=eur(value_this), big_size=40,
+                delta=_pct_delta(value_this, value_last),
+                rows_html=_rows_block(_sum_rows(ytd_this, dim, "sales_value", colors, eur)),
+            )),
+            unsafe_allow_html=True,
         )
-    else:
-        y3.metric("YTD avg revenue / store", "—", help="Set store counts in Settings.")
+    with c2:
+        st.markdown(
+            _strip_line_indent(_tile(
+                "YTD sellout volume", big=_fmt_num(volume_this), big_size=40,
+                delta=_pct_delta(volume_this, volume_last),
+                rows_html=_rows_block(_sum_rows(ytd_this, dim, "sales_volume", colors, _fmt_num)),
+            )),
+            unsafe_allow_html=True,
+        )
+    with c3:
+        combine = st.toggle("Combine avg / store", value=True, key="avg_combine_ytd")
+        avg_delta = None
+        if combos_stores and combine:
+            a_this = _avg_per_store(store_ytd_this, combos_stores, "Blended")
+            a_last = _avg_per_store(store_ytd_last, combos_stores, "Blended")
+            avg_delta = _pct_delta(a_this, a_last)
+        st.markdown(
+            _strip_line_indent(_avg_tile(
+                "YTD avg revenue / store", store_ytd_this, dim, combos_stores, colors,
+                combine, delta=avg_delta, big_size=40,
+            )),
+            unsafe_allow_html=True,
+        )
 
 
 def page_dashboard():
@@ -687,19 +851,10 @@ def page_dashboard():
     with status_placeholder.container():
         _status_bar(scope_notices)
 
-    # How to combine multiple brands into one "avg revenue per store" figure.
-    if len(combos_stores) > 1:
-        method = st.radio(
-            "Avg revenue per store — method",
-            ["Blended", "Combined"],
-            horizontal=True,
-            help=AVG_METHOD_HELP,
-        )
-    else:
-        method = "Blended"  # single (or zero) configured brand: both methods coincide
-
-    _highlight_tiles(scoped, store_scoped, combos_stores, method)
-    _ytd_tiles(scoped, store_scoped, combos_stores, method)
+    _week_section(scoped, store_scoped, combos_stores)
+    st.divider()
+    _ytd_section(scoped, store_scoped, combos_stores)
+    st.divider()
 
     st.subheader(
         "Total sellout per week — year-over-year",
@@ -741,16 +896,22 @@ def page_dashboard():
 
     # Average revenue per store per week, year-over-year, with a target line.
     st.subheader(
-        f"Avg revenue per store per week — year-over-year ({method.lower()})",
+        "Avg revenue per store per week — year-over-year",
         help=(
             "Average revenue per store per week number, one coloured line per "
-            "year. Uses the Blended/Combined method selected above and only "
-            "counts brand/country/banner combinations with a configured store "
-            "count. The dashed line is the target from Settings: store-weighted "
-            "average of the per-brand targets in Blended mode, or their plain "
-            "sum in Combined mode."
+            "year. Only counts brand/country/banner combinations with a "
+            "configured store count. The dashed line is the target from "
+            "Settings: store-weighted average of the per-brand targets in "
+            "Blended mode, or their plain sum in Combined mode."
         ),
     )
+    if len(combos_stores) > 1:
+        method = st.radio(
+            "Method", ["Blended", "Combined"], horizontal=True,
+            help=AVG_METHOD_HELP, key="avg_chart_method",
+        )
+    else:
+        method = "Blended"
     target_line = target_combined if method == "Combined" else target_blended
     if combos_stores:
         if method == "Combined":
