@@ -29,6 +29,20 @@ def fmt_yw(year_week) -> str:
     return f"{s[:4]}-{s[4:]}" if len(s) >= 6 else s
 
 
+def _strip_line_indent(html_text: str) -> str:
+    """Remove leading whitespace from every line, regardless of whether it's
+    uniform across the block. Markdown treats a line indented 4+ spaces as a
+    preformatted code block, silently turning an entire HTML fragment into
+    inert literal text instead of live markup — with no error, so it's easy
+    to miss (this bit an earlier version of the sparkline table, where the
+    f-string's lines carried the surrounding Python code's indentation).
+    textwrap.dedent() is NOT sufficient here: it only strips the common
+    prefix shared by every line, and this HTML is assembled by interpolating
+    already-flush-left pieces (e.g. a <style> block) into an indented
+    f-string, so there often is no common prefix for dedent to find at all."""
+    return "\n".join(line.lstrip() for line in html_text.split("\n"))
+
+
 def nl_int(value: float) -> str:
     """Whole number with '.' as the thousands separator (e.g. 51473 -> '51.473')."""
     return f"{value:,.0f}".replace(",", ".")
@@ -51,25 +65,55 @@ _SPARK_CUR_COLOR = "#ef4444"  # solid line: most recent year
 _SPARK_PRIOR_COLOR = "#38bdf8"  # dashed line: prior year
 
 
-def _dual_year_sparkline_svg(cur_vals: list[float], prior_vals: list[float],
-                              week_axis: list[int], current_year: str, prior_year: str,
-                              fmt_number, width: int = 170, height: int = 40) -> str:
-    """Inline SVG with two overlaid polylines (solid = current year, dashed =
-    prior year) sharing one y-scale, so relative shape/height is comparable.
-    Built by hand because st.column_config.LineChartColumn only supports a
-    single monochrome series per cell — not the two-colour year overlay
-    needed to compare against the prior year at a glance.
+SPARKLINE_HOVER_CSS = """
+<style>
+.spark-hover-cell { position: relative; display: inline-block; }
+.spark-hover-cell svg { display: block; pointer-events: none; }
+.spark-overlay { position: absolute; inset: 0; display: flex; }
+.spark-slice { position: relative; flex: 1 1 0; height: 100%; }
+.spark-slice::after {
+    content: attr(data-tip);
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: 4px;
+    background: #1e2530;
+    color: #f0f0f0;
+    padding: 4px 9px;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.3;
+    white-space: nowrap;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.08s linear;
+    pointer-events: none;
+    z-index: 50;
+}
+.spark-slice:hover { background: rgba(255,255,255,0.08); }
+.spark-slice:hover::after { opacity: 1; visibility: visible; }
+</style>
+"""
 
-    A transparent, hoverable vertical slice sits behind each week (rather
-    than a tiny point marker, which would be hard to land a cursor on given
-    how little horizontal space one week gets) carrying a native SVG
-    <title> — the browser's own tooltip, no JS needed — showing that
-    week's number plus its year-over-year value."""
+
+def _dual_year_sparkline_svg(cur_vals: list[float], prior_vals: list[float],
+                              width: int = 170, height: int = 40) -> str:
+    """Inline SVG with two overlaid polylines only (solid = current year,
+    dashed = prior year) sharing one y-scale, so relative shape/height is
+    comparable. Built by hand because st.column_config.LineChartColumn only
+    supports a single monochrome series per cell — not the two-colour year
+    overlay needed to compare against the prior year at a glance. Purely
+    decorative: hovering is handled by a separate plain-HTML/CSS overlay
+    (see _sparkline_cell_html) rather than any SVG hit-testing, since SVG
+    <rect>/<title> hover support proved unreliable across browsers even
+    with pointer-events="all"."""
     all_vals = [v for v in (cur_vals + prior_vals) if v is not None]
     vmax = max(all_vals) if all_vals else 0
     vmax = vmax or 1  # avoid div-by-zero for an all-zero row
     pad = 3
-    n = len(week_axis)
+    n = len(cur_vals)
     step = (width - 2 * pad) / (n - 1) if n > 1 else 0
 
     def _points(vals: list[float]) -> str:
@@ -97,27 +141,34 @@ def _dual_year_sparkline_svg(cur_vals: list[float], prior_vals: list[float],
             f'<polyline points="{cur_pts}" fill="none" stroke="{_SPARK_CUR_COLOR}" '
             f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />'
         )
-    # Hover slices, one per week, on top of the lines.
-    slice_width = max(step, 4)
+    svg.append("</svg>")
+    return "".join(svg)
+
+
+def _sparkline_cell_html(cur_vals: list[float], prior_vals: list[float],
+                          week_axis: list[int], current_year: str, prior_year: str,
+                          fmt_number, width: int = 170, height: int = 40) -> str:
+    """The sparkline SVG plus a plain-HTML overlay of one hoverable <div> per
+    week, styled by SPARKLINE_HOVER_CSS. Div :hover is unconditionally
+    supported by every browser — unlike SVG element hit-testing, which
+    turned out not to reliably fire pointer/hover events for a transparent
+    <rect> even with pointer-events="all" set."""
+    svg = _dual_year_sparkline_svg(cur_vals, prior_vals, width, height)
+    slices = []
     for i, wk in enumerate(week_axis):
-        x = pad + i * step - slice_width / 2
         cur_v = cur_vals[i] if i < len(cur_vals) else 0
         prior_v = prior_vals[i] if i < len(prior_vals) else 0
         tooltip = (
             f"Week {wk}: {fmt_number(cur_v)} ({current_year}) vs "
             f"{fmt_number(prior_v)} ({prior_year})"
         )
-        svg.append(
-            f'<rect x="{x:.1f}" y="0" width="{slice_width:.1f}" height="{height}" '
-            # fill="transparent" alone is unreliable for hit-testing in some
-            # browsers (an unpainted-looking fill can fail to register
-            # pointer events under the default `visiblePainted` behaviour) —
-            # pointer-events="all" forces the rect to always be hoverable
-            # regardless of how "transparent" is interpreted for painting.
-            f'fill="transparent" pointer-events="all"><title>{html.escape(tooltip)}</title></rect>'
-        )
-    svg.append("</svg>")
-    return "".join(svg)
+        slices.append(f'<div class="spark-slice" data-tip="{html.escape(tooltip)}"></div>')
+    return (
+        f'<div class="spark-hover-cell" style="width:{width}px;height:{height}px;">'
+        f"{svg}"
+        f'<div class="spark-overlay">{"".join(slices)}</div>'
+        f"</div>"
+    )
 
 
 def _yoy_badge_html(cur_total: float, prior_total: float) -> str:
@@ -723,7 +774,7 @@ def page_dashboard():
         for (sku, desc) in all_time.index:
             cur_vals = cur_pivot.loc[sku].tolist() if sku in cur_pivot.index else [0.0] * len(week_axis)
             prior_vals = prior_pivot.loc[sku].tolist() if sku in prior_pivot.index else [0.0] * len(week_axis)
-            svg = _dual_year_sparkline_svg(
+            svg = _sparkline_cell_html(
                 cur_vals, prior_vals, week_axis, current_year, prior_year, fmt_number,
             )
             badge = _yoy_badge_html(sum(cur_vals), sum(prior_vals))
@@ -741,6 +792,7 @@ def page_dashboard():
             )
 
         table_html = f"""
+        {SPARKLINE_HOVER_CSS}
         <div style="margin-bottom:6px;font-size:0.9em;">{legend}</div>
         <div style="max-height:600px;overflow-y:auto;border:1px solid rgba(128,128,128,0.25);border-radius:8px;">
         <table style="width:100%;border-collapse:collapse;font-size:0.92em;">
@@ -760,7 +812,7 @@ def page_dashboard():
         </table>
         </div>
         """
-        st.markdown(table_html, unsafe_allow_html=True)
+        st.markdown(_strip_line_indent(table_html), unsafe_allow_html=True)
 
     st.subheader(
         "KPIs",
