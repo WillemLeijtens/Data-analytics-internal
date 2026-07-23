@@ -52,22 +52,29 @@ _SPARK_PRIOR_COLOR = "#38bdf8"  # dashed line: prior year
 
 
 def _dual_year_sparkline_svg(cur_vals: list[float], prior_vals: list[float],
-                              width: int = 170, height: int = 40) -> str:
+                              week_axis: list[int], current_year: str, prior_year: str,
+                              fmt_number, width: int = 170, height: int = 40) -> str:
     """Inline SVG with two overlaid polylines (solid = current year, dashed =
     prior year) sharing one y-scale, so relative shape/height is comparable.
     Built by hand because st.column_config.LineChartColumn only supports a
     single monochrome series per cell — not the two-colour year overlay
-    needed to compare against the prior year at a glance."""
+    needed to compare against the prior year at a glance.
+
+    A transparent, hoverable vertical slice sits behind each week (rather
+    than a tiny point marker, which would be hard to land a cursor on given
+    how little horizontal space one week gets) carrying a native SVG
+    <title> — the browser's own tooltip, no JS needed — showing that
+    week's number plus its year-over-year value."""
     all_vals = [v for v in (cur_vals + prior_vals) if v is not None]
     vmax = max(all_vals) if all_vals else 0
     vmax = vmax or 1  # avoid div-by-zero for an all-zero row
     pad = 3
+    n = len(week_axis)
+    step = (width - 2 * pad) / (n - 1) if n > 1 else 0
 
     def _points(vals: list[float]) -> str:
-        n = len(vals)
-        if n < 2:
+        if len(vals) < 2:
             return ""
-        step = (width - 2 * pad) / (n - 1)
         pts = []
         for i, v in enumerate(vals):
             x = pad + i * step
@@ -89,6 +96,20 @@ def _dual_year_sparkline_svg(cur_vals: list[float], prior_vals: list[float],
         svg.append(
             f'<polyline points="{cur_pts}" fill="none" stroke="{_SPARK_CUR_COLOR}" '
             f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />'
+        )
+    # Hover slices, one per week, on top of the lines.
+    slice_width = max(step, 4)
+    for i, wk in enumerate(week_axis):
+        x = pad + i * step - slice_width / 2
+        cur_v = cur_vals[i] if i < len(cur_vals) else 0
+        prior_v = prior_vals[i] if i < len(prior_vals) else 0
+        tooltip = (
+            f"Week {wk}: {fmt_number(cur_v)} ({current_year}) vs "
+            f"{fmt_number(prior_v)} ({prior_year})"
+        )
+        svg.append(
+            f'<rect x="{x:.1f}" y="0" width="{slice_width:.1f}" height="{height}" '
+            f'fill="transparent"><title>{html.escape(tooltip)}</title></rect>'
         )
     svg.append("</svg>")
     return "".join(svg)
@@ -617,9 +638,12 @@ def page_dashboard():
         help=(
             "Sellout volume or value broken down per item, for the current "
             "selection. The sparkline view compares this year's weekly shape "
-            "(solid) against the same weeks last year (dashed), with a "
-            "percentage badge for the year-over-year total. Switch to the "
-            "full data table for exact numbers per week."
+            "year-to-date (solid) against the same weeks last year (dashed, "
+            "'LYTD'), with a percentage badge for that YTD-vs-LYTD total — "
+            "both sides cover the same week range, so a partial current year "
+            "is never compared against a full prior year. Hover any point on "
+            "a sparkline for that week's numbers. Switch to the full data "
+            "table for exact numbers per week."
         ),
     )
     view = st.radio(
@@ -656,24 +680,29 @@ def page_dashboard():
             values=metric_col, aggfunc="sum", fill_value=0,
         ).sort_index(axis=1)
 
-        # Current-year / prior-year pivots, aligned on the same week-number
-        # axis, drive the two-line sparkline and the YoY badge.
+        # Current-year / prior-year pivots, restricted to weeks 1..N where N
+        # is the latest week actually present for the current year (its
+        # YTD cutoff) — applied to BOTH years, i.e. YTD vs LYTD. Using the
+        # union of every week present in either year (the previous approach)
+        # compared a partial current year against a full prior year, making
+        # every item look like it underperformed simply because "this year"
+        # only had a few months in it yet.
+        current_week = int(scoped.loc[scoped["year"] == current_year, "week"].max())
+        week_axis = list(range(1, current_week + 1))
         cur_pivot = scoped[scoped["year"] == current_year].pivot_table(
             index="sku", columns="week", values=metric_col, aggfunc="sum", fill_value=0,
-        )
+        ).reindex(columns=week_axis, fill_value=0)
         prior_pivot = scoped[scoped["year"] == prior_year].pivot_table(
             index="sku", columns="week", values=metric_col, aggfunc="sum", fill_value=0,
-        )
-        week_axis = sorted(set(cur_pivot.columns) | set(prior_pivot.columns))
-        cur_pivot = cur_pivot.reindex(columns=week_axis, fill_value=0)
-        prior_pivot = prior_pivot.reindex(columns=week_axis, fill_value=0)
+        ).reindex(columns=week_axis, fill_value=0)
 
-        has_prior_year = not prior_pivot.empty and prior_year in scoped["year"].values
+        has_prior_year = prior_year in scoped["year"].values
+        ytd_label = f"YTD (wk 1–{current_week})"
         legend = (
-            f'<span style="color:{_SPARK_CUR_COLOR};font-weight:600;">● {current_year}</span>'
-            f'&nbsp;&nbsp;<span style="color:{_SPARK_PRIOR_COLOR};font-weight:600;">- - {prior_year}</span>'
+            f'<span style="color:{_SPARK_CUR_COLOR};font-weight:600;">● {current_year} {ytd_label}</span>'
+            f'&nbsp;&nbsp;<span style="color:{_SPARK_PRIOR_COLOR};font-weight:600;">- - {prior_year} same weeks (LYTD)</span>'
             if has_prior_year else
-            f'<span style="color:{_SPARK_CUR_COLOR};font-weight:600;">● {current_year}</span> '
+            f'<span style="color:{_SPARK_CUR_COLOR};font-weight:600;">● {current_year} {ytd_label}</span> '
             f'<span style="color:#888;">(no {prior_year} data in this selection)</span>'
         )
 
@@ -682,7 +711,9 @@ def page_dashboard():
         for (sku, desc) in all_time.index:
             cur_vals = cur_pivot.loc[sku].tolist() if sku in cur_pivot.index else [0.0] * len(week_axis)
             prior_vals = prior_pivot.loc[sku].tolist() if sku in prior_pivot.index else [0.0] * len(week_axis)
-            svg = _dual_year_sparkline_svg(cur_vals, prior_vals)
+            svg = _dual_year_sparkline_svg(
+                cur_vals, prior_vals, week_axis, current_year, prior_year, fmt_number,
+            )
             badge = _yoy_badge_html(sum(cur_vals), sum(prior_vals))
             latest_val = all_time.loc[(sku, desc), all_week_cols[-1]] if all_week_cols else 0
             total_val = all_time.loc[(sku, desc), all_week_cols].sum() if all_week_cols else 0
@@ -705,8 +736,8 @@ def page_dashboard():
         <tr style="border-bottom:1px solid rgba(128,128,128,0.35);text-align:left;">
         <th style="padding:8px 12px;">SKU</th>
         <th style="padding:8px 12px;">Item</th>
-        <th style="padding:8px 12px;">{metric_choice} trend</th>
-        <th style="padding:8px 12px;">YoY</th>
+        <th style="padding:8px 12px;">{metric_choice} trend (YTD)</th>
+        <th style="padding:8px 12px;">YTD vs LYTD</th>
         <th style="padding:8px 12px;text-align:right;">Latest week</th>
         <th style="padding:8px 12px;text-align:right;">Total</th>
         </tr>
