@@ -646,12 +646,20 @@ def page_dashboard():
             "table for exact numbers per week."
         ),
     )
-    view = st.radio(
-        "Item table view",
-        ["Sparkline", "Data table"],
-        horizontal=True,
-        label_visibility="collapsed",
-    )
+    view_col, metric_col_ui, _spacer = st.columns([1, 1, 3])
+    with view_col:
+        view = st.radio(
+            "Item table view",
+            ["Sparkline", "Data table"],
+            horizontal=True,
+        )
+    with metric_col_ui:
+        if view == "Sparkline":
+            metric_choice = st.radio(
+                "Metric", ["Volume", "Value"], horizontal=True, key="item_sparkline_metric",
+            )
+        else:
+            metric_choice = "Volume"  # Data table view is volume-only; selector n/a
 
     if view == "Data table":
         item_pivot = scoped.pivot_table(
@@ -664,9 +672,6 @@ def page_dashboard():
         item_pivot.columns = [fmt_yw(c) for c in item_pivot.columns]
         st.dataframe(item_pivot, use_container_width=True)
     else:
-        metric_choice = st.radio(
-            "Metric", ["Volume", "Value"], horizontal=True, key="item_sparkline_metric",
-        )
         metric_col = "sales_volume" if metric_choice == "Volume" else "sales_value"
         fmt_number = nl_int if metric_choice == "Volume" else nl_money
 
