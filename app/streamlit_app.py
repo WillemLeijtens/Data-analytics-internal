@@ -256,6 +256,60 @@ def _highlight_tiles(scoped: pd.DataFrame, num_stores_total: int):
         t3.metric("Avg revenue / store", "—", help="Set store counts in Settings.")
 
 
+def _pct_delta(this: float, last: float) -> str | None:
+    """'+12.3% vs YTD last year' style delta string for st.metric, or None
+    if there's nothing to compare against (avoids a bogus divide-by-zero)."""
+    if last == 0:
+        return None
+    pct = (this - last) / last * 100
+    return f"{pct:+.1f}% vs YTD last year"
+
+
+def _ytd_tiles(scoped: pd.DataFrame, num_stores_total: int):
+    """Year-to-date tiles: sum of weeks 1..N of the latest year present vs.
+    the same weeks 1..N of the prior year, where N is the latest week
+    number actually present for the current year (not the calendar week) —
+    so it stays a fair like-for-like comparison regardless of when the app
+    is opened."""
+    current_year = scoped["year"].max()
+    current_year_df = scoped[scoped["year"] == current_year]
+    current_week = int(current_year_df["week"].max())
+    prior_year = str(int(current_year) - 1)
+
+    ytd_this = current_year_df[current_year_df["week"] <= current_week]
+    ytd_last = scoped[(scoped["year"] == prior_year) & (scoped["week"] <= current_week)]
+
+    st.subheader(
+        f"YTD {current_year} vs YTD {prior_year} (weeks 1–{current_week})",
+        help=(
+            "Year-to-date comparison: weeks 1 through the latest week number "
+            "present for the current year, summed, versus the same weeks 1 "
+            "through that number in the prior year. The store count used for "
+            "'avg revenue / store' is the currently configured count applied "
+            "to both years (store counts aren't tracked historically)."
+        ),
+    )
+
+    if ytd_last.empty:
+        st.caption(f"No {prior_year} data in this selection to compare against yet.")
+        return
+
+    value_this = float(ytd_this["sales_value"].sum())
+    value_last = float(ytd_last["sales_value"].sum())
+    volume_this = float(ytd_this["sales_volume"].sum())
+    volume_last = float(ytd_last["sales_volume"].sum())
+
+    y1, y2, y3 = st.columns(3)
+    y1.metric("YTD sales value", eur(value_this), delta=_pct_delta(value_this, value_last))
+    y2.metric("YTD sellout volume", f"{volume_this:,.0f}", delta=_pct_delta(volume_this, volume_last))
+    if num_stores_total:
+        avg_this = value_this / num_stores_total
+        avg_last = value_last / num_stores_total
+        y3.metric("YTD avg revenue / store", eur(avg_this), delta=_pct_delta(avg_this, avg_last))
+    else:
+        y3.metric("YTD avg revenue / store", "—", help="Set store counts in Settings.")
+
+
 def page_dashboard():
     st.header("Data analyse agent")
     c1, c2 = st.columns(2)
@@ -307,6 +361,7 @@ def page_dashboard():
     combined_target = (target_num / target_den) if target_den else None
 
     _highlight_tiles(scoped, num_stores_total)
+    _ytd_tiles(scoped, num_stores_total)
 
     st.subheader(
         "Total sellout per week — year-over-year",
