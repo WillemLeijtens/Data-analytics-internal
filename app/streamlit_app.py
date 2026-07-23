@@ -550,10 +550,12 @@ def _sum_rows(df_slice, dim, col, colors, fmt):
     ]
 
 
-def _avg_rows(store_slice, dim, combos_stores, colors, fmt):
-    """Breakdown rows for avg revenue per store: each dimension value's own
-    revenue ÷ its own store count — independent averages, NOT a sum."""
-    rows = []
+def _avg_amounts(store_slice, dim, combos_stores) -> list[tuple[str, float]]:
+    """Per dimension value: its own revenue ÷ its own store count. The
+    single source for both the breakdown rows (combine off) and the
+    combined figure (combine on = the SUM of exactly these amounts), so
+    the two views always reconcile."""
+    out = []
     for val in store_slice[dim].unique():
         stores = sum(
             n for (b, c, bn), n in combos_stores.items()
@@ -561,9 +563,14 @@ def _avg_rows(store_slice, dim, combos_stores, colors, fmt):
         )
         if not stores:
             continue
-        amt = float(store_slice[store_slice[dim] == val]["sales_value"].sum()) / stores
-        if amt:
-            rows.append({"val": val, "amt": amt})
+        out.append((val, float(store_slice[store_slice[dim] == val]["sales_value"].sum()) / stores))
+    return out
+
+
+def _avg_rows(store_slice, dim, combos_stores, colors, fmt):
+    """Breakdown rows for avg revenue per store: each dimension value's own
+    independent average (see _avg_amounts)."""
+    rows = [{"val": v, "amt": a} for v, a in _avg_amounts(store_slice, dim, combos_stores) if a]
     if not rows:
         return []
     mx = max(r["amt"] for r in rows)
@@ -649,20 +656,22 @@ def _section_header(title: str, tooltip: str, key: str) -> str:
 
 
 def _avg_tile(label, store_slice, dim, combos_stores, colors, combine, delta=None, big_size=44):
-    """Avg-revenue-per-store tile: blended single figure when combine is on,
-    per-value independent averages (not summed) when off."""
+    """Avg-revenue-per-store tile. Combine ON sums the per-value averages —
+    the exact same amounts shown as rows when the toggle is off, so
+    toggling reconciles visually (e.g. € 48 + € 45 → € 93). Combine OFF
+    shows those individual averages as breakdown rows."""
     if not combos_stores:
         return _tile(label, big="—", footer="Set store counts in Settings", big_size=big_size)
     if combine:
-        avg = _avg_per_store(store_slice, combos_stores, "Blended")
+        total = sum(a for _, a in _avg_amounts(store_slice, dim, combos_stores))
         return _tile(
-            label, big=eur(avg), delta=delta,
-            footer="Blended across selected filters", big_size=big_size,
+            label, big=eur(total), delta=delta,
+            footer=f"Sum of the individual per-{dim} averages", big_size=big_size,
         )
     rows = _avg_rows(store_slice, dim, combos_stores, colors, eur)
     return _tile(
         label, rows_html=_rows_block(rows, divider=False),
-        footer="Individual averages — not summed", footer_alpha="0.35", big_size=big_size,
+        footer="Individual averages", footer_alpha="0.35", big_size=big_size,
     )
 
 
@@ -750,8 +759,10 @@ def _ytd_section(scoped, store_scoped, combos_stores):
         combine = st.toggle("Combine avg / store", value=True, key="avg_combine_ytd")
         avg_delta = None
         if combos_stores and combine:
-            a_this = _avg_per_store(store_ytd_this, combos_stores, "Blended")
-            a_last = _avg_per_store(store_ytd_last, combos_stores, "Blended")
+            # Same sum-of-individual-averages method as the tile itself, and
+            # the same dimension, so the delta compares like for like.
+            a_this = sum(a for _, a in _avg_amounts(store_ytd_this, dim, combos_stores))
+            a_last = sum(a for _, a in _avg_amounts(store_ytd_last, dim, combos_stores))
             avg_delta = _pct_delta(a_this, a_last)
         st.markdown(
             _strip_line_indent(_avg_tile(
