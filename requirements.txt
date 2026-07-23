@@ -1,4 +1,8 @@
-streamlit>=1.38
-pandas>=2.2
-openpyxl>=3.1
-altair>=5.0
+# Pinned to the exact versions the app is tested against, so a container
+# rebuild can't silently pull in a breaking major release (pandas and
+# altair both had behaviour-changing majors in recent memory). Bump
+# deliberately: update a pin, run the app's checks, then commit.
+streamlit==1.59.2
+pandas==3.0.3
+openpyxl==3.1.5
+altair==6.2.2

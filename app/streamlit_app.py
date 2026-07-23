@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import hmac
 import html
+import math
 import os
 import tempfile
+import time
 from pathlib import Path
 
 import altair as alt
@@ -20,7 +23,11 @@ EUR_AXIS_LABEL = "'€ ' + format(datum.value, ',.0f')"
 
 
 def eur(value: float) -> str:
-    """Format a number as euros for st.metric tiles and text."""
+    """Format a number as euros for st.metric tiles and text. Non-finite
+    inputs (NaN/inf from a degenerate division) render as a dash instead of
+    the raw '€ nan' / '€ inf'."""
+    if value is None or not math.isfinite(value):
+        return "—"
     return f"€ {value:,.0f}"
 
 
@@ -248,10 +255,17 @@ def _check_password() -> bool:
     st.title("Data analyse agent — sign in")
     pwd = st.text_input("Password", type="password")
     if st.button("Sign in"):
-        if pwd == configured:
+        # compare_digest: constant-time comparison, so response timing leaks
+        # nothing about how many leading characters matched. The growing
+        # sleep throttles online brute-force attempts within a session.
+        if hmac.compare_digest(pwd.encode(), str(configured).encode()):
             st.session_state["authenticated"] = True
+            st.session_state.pop("failed_logins", None)
             st.rerun()
         else:
+            fails = st.session_state.get("failed_logins", 0) + 1
+            st.session_state["failed_logins"] = fails
+            time.sleep(min(0.5 * fails, 5.0))
             st.error("Incorrect password.")
     return False
 
@@ -281,7 +295,7 @@ def page_upload():
     if not uploaded:
         return
 
-    for f in uploaded:
+    for idx, f in enumerate(uploaded):
         st.subheader(f.name)
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
             tmp.write(f.getbuffer())
@@ -309,7 +323,10 @@ def page_upload():
         if not preview.empty:
             st.dataframe(preview, use_container_width=True)
 
-        if st.button(f"Confirm & load '{f.name}'", key=f"load_{f.name}"):
+        # Key includes the position: two uploaded files with the same name
+        # (same weekly export pulled from two folders) would otherwise
+        # produce a duplicate widget key and crash the whole page.
+        if st.button(f"Confirm & load '{f.name}'", key=f"load_{idx}_{f.name}"):
             rows_loaded, _ = db.load_parsed_file(parsed)
             st.success(f"Loaded {rows_loaded} rows from {f.name}.")
 
@@ -458,9 +475,11 @@ def _import_status_detail():
 
 
 def _pct_delta(this: float, last: float) -> str | None:
-    """'+12.3% vs YTD last year' style delta string, or None if there's
-    nothing to compare against (avoids a bogus divide-by-zero)."""
-    if last == 0:
+    """'+12.3% vs YTD last year' style delta string, or None when a
+    percentage would be meaningless: no prior value, a NEGATIVE prior value
+    (dividing by it flips the sign, so growth would read as decline), or a
+    non-finite input."""
+    if not (math.isfinite(this) and math.isfinite(last)) or last <= 0:
         return None
     pct = (this - last) / last * 100
     return f"{pct:+.1f}%"

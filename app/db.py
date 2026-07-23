@@ -97,8 +97,12 @@ DEFAULT_KPIS = [
 @contextmanager
 def get_conn():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    # timeout: wait up to 15s for a competing writer instead of failing with
+    # "database is locked" when two browser sessions import at once. WAL
+    # journal lets readers proceed while a write transaction is open.
+    conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     try:
         yield conn
         conn.commit()

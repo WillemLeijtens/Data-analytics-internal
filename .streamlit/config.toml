@@ -1,3 +1,13 @@
+# Weekly DWH exports are well under 5 MB; the default 200 MB ceiling only
+# invites memory exhaustion from an oversized (or zip-bomb) upload.
+[server]
+maxUploadSize = 30
+
+# Show only the exception type to visitors, not the full traceback with
+# code paths — this is a password-gated app on a public URL.
+[client]
+showErrorDetails = "type"
+
 # Dark theme matching the approved design handoff (Dashboard.dc.html):
 # page bg #0a0b0f, tile bg #14161d, near-white text.
 [theme]

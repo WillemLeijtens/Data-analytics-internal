@@ -47,11 +47,22 @@ def _eval_node(node, variables: dict):
     raise KpiError(f"Unsupported expression element: {ast.dump(node)}")
 
 
+MAX_EXPRESSION_LENGTH = 500
+
+
 def evaluate_kpi(expression: str, variables: dict) -> float:
+    # Length cap + RecursionError guard: a pathologically long or deeply
+    # nested expression makes ast.parse blow the recursion limit, which is
+    # NOT a KpiError and would escape the dashboard's error handling as a
+    # raw traceback instead of a per-KPI "error" metric.
+    if len(expression) > MAX_EXPRESSION_LENGTH:
+        raise KpiError(f"Expression longer than {MAX_EXPRESSION_LENGTH} characters")
     try:
         tree = ast.parse(expression, mode="eval")
     except SyntaxError as e:
         raise KpiError(f"Invalid expression syntax: {e}") from e
+    except (RecursionError, MemoryError) as e:
+        raise KpiError("Expression too complex to parse") from e
     return _eval_node(tree, variables)
 
 

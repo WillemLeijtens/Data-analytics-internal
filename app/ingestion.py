@@ -208,6 +208,15 @@ def parse_workbook(path: str, filename: str) -> ParsedFile:
     weeks = _week_columns(ws, header_row1, header_row2, ws.max_column)
     if not weeks:
         raise ValueError("No year-week columns detected")
+    # A week label appearing twice would make the second column silently
+    # overwrite the first on upsert (same primary key) — surface it.
+    week_labels = [w for w, _, _ in weeks]
+    dupes = sorted({w for w in week_labels if week_labels.count(w) > 1})
+    if dupes:
+        result.warnings.append(
+            f"Duplicate week column(s) in the sheet: {', '.join(dupes)} — "
+            "later columns overwrite earlier ones for the same week."
+        )
     first_week_col = weeks[0][1]
     attr_cols = _attribute_columns(ws, header_row1, header_row2, first_week_col)
 
