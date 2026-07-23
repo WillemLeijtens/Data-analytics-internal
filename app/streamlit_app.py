@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import os
 import tempfile
 from pathlib import Path
@@ -26,6 +27,88 @@ def fmt_yw(year_week) -> str:
     """Display a canonical YYYYWW value as YYYY-WW (e.g. 202601 -> 2026-01)."""
     s = str(year_week)
     return f"{s[:4]}-{s[4:]}" if len(s) >= 6 else s
+
+
+def nl_int(value: float) -> str:
+    """Whole number with '.' as the thousands separator (e.g. 51473 -> '51.473')."""
+    return f"{value:,.0f}".replace(",", ".")
+
+
+def nl_money(value: float) -> str:
+    """Euro amount with '.' thousands / ',' decimals (e.g. 1234.5 -> '€ 1.234,50')."""
+    sign = "-" if value < 0 else ""
+    value = abs(value)
+    whole = int(value)
+    cents = round((value - whole) * 100)
+    if cents == 100:  # rounding carried into the next whole euro
+        whole += 1
+        cents = 0
+    whole_str = f"{whole:,}".replace(",", ".")
+    return f"{sign}€ {whole_str},{cents:02d}"
+
+
+_SPARK_CUR_COLOR = "#ef4444"  # solid line: most recent year
+_SPARK_PRIOR_COLOR = "#38bdf8"  # dashed line: prior year
+
+
+def _dual_year_sparkline_svg(cur_vals: list[float], prior_vals: list[float],
+                              width: int = 170, height: int = 40) -> str:
+    """Inline SVG with two overlaid polylines (solid = current year, dashed =
+    prior year) sharing one y-scale, so relative shape/height is comparable.
+    Built by hand because st.column_config.LineChartColumn only supports a
+    single monochrome series per cell — not the two-colour year overlay
+    needed to compare against the prior year at a glance."""
+    all_vals = [v for v in (cur_vals + prior_vals) if v is not None]
+    vmax = max(all_vals) if all_vals else 0
+    vmax = vmax or 1  # avoid div-by-zero for an all-zero row
+    pad = 3
+
+    def _points(vals: list[float]) -> str:
+        n = len(vals)
+        if n < 2:
+            return ""
+        step = (width - 2 * pad) / (n - 1)
+        pts = []
+        for i, v in enumerate(vals):
+            x = pad + i * step
+            y = height - pad - (v / vmax) * (height - 2 * pad)
+            pts.append(f"{x:.1f},{y:.1f}")
+        return " ".join(pts)
+
+    cur_pts = _points(cur_vals)
+    prior_pts = _points(prior_vals)
+    svg = [f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+           f'xmlns="http://www.w3.org/2000/svg" style="display:block">']
+    if prior_pts:
+        svg.append(
+            f'<polyline points="{prior_pts}" fill="none" stroke="{_SPARK_PRIOR_COLOR}" '
+            f'stroke-width="1.5" stroke-dasharray="4,3" opacity="0.9" '
+            f'stroke-linecap="round" stroke-linejoin="round" />'
+        )
+    if cur_pts:
+        svg.append(
+            f'<polyline points="{cur_pts}" fill="none" stroke="{_SPARK_CUR_COLOR}" '
+            f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />'
+        )
+    svg.append("</svg>")
+    return "".join(svg)
+
+
+def _yoy_badge_html(cur_total: float, prior_total: float) -> str:
+    """Small colour-coded pill: ▲/▼ + percentage vs. the same weeks last
+    year, or a neutral dash when there's nothing to compare against."""
+    if not prior_total:
+        return '<span style="color:#888;">–</span>'
+    pct = (cur_total - prior_total) / prior_total * 100
+    up = pct >= 0
+    bg = "rgba(34,197,94,0.15)" if up else "rgba(249,115,22,0.15)"
+    fg = "#22c55e" if up else "#f97316"
+    arrow = "▲" if up else "▼"
+    return (
+        f'<span style="background:{bg};color:{fg};padding:2px 9px;'
+        f"border-radius:999px;font-weight:600;font-size:0.85em;"
+        f'white-space:nowrap;display:inline-block;">{arrow} {abs(pct):.0f}%</span>'
+    )
 
 
 def _augment_year_week(df: pd.DataFrame) -> pd.DataFrame:
@@ -532,60 +615,109 @@ def page_dashboard():
     st.subheader(
         "Sellout per item per week (all items)",
         help=(
-            "Sellout volume (units) broken down per SKU (rows) and year-week "
-            "for the current selection. Switch between the full data table "
-            "(one column per week) and a compact sparkline view (one mini "
-            "trend chart per row, in chronological order)."
+            "Sellout volume or value broken down per item, for the current "
+            "selection. The sparkline view compares this year's weekly shape "
+            "(solid) against the same weeks last year (dashed), with a "
+            "percentage badge for the year-over-year total. Switch to the "
+            "full data table for exact numbers per week."
         ),
     )
-    # Raw pivot with chronologically-sorted YYYYWW columns (zero-padded
-    # strings sort lexicographically == chronologically) — used to derive
-    # both the data-table view and the per-row sparkline view below.
-    item_pivot_raw = scoped.pivot_table(
-        index=["sku", "article_description"],
-        columns="year_week",
-        values="sales_volume",
-        aggfunc="sum",
-        fill_value=0,
-    ).sort_index(axis=1)
-
     view = st.radio(
         "Item table view",
-        ["Data table", "Sparkline"],
+        ["Sparkline", "Data table"],
         horizontal=True,
         label_visibility="collapsed",
     )
+
     if view == "Data table":
-        item_pivot = item_pivot_raw.copy()
+        item_pivot = scoped.pivot_table(
+            index=["sku", "article_description"],
+            columns="year_week",
+            values="sales_volume",
+            aggfunc="sum",
+            fill_value=0,
+        ).sort_index(axis=1)
         item_pivot.columns = [fmt_yw(c) for c in item_pivot.columns]
         st.dataframe(item_pivot, use_container_width=True)
     else:
-        sparkline_df = item_pivot_raw.reset_index()
-        week_cols = [c for c in item_pivot_raw.columns]
-        sparkline_df["Trend"] = item_pivot_raw[week_cols].values.tolist()
-        # .values on the right-hand side: item_pivot_raw is still indexed by
-        # (sku, article_description) but sparkline_df's index was reset to a
-        # plain range by reset_index() above, so assigning the Series
-        # directly would try to align on mismatched indexes and fail.
-        sparkline_df["Latest"] = item_pivot_raw[week_cols[-1]].values if week_cols else 0
-        sparkline_df["Total"] = item_pivot_raw[week_cols].sum(axis=1).values
-        sparkline_df = sparkline_df[["sku", "article_description", "Trend", "Latest", "Total"]]
-        st.dataframe(
-            sparkline_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "sku": "SKU",
-                "article_description": "Item",
-                "Trend": st.column_config.LineChartColumn(
-                    "Volume trend",
-                    help="Sellout volume per week, oldest to newest, left to right.",
-                    width="medium",
-                ),
-                "Latest": st.column_config.NumberColumn("Latest week", format="%d"),
-                "Total": st.column_config.NumberColumn("Total", format="%d"),
-            },
+        metric_choice = st.radio(
+            "Metric", ["Volume", "Value"], horizontal=True, key="item_sparkline_metric",
         )
+        metric_col = "sales_volume" if metric_choice == "Volume" else "sales_value"
+        fmt_number = nl_int if metric_choice == "Volume" else nl_money
+
+        current_year = scoped["year"].max()
+        prior_year = str(int(current_year) - 1)
+
+        # All-time pivot (every year) drives the Latest-week and Total
+        # columns; chronologically sorted so "latest" really means newest.
+        all_time = scoped.pivot_table(
+            index=["sku", "article_description"], columns="year_week",
+            values=metric_col, aggfunc="sum", fill_value=0,
+        ).sort_index(axis=1)
+
+        # Current-year / prior-year pivots, aligned on the same week-number
+        # axis, drive the two-line sparkline and the YoY badge.
+        cur_pivot = scoped[scoped["year"] == current_year].pivot_table(
+            index="sku", columns="week", values=metric_col, aggfunc="sum", fill_value=0,
+        )
+        prior_pivot = scoped[scoped["year"] == prior_year].pivot_table(
+            index="sku", columns="week", values=metric_col, aggfunc="sum", fill_value=0,
+        )
+        week_axis = sorted(set(cur_pivot.columns) | set(prior_pivot.columns))
+        cur_pivot = cur_pivot.reindex(columns=week_axis, fill_value=0)
+        prior_pivot = prior_pivot.reindex(columns=week_axis, fill_value=0)
+
+        has_prior_year = not prior_pivot.empty and prior_year in scoped["year"].values
+        legend = (
+            f'<span style="color:{_SPARK_CUR_COLOR};font-weight:600;">● {current_year}</span>'
+            f'&nbsp;&nbsp;<span style="color:{_SPARK_PRIOR_COLOR};font-weight:600;">- - {prior_year}</span>'
+            if has_prior_year else
+            f'<span style="color:{_SPARK_CUR_COLOR};font-weight:600;">● {current_year}</span> '
+            f'<span style="color:#888;">(no {prior_year} data in this selection)</span>'
+        )
+
+        all_week_cols = list(all_time.columns)
+        rows_html = []
+        for (sku, desc) in all_time.index:
+            cur_vals = cur_pivot.loc[sku].tolist() if sku in cur_pivot.index else [0.0] * len(week_axis)
+            prior_vals = prior_pivot.loc[sku].tolist() if sku in prior_pivot.index else [0.0] * len(week_axis)
+            svg = _dual_year_sparkline_svg(cur_vals, prior_vals)
+            badge = _yoy_badge_html(sum(cur_vals), sum(prior_vals))
+            latest_val = all_time.loc[(sku, desc), all_week_cols[-1]] if all_week_cols else 0
+            total_val = all_time.loc[(sku, desc), all_week_cols].sum() if all_week_cols else 0
+            rows_html.append(
+                "<tr>"
+                f'<td style="padding:8px 12px;white-space:nowrap;">{html.escape(str(sku))}</td>'
+                f'<td style="padding:8px 12px;">{html.escape(str(desc))}</td>'
+                f'<td style="padding:6px 12px;">{svg}</td>'
+                f'<td style="padding:8px 12px;">{badge}</td>'
+                f'<td style="padding:8px 12px;text-align:right;white-space:nowrap;">{fmt_number(latest_val)}</td>'
+                f'<td style="padding:8px 12px;text-align:right;white-space:nowrap;">{fmt_number(total_val)}</td>'
+                "</tr>"
+            )
+
+        table_html = f"""
+        <div style="margin-bottom:6px;font-size:0.9em;">{legend}</div>
+        <div style="max-height:600px;overflow-y:auto;border:1px solid rgba(128,128,128,0.25);border-radius:8px;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.92em;">
+        <thead style="position:sticky;top:0;background:var(--background-color,#0e1117);z-index:1;">
+        <tr style="border-bottom:1px solid rgba(128,128,128,0.35);text-align:left;">
+        <th style="padding:8px 12px;">SKU</th>
+        <th style="padding:8px 12px;">Item</th>
+        <th style="padding:8px 12px;">{metric_choice} trend</th>
+        <th style="padding:8px 12px;">YoY</th>
+        <th style="padding:8px 12px;text-align:right;">Latest week</th>
+        <th style="padding:8px 12px;text-align:right;">Total</th>
+        </tr>
+        </thead>
+        <tbody>
+        {"".join(rows_html)}
+        </tbody>
+        </table>
+        </div>
+        """
+        st.markdown(table_html, unsafe_allow_html=True)
 
     st.subheader(
         "KPIs",
