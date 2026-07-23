@@ -47,7 +47,7 @@ def _yoy_chart(data: pd.DataFrame, value_col: str, y_title: str, money: bool):
     tip_fmt = ",.0f"
     return (
         alt.Chart(agg)
-        .mark_line(point=True)
+        .mark_line(point=True, interpolate="monotone")
         .encode(
             x=alt.X("week:Q", title="Week number", scale=alt.Scale(domain=[1, 53])),
             y=alt.Y(f"{value_col}:Q", title=y_title, axis=y_axis),
@@ -417,7 +417,7 @@ def page_dashboard():
         avg_df["avg_rev"] = avg_df["sales_value"] / num_stores_total
         avg_line = (
             alt.Chart(avg_df)
-            .mark_line(point=True)
+            .mark_line(point=True, interpolate="monotone")
             .encode(
                 x=alt.X("week:Q", title="Week number", scale=alt.Scale(domain=[1, 53])),
                 y=alt.Y(
@@ -489,18 +489,59 @@ def page_dashboard():
         "Sellout per item per week (all items)",
         help=(
             "Sellout volume (units) broken down per SKU (rows) and year-week "
-            "(columns, YYYY-WW) for the current selection."
+            "for the current selection. Switch between the full data table "
+            "(one column per week) and a compact sparkline view (one mini "
+            "trend chart per row, in chronological order)."
         ),
     )
-    item_pivot = scoped.pivot_table(
+    # Raw pivot with chronologically-sorted YYYYWW columns (zero-padded
+    # strings sort lexicographically == chronologically) — used to derive
+    # both the data-table view and the per-row sparkline view below.
+    item_pivot_raw = scoped.pivot_table(
         index=["sku", "article_description"],
         columns="year_week",
         values="sales_volume",
         aggfunc="sum",
         fill_value=0,
+    ).sort_index(axis=1)
+
+    view = st.radio(
+        "Item table view",
+        ["Data table", "Sparkline"],
+        horizontal=True,
+        label_visibility="collapsed",
     )
-    item_pivot.columns = [fmt_yw(c) for c in item_pivot.columns]
-    st.dataframe(item_pivot, use_container_width=True)
+    if view == "Data table":
+        item_pivot = item_pivot_raw.copy()
+        item_pivot.columns = [fmt_yw(c) for c in item_pivot.columns]
+        st.dataframe(item_pivot, use_container_width=True)
+    else:
+        sparkline_df = item_pivot_raw.reset_index()
+        week_cols = [c for c in item_pivot_raw.columns]
+        sparkline_df["Trend"] = item_pivot_raw[week_cols].values.tolist()
+        # .values on the right-hand side: item_pivot_raw is still indexed by
+        # (sku, article_description) but sparkline_df's index was reset to a
+        # plain range by reset_index() above, so assigning the Series
+        # directly would try to align on mismatched indexes and fail.
+        sparkline_df["Latest"] = item_pivot_raw[week_cols[-1]].values if week_cols else 0
+        sparkline_df["Total"] = item_pivot_raw[week_cols].sum(axis=1).values
+        sparkline_df = sparkline_df[["sku", "article_description", "Trend", "Latest", "Total"]]
+        st.dataframe(
+            sparkline_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "sku": "SKU",
+                "article_description": "Item",
+                "Trend": st.column_config.LineChartColumn(
+                    "Volume trend",
+                    help="Sellout volume per week, oldest to newest, left to right.",
+                    width="medium",
+                ),
+                "Latest": st.column_config.NumberColumn("Latest week", format="%d"),
+                "Total": st.column_config.NumberColumn("Total", format="%d"),
+            },
+        )
 
     st.subheader(
         "KPIs",
