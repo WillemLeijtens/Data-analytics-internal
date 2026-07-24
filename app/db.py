@@ -66,6 +66,15 @@ CREATE TABLE IF NOT EXISTS app_meta (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS promotions (
+    brand TEXT NOT NULL,
+    country TEXT NOT NULL,
+    banner TEXT NOT NULL,
+    year_week TEXT NOT NULL,
+    is_promo INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (brand, country, banner, year_week)
+);
 """
 
 # Superseded default expressions for avg_sellout_per_store, in historical
@@ -293,6 +302,31 @@ def set_target(brand: str, country: str, banner: str, target: float | None):
                 target_rev_per_store=excluded.target_rev_per_store
             """,
             (brand, country, banner, target),
+        )
+
+
+def get_promotions() -> set[tuple[str, str, str, str]]:
+    """Set of (brand, country, banner, year_week) keys marked as a promotion
+    week by the user."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT brand, country, banner, year_week FROM promotions WHERE is_promo = 1"
+        ).fetchall()
+        return {(r["brand"], r["country"], r["banner"], r["year_week"]) for r in rows}
+
+
+def set_promotions(rows: list[tuple]):
+    """Upsert a batch of (brand, country, banner, year_week, is_promo) marks
+    in a single transaction."""
+    with get_conn() as conn:
+        conn.executemany(
+            """
+            INSERT INTO promotions (brand, country, banner, year_week, is_promo)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(brand, country, banner, year_week) DO UPDATE SET
+                is_promo=excluded.is_promo
+            """,
+            [(b, c, bn, yw, int(bool(p))) for (b, c, bn, yw, p) in rows],
         )
 
 

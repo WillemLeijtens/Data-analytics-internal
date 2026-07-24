@@ -207,6 +207,58 @@ def _augment_year_week(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+# Promotion detection: a week is flagged as a likely promo when its average
+# unit price (value ÷ volume) drops more than this fraction below that
+# feed's own median unit price. Median (not mean) as the baseline so the
+# promo weeks themselves don't drag the reference down.
+PROMO_PRICE_DROP_THRESHOLD = 0.05
+
+
+def _compute_promos(df: pd.DataFrame, promo_set: set) -> pd.DataFrame:
+    """Per (brand, country, banner, year_week): weekly revenue, volume,
+    average unit price, a `suggested` flag (price well below the feed's
+    median price), the confirmed `is_promo` flag (membership of promo_set),
+    and `uplift_pct` for promo weeks — revenue vs the mean revenue of that
+    feed's NON-promo weeks. Returns an empty frame for empty input."""
+    cols = ["brand", "country", "banner", "year_week", "value", "volume",
+            "avg_price", "week", "suggested", "is_promo", "uplift_pct"]
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+
+    g = (
+        df.groupby(["brand", "country", "banner", "year_week"], as_index=False)
+        .agg(value=("sales_value", "sum"), volume=("sales_volume", "sum"))
+    )
+    # Average effective unit price; NaN when no units sold (avoids /0).
+    g["avg_price"] = g["value"] / g["volume"].where(g["volume"] != 0)
+    g["week"] = pd.to_numeric(g["year_week"].astype(str).str[4:], errors="coerce")
+
+    g["suggested"] = False
+    g["is_promo"] = False
+    g["uplift_pct"] = float("nan")
+
+    for key, idx in g.groupby(["brand", "country", "banner"]).groups.items():
+        block = g.loc[idx]
+        priced = block["avg_price"].dropna()
+        if not priced.empty:
+            median_price = priced.median()
+            if median_price and median_price > 0:
+                g.loc[idx, "suggested"] = (
+                    block["avg_price"] < median_price * (1 - PROMO_PRICE_DROP_THRESHOLD)
+                )
+        is_promo = block.apply(
+            lambda r: (r["brand"], r["country"], r["banner"], r["year_week"]) in promo_set,
+            axis=1,
+        )
+        g.loc[idx, "is_promo"] = is_promo
+        non_promo_rev = block.loc[~is_promo.values, "value"]
+        baseline = non_promo_rev.mean() if not non_promo_rev.empty else block["value"].mean()
+        if baseline and baseline > 0:
+            g.loc[idx, "uplift_pct"] = (block["value"] / baseline - 1) * 100
+
+    return g[cols]
+
+
 def _yoy_chart(data: pd.DataFrame, value_col: str, y_title: str, money: bool):
     """Year-over-year line chart: week number on the x-axis, one coloured line
     per year with a legend. `data` must already have year / week columns."""
@@ -756,6 +808,143 @@ def _ytd_section(scoped, store_scoped, combos_stores):
         )
 
 
+def _promo_section(scoped: pd.DataFrame):
+    """Dashboard 'Promoties' section: a horizontal bar per promo week showing
+    its revenue uplift vs the non-promo baseline. Uses the user's confirmed
+    marks; if none exist in the current selection, falls back to the
+    automatic suggestions and says so."""
+    st.subheader(
+        "Promoties — omzeteffect per week",
+        help=(
+            "Per gemarkeerde promotieweek: hoeveel de omzet afwijkt van een "
+            "gemiddelde week zónder promotie. Markeer weken in het "
+            "'Promoties'-tabblad; zolang je niets hebt bevestigd, toont deze "
+            "grafiek de automatische suggesties."
+        ),
+    )
+
+    confirmed = db.get_promotions()
+    result = _compute_promos(scoped, confirmed)
+    using_suggestions = False
+    if not result["is_promo"].any():
+        # Nothing confirmed in view — preview from the suggestions instead.
+        sugg = _compute_promos(scoped, set())
+        sugg_keys = {
+            (r.brand, r.country, r.banner, r.year_week)
+            for r in sugg[sugg["suggested"]].itertuples()
+        }
+        result = _compute_promos(scoped, sugg_keys)
+        using_suggestions = True
+
+    promo_rows = result[result["is_promo"] & result["uplift_pct"].notna()].copy()
+    if promo_rows.empty:
+        st.caption("Geen promotieweken in de huidige selectie.")
+        return
+
+    if using_suggestions:
+        st.caption(
+            "⭕ Automatische suggestie — nog niet bevestigd. Bevestig of "
+            "corrigeer in het 'Promoties'-tabblad."
+        )
+
+    promo_rows["label"] = (
+        "wk " + promo_rows["week"].astype("Int64").astype(str)
+        + " · " + promo_rows["brand"] + " " + promo_rows["country"] + "/" + promo_rows["banner"]
+    )
+    promo_rows = promo_rows.sort_values(["country", "week"])
+
+    chart = (
+        alt.Chart(promo_rows)
+        .mark_bar()
+        .encode(
+            x=alt.X("uplift_pct:Q", title="Omzeteffect vs. gemiddelde week zonder promotie (%)"),
+            y=alt.Y("label:N", title=None, sort=list(promo_rows["label"]), axis=alt.Axis(labelLimit=260)),
+            color=alt.Color("country:N", title="Land"),
+            tooltip=[
+                alt.Tooltip("label:N", title="Promotie"),
+                alt.Tooltip("value:Q", title="Omzet (€)", format=",.0f"),
+                alt.Tooltip("uplift_pct:Q", title="Uplift (%)", format="+.1f"),
+            ],
+        )
+        .properties(height=max(120, 26 * len(promo_rows)))
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+
+def page_promotions():
+    st.header("Promoties")
+    st.markdown(
+        "Markeer per **merk / land / banner** en **week** of er een promotie "
+        "(kortingsactie) liep. De app doet een suggestie:\n\n"
+        "- Voor elke week wordt de **gemiddelde stukprijs** berekend "
+        "(omzet ÷ volume).\n"
+        "- Ligt die meer dan "
+        f"**{PROMO_PRICE_DROP_THRESHOLD*100:.0f}%** onder de **mediane** "
+        "stukprijs van die feed, dan is er waarschijnlijk afgeprijsd → de app "
+        "zet er een **⭕** bij (een suggestie; hij vinkt niets automatisch aan).\n"
+        "- De **uplift** (in het dashboard) is de omzet van een promotieweek "
+        "vergeleken met de **gemiddelde omzet van weken zónder promotie**.\n\n"
+        "Vink de promotieweken aan die je wilt bevestigen en klik **Opslaan**. "
+        "Bevestigde weken worden uit de basislijn gehouden, zodat de uplift "
+        "klopt."
+    )
+
+    df = _load_facts()
+    if df.empty:
+        st.info("Nog geen data — importeer eerst bestanden.")
+        return
+
+    confirmed = db.get_promotions()
+    analysis = _compute_promos(df, confirmed).sort_values(
+        ["brand", "country", "banner", "year_week"]
+    )
+
+    # Optional narrowing so the matrix stays readable with many feeds/weeks.
+    fc1, fc2 = st.columns(2)
+    brands = sorted(analysis["brand"].unique())
+    countries = sorted(analysis["country"].unique())
+    sel_b = fc1.multiselect("Merk", brands, default=brands, key="promo_brand")
+    sel_c = fc2.multiselect("Land", countries, default=countries, key="promo_country")
+    view = analysis[analysis["brand"].isin(sel_b) & analysis["country"].isin(sel_c)]
+
+    editor_df = pd.DataFrame({
+        "Merk": view["brand"],
+        "Land": view["country"],
+        "Banner": view["banner"],
+        "Week": [fmt_yw(w) for w in view["year_week"]],
+        "Suggestie": ["⭕" if s else "" for s in view["suggested"]],
+        "Promotie": list(view["is_promo"]),
+        "_key": [f"{r.brand}|{r.country}|{r.banner}|{r.year_week}" for r in view.itertuples()],
+    })
+
+    edited = st.data_editor(
+        editor_df,
+        hide_index=True,
+        use_container_width=True,
+        height=520,
+        column_config={
+            "Suggestie": st.column_config.TextColumn(
+                "Suggestie", help="⭕ = de app vermoedt een promotieweek (lage stukprijs).",
+                disabled=True,
+            ),
+            "Promotie": st.column_config.CheckboxColumn(
+                "Promotie", help="Aanvinken = bevestigde promotieweek.",
+            ),
+            "_key": None,  # hidden helper column
+        },
+        disabled=["Merk", "Land", "Banner", "Week"],
+        key="promo_editor",
+    )
+
+    if st.button("Opslaan", type="primary"):
+        rows = []
+        for _, row in edited.iterrows():
+            b, c, bn, yw = str(row["_key"]).split("|")
+            rows.append((b, c, bn, yw, bool(row["Promotie"])))
+        db.set_promotions(rows)
+        st.success(f"{sum(1 for r in rows if r[4])} promotieweek(en) opgeslagen.")
+
+
 def page_dashboard():
     st.header("Data analyse agent")
 
@@ -951,6 +1140,8 @@ def page_dashboard():
         st.altair_chart(avg_line, use_container_width=True)
     else:
         st.caption("Set store counts in Settings to see this chart.")
+
+    _promo_section(scoped)
 
     # Per-item analysis with year-over-year comparison (volume + value).
     st.subheader(
@@ -1245,6 +1436,7 @@ def page_import_status():
 PAGES = {
     "Import": page_upload,
     "Dashboard": page_dashboard,
+    "Promoties": page_promotions,
     "Import status": page_import_status,
     "Settings": page_settings,
 }
