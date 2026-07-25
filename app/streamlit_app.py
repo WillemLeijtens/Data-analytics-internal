@@ -841,33 +841,88 @@ def _promo_section(scoped: pd.DataFrame):
         st.caption("Geen promotieweken in de huidige selectie.")
         return
 
-    if using_suggestions:
-        st.caption(
-            "⭕ Automatische suggestie — nog niet bevestigd. Bevestig of "
-            "corrigeer in het 'Promoties'-tabblad."
-        )
+    promo_rows["year"] = promo_rows["year_week"].astype(str).str[:4]
 
-    promo_rows["label"] = (
-        "wk " + promo_rows["week"].astype("Int64").astype(str)
-        + " · " + promo_rows["brand"] + " " + promo_rows["country"] + "/" + promo_rows["banner"]
-    )
-    promo_rows = promo_rows.sort_values(["country", "week"])
+    # Year control: a compact segmented filter when more than one year is in
+    # view (otherwise pointless). Colour also encodes year, so the two years
+    # stay legible even under "Alle".
+    years = sorted(promo_rows["year"].unique())
+    if len(years) > 1:
+        fcol, ncol = st.columns([2, 3], vertical_alignment="center")
+        with fcol:
+            sel_year = st.segmented_control(
+                "Jaar", ["Alle"] + years, default="Alle",
+                key="promo_year", label_visibility="collapsed",
+            )
+        if sel_year and sel_year != "Alle":
+            promo_rows = promo_rows[promo_rows["year"] == sel_year]
 
-    chart = (
-        alt.Chart(promo_rows)
-        .mark_bar()
-        .encode(
-            x=alt.X("uplift_pct:Q", title="Omzeteffect vs. gemiddelde week zonder promotie (%)"),
-            y=alt.Y("label:N", title=None, sort=list(promo_rows["label"]), axis=alt.Axis(labelLimit=260)),
-            color=alt.Color("country:N", title="Land"),
-            tooltip=[
-                alt.Tooltip("label:N", title="Promotie"),
-                alt.Tooltip("value:Q", title="Omzet (€)", format=",.0f"),
-                alt.Tooltip("uplift_pct:Q", title="Uplift (%)", format="+.1f"),
-            ],
-        )
-        .properties(height=max(120, 26 * len(promo_rows)))
+    # Include brand in the label only when several brands are present, so the
+    # common single-brand case stays short.
+    multi_brand = promo_rows["brand"].nunique() > 1
+    def _lbl(r):
+        base = f"{r.year}-wk{int(r.week):02d} · {r.country}/{r.banner}"
+        return f"{r.brand} · {base}" if multi_brand else base
+    promo_rows["label"] = [_lbl(r) for r in promo_rows.itertuples()]
+    promo_rows = promo_rows.sort_values("uplift_pct", ascending=False)
+    order = list(promo_rows["label"])
+
+    # Compact stat strip instead of a tall chart preamble.
+    n = len(promo_rows)
+    avg_up = promo_rows["uplift_pct"].mean()
+    best = promo_rows.iloc[0]
+    worst = promo_rows.iloc[-1]
+    note = (
+        ' &nbsp;·&nbsp; <span style="color:#f59e0b">⭕ suggesties — nog niet '
+        'bevestigd (zie Promoties-tab)</span>' if using_suggestions else ""
     )
+    st.markdown(
+        _strip_line_indent(
+            '<div style="display:flex;gap:22px;flex-wrap:wrap;align-items:baseline;'
+            'font-size:0.9em;color:#aaa;margin:-4px 0 8px">'
+            f'<span><b style="color:#eee;font-size:1.15em">{n}</b> promoties</span>'
+            f'<span>gem. uplift <b style="color:#22c55e">{avg_up:+.0f}%</b></span>'
+            f'<span>beste <b style="color:#eee">{best.year}-wk{int(best.week):02d}</b> '
+            f'<b style="color:#22c55e">{best.uplift_pct:+.0f}%</b></span>'
+            f'<span>zwakste <b style="color:#eee">{worst.year}-wk{int(worst.week):02d}</b> '
+            f'<b style="color:{"#22c55e" if worst.uplift_pct>=0 else "#f97316"}">'
+            f'{worst.uplift_pct:+.0f}%</b></span>'
+            f'{note}</div>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+    color_enc = (
+        alt.Color("year:N", title="Jaar",
+                  scale=alt.Scale(scheme="tableau10"),
+                  legend=alt.Legend(orient="top", direction="horizontal"))
+        if len(years) > 1 else
+        alt.value(_SPARK_CUR_COLOR)
+    )
+    base = alt.Chart(promo_rows).encode(
+        y=alt.Y("label:N", title=None, sort=order,
+                axis=alt.Axis(labelLimit=240, labelFontSize=11, labelOverlap=False)),
+    )
+    bars = base.mark_bar(height=alt.RelativeBandSize(0.72)).encode(
+        x=alt.X("uplift_pct:Q", title="Omzeteffect t.o.v. gemiddelde week zónder promotie (%)"),
+        color=color_enc,
+        tooltip=[
+            alt.Tooltip("label:N", title="Promotie"),
+            alt.Tooltip("value:Q", title="Omzet (€)", format=",.0f"),
+            alt.Tooltip("uplift_pct:Q", title="Uplift (%)", format="+.1f"),
+        ],
+    )
+    # Value labels at the bar tip (right of positive bars, left of negative),
+    # so the bars read at a glance and the chart can stay short.
+    lbl_pos = base.transform_filter("datum.uplift_pct >= 0").mark_text(
+        align="left", dx=4, color="#ccc", fontSize=11
+    ).encode(x="uplift_pct:Q", text=alt.Text("uplift_pct:Q", format="+.0f"))
+    lbl_neg = base.transform_filter("datum.uplift_pct < 0").mark_text(
+        align="right", dx=-4, color="#ccc", fontSize=11
+    ).encode(x="uplift_pct:Q", text=alt.Text("uplift_pct:Q", format="+.0f"))
+    zero = alt.Chart(pd.DataFrame({"z": [0]})).mark_rule(color="#555").encode(x="z:Q")
+
+    chart = (zero + bars + lbl_pos + lbl_neg).properties(height=max(120, 30 * n))
     st.altair_chart(chart, use_container_width=True)
 
 
