@@ -15,7 +15,6 @@ import streamlit as st
 
 import db
 import ingestion
-import kpi
 
 # Vega-Lite axis that prefixes every tick label with a euro sign, so money
 # charts are visually distinct from unit/volume charts.
@@ -1084,10 +1083,10 @@ def page_dashboard():
         scope_notices.append(
             f"No store count configured for: **{names}** (currently selected). "
             "These are included in sellout volume/value totals below, but "
-            "excluded from every 'avg revenue per store' figure (tiles, "
-            "chart, KPIs) so their revenue doesn't inflate an average "
-            "against a store count they don't have. Set their store count "
-            "in Settings to include them."
+            "excluded from every 'avg revenue per store' figure (tiles and "
+            "chart) so their revenue doesn't inflate an average against a "
+            "store count they don't have. Set their store count in Settings "
+            "to include them."
         )
     with status_placeholder.container():
         _status_bar(scope_notices)
@@ -1358,53 +1357,15 @@ def page_dashboard():
         """
         st.markdown(_strip_line_indent(table_html), unsafe_allow_html=True)
 
-    st.subheader(
-        "KPIs",
-        help=(
-            "Configurable KPIs (defined in Settings), evaluated over the whole "
-            "current filter selection across all weeks shown."
-        ),
-    )
-    with db.get_conn() as conn:
-        kpi_defs = pd.read_sql_query("SELECT name, expression, description FROM kpi_definitions", conn)
-
-    variables = {
-        "total_sales_volume": float(scoped["sales_volume"].sum()),
-        "total_sales_value": float(scoped["sales_value"].sum()),
-        # Same two totals but restricted to brand/country/banner combos that
-        # have a configured store count — pair these with num_stores in any
-        # formula that divides by store count, so brands without a count
-        # don't inflate the average (see the warning above when partial).
-        "store_sales_volume": float(store_scoped["sales_volume"].sum()),
-        "store_sales_value": float(store_scoped["sales_value"].sum()),
-        "num_stores": float(num_stores_total) if num_stores_total else float("nan"),
-        "num_skus": float(scoped["sku"].nunique()),
-        "num_weeks": float(scoped["year_week"].nunique()),
-    }
-
-    if not num_stores_total:
-        st.warning(
-            "No store count configured for the selected brand/country/banner "
-            "combination(s) — set it under Settings to compute store-based KPIs."
-        )
-
-    kpi_cols = st.columns(max(len(kpi_defs), 1))
-    for col, row in zip(kpi_cols, kpi_defs.itertuples()):
-        try:
-            value = kpi.evaluate_kpi(row.expression, variables)
-            col.metric(row.name, f"{value:,.2f}", help=row.description)
-        except kpi.KpiError as e:
-            col.metric(row.name, "error", help=str(e))
-
 
 def page_settings():
     st.header("Settings")
 
     st.subheader("Store counts & targets")
     st.caption(
-        "Per brand + country + banner: the number of stores (used by "
-        "store-based KPIs) and the weekly target for average revenue per "
-        "store (drawn as a target line on the dashboard). Neither is present "
+        "Per brand + country + banner: the number of stores (used for the "
+        "avg-revenue-per-store figures) and the weekly target for average "
+        "revenue per store (drawn as a target line on the dashboard). Neither is present "
         "in the source files — set them manually here. Edit as many rows as "
         "you like, then click **Save all** once at the bottom — a single "
         "atomic save avoids the easy mistake of editing several rows but "
@@ -1447,41 +1408,6 @@ def page_settings():
                     new_target = float(st.session_state[target_key])
                     db.set_target(brand, country, banner, new_target if new_target > 0 else None)
                 st.success(f"Saved {len(field_keys)} row(s).")
-
-    st.divider()
-    st.subheader("KPI definitions")
-    st.caption(
-        "Available variables: total_sales_volume, total_sales_value "
-        "(everything in the current filter selection), store_sales_volume, "
-        "store_sales_value (same, but only brand/country/banner combos that "
-        "have a store count configured — pair these with num_stores in any "
-        "formula that divides by store count), num_stores, num_skus, "
-        "num_weeks. Only + - * / and parentheses are allowed."
-    )
-    with db.get_conn() as conn:
-        kpi_df = pd.read_sql_query("SELECT name, expression, description FROM kpi_definitions", conn)
-    st.dataframe(kpi_df, use_container_width=True)
-
-    with st.form("new_kpi"):
-        name = st.text_input("KPI name")
-        expr = st.text_input("Expression", placeholder="total_sales_volume / num_stores")
-        desc = st.text_area("Description")
-        submitted = st.form_submit_button("Add / update KPI")
-        if submitted:
-            error = kpi.validate_expression(expr) if expr else "Expression is required"
-            if not name:
-                st.error("KPI name is required.")
-            elif error:
-                st.error(f"Invalid expression: {error}")
-            else:
-                with db.get_conn() as conn:
-                    conn.execute(
-                        "INSERT INTO kpi_definitions (name, expression, description) VALUES (?, ?, ?) "
-                        "ON CONFLICT(name) DO UPDATE SET expression=excluded.expression, description=excluded.description",
-                        (name, expr, desc),
-                    )
-                st.success(f"KPI '{name}' saved.")
-                st.rerun()
 
 
 def page_import_status():
