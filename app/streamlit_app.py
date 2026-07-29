@@ -1409,6 +1409,113 @@ def page_settings():
                     db.set_target(brand, country, banner, new_target if new_target > 0 else None)
                 st.success(f"Saved {len(field_keys)} row(s).")
 
+    st.divider()
+    _auto_import_settings()
+
+
+def _auto_import_settings():
+    """Settings block for the automatic Outlook import: connection, subject
+    filter, on/off, a manual run, and the recent auto-import log."""
+    st.subheader("Automatische import uit Outlook")
+    st.caption(
+        "Haalt elke 15 minuten de nieuwe mails op met een bepaald onderwerp, "
+        "downloadt de Excel-bijlagen en importeert ze via dezelfde controle "
+        "als een handmatige upload. Dezelfde mail wordt nooit twee keer "
+        "geïmporteerd."
+    )
+
+    try:
+        import auto_import
+        import outlook
+    except ImportError as e:
+        st.error(f"Auto-import module niet beschikbaar: {e}")
+        return
+
+    connected = outlook.is_connected()
+    account = outlook.signed_in_account()
+    if connected:
+        st.markdown(f"🟢 Verbonden met **{account or 'Outlook'}**")
+    else:
+        st.markdown("⚪ Nog niet verbonden met Outlook")
+
+    # Device-code sign-in: shown as two steps because the user has to
+    # authenticate in a browser in between.
+    with st.expander("Verbinding met Outlook instellen / vernieuwen", expanded=not connected):
+        st.markdown(
+            "Eenmalig inloggen. Daarna blijft de verbinding automatisch geldig "
+            "zolang de poller draait."
+        )
+        if st.button("Stap 1 — start inloggen"):
+            try:
+                st.session_state["device_flow"] = outlook.start_device_login()
+            except Exception as e:  # noqa: BLE001 - config errors are user-facing
+                st.error(str(e))
+        flow = st.session_state.get("device_flow")
+        if flow:
+            st.info(
+                f"Ga naar **{flow.get('verification_uri')}** en voer deze code in:\n\n"
+                f"## `{flow.get('user_code')}`"
+            )
+            if st.button("Stap 2 — ik ben ingelogd, voltooien"):
+                try:
+                    user = outlook.finish_device_login(flow)
+                    st.session_state.pop("device_flow", None)
+                    st.success(f"Verbonden als {user}.")
+                    st.rerun()
+                except Exception as e:  # noqa: BLE001
+                    st.error(str(e))
+
+    with st.form("auto_import_form"):
+        enabled = st.checkbox(
+            "Automatische import aan",
+            value=auto_import.is_enabled(),
+            help="Staat standaard uit; de poller doet niets tot dit aan staat.",
+        )
+        subject = st.text_input(
+            "Mails met dit onderwerp (of deel daarvan)",
+            value=auto_import.get_subject_filter(),
+            help="Niet gevoelig voor hoofdletters. Bijv. 'DWH' of "
+                 "'Sales volume per week'.",
+        )
+        if st.form_submit_button("Opslaan"):
+            db.set_meta_value(auto_import.ENABLED_KEY, "1" if enabled else "0")
+            db.set_meta_value(auto_import.SUBJECT_KEY, subject.strip())
+            st.success("Instellingen opgeslagen.")
+
+    last_poll = db.get_meta(auto_import.LAST_POLL_KEY)
+    last_result = db.get_meta(auto_import.LAST_RESULT_KEY)
+    st.caption(
+        f"Laatste controle: {_fmt_ts(last_poll)}"
+        + (f" — {last_result}" if last_result else "")
+    )
+
+    if st.button("Nu controleren", disabled=not connected):
+        with st.spinner("Mailbox controleren…"):
+            summary = auto_import.poll_once()
+        if summary.get("error"):
+            st.error(summary["error"])
+        else:
+            st.success(
+                f"{summary['imported']} geïmporteerd, {summary['failed']} mislukt, "
+                f"{summary['skipped']} al eerder verwerkt."
+            )
+
+    rows = db.get_email_imports(15)
+    if rows:
+        st.markdown("**Recente automatische imports**")
+        st.dataframe(
+            pd.DataFrame([{
+                "Status": "✅" if str(r["status"]).startswith("ok") else "❌",
+                "Bijlage": r["attachment_name"],
+                "Onderwerp": r["subject"],
+                "Ontvangen": r["received_at"],
+                "Verwerkt": _fmt_ts(r["processed_at"]),
+                "Details": r["message"],
+            } for r in rows]),
+            hide_index=True,
+            use_container_width=True,
+        )
+
 
 def page_import_status():
     _import_status_detail()

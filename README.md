@@ -5,14 +5,63 @@ multiple brands, countries, and retail banners.
 
 ## Status
 
-**Phase 1 (this repo so far):** manual upload of DWH `.xlsx` exports → parse
-→ clean → store in a normalized SQLite fact table → dashboard with
-brand/country/banner filters, configurable KPIs, and "last received" /
-"last analyzed" timestamps.
+**Phase 1 (done):** manual upload of DWH `.xlsx` exports → parse → clean →
+store in a normalized SQLite fact table → dashboard with
+brand/country/banner filters, YoY/YTD comparisons, per-item sparklines,
+promotion analysis, and "last received" / "last analyzed" timestamps.
 
-**Phase 2 (not yet built):** Microsoft Graph API integration to pull the
-same Excel attachments automatically from Outlook every Monday morning and
-run them through the same ingestion pipeline.
+**Phase 2 (built, needs your Azure app):** automatic Outlook import — a
+poller watches the mailbox for mails whose subject matches a filter,
+downloads their `.xlsx` attachments, and runs them through the *same*
+ingestion pipeline as a manual upload. See "Automatic Outlook import" below.
+
+## Automatic Outlook import
+
+The `poller` service (see `docker-compose.yml`) checks the mailbox every 15
+minutes. It is **off by default** and does nothing until you switch it on in
+Settings. Each mail+attachment is imported at most once (tracked in the
+`email_imports` table), so restarts and overlapping polls are safe.
+
+Auth uses **delegated OAuth (device-code flow)**: you sign in once, then the
+refresh token in `data/msal_cache.json` keeps it running unattended. There is
+no password/app-password option — Microsoft retired basic auth (IMAP/POP)
+for Exchange Online and Outlook.com. The requested scope is `Mail.Read`
+only: the importer never modifies or deletes anything in the mailbox.
+
+### One-time setup
+
+1. **Register an app** at [portal.azure.com](https://portal.azure.com) →
+   *Microsoft Entra ID* → *App registrations* → *New registration*:
+   - Name: anything (e.g. "Sellout auto-import").
+   - Supported account types: whichever matches the mailbox (for a
+     work/school account: "Accounts in this organizational directory only").
+   - Redirect URI: leave empty.
+2. On the new app's **Authentication** page, enable
+   *Allow public client flows* → **Yes** (required for the device-code flow).
+3. On **API permissions**, add *Microsoft Graph → Delegated → `Mail.Read`*,
+   then *Grant admin consent* if your tenant requires it.
+4. Copy the **Application (client) ID** (and the **Directory (tenant) ID**)
+   into `.env` on the droplet:
+   ```
+   AZURE_CLIENT_ID=<application-client-id>
+   AZURE_TENANT_ID=<directory-tenant-id>   # or: common
+   ```
+5. Restart: `docker compose up -d --build`.
+6. In the app: **Settings → Automatische import uit Outlook** → *Stap 1 —
+   start inloggen*, enter the shown code at
+   [microsoft.com/devicelogin](https://microsoft.com/devicelogin), then
+   *Stap 2 — voltooien*.
+7. Set the **subject filter** (e.g. `DWH`), tick **Automatische import aan**,
+   and save. Use *Nu controleren* to test immediately.
+
+### Troubleshooting
+
+- *"Outlook sign-in has expired"* — the refresh token lapsed (poller down for
+  a long time, or a conditional-access policy). Redo step 6.
+- Poller logs: `docker compose logs -f poller`.
+- A file that fails to parse is logged with status ❌ in Settings and is not
+  retried (it won't fix itself); network/auth failures are retried on the
+  next poll automatically.
 
 ## Running locally
 

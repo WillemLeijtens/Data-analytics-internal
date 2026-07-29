@@ -4,10 +4,26 @@ services:
     restart: unless-stopped
     environment:
       - STREAMLIT_APP_PASSWORD=${STREAMLIT_APP_PASSWORD}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-common}
     volumes:
       - ./data:/app/data
     expose:
       - "8501"
+
+  # Polls Outlook for new sellout mails. Shares ./data with the app, so it
+  # uses the same database and the same OAuth token cache — signing in once
+  # in the web UI is enough for this service too. Does nothing until
+  # auto-import is switched on in Settings.
+  poller:
+    build: .
+    restart: unless-stopped
+    command: ["python", "app/auto_import.py", "--loop", "--interval", "900"]
+    environment:
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-common}
+    volumes:
+      - ./data:/app/data
 
   caddy:
     image: caddy:2

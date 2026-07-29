@@ -75,6 +75,19 @@ CREATE TABLE IF NOT EXISTS promotions (
     is_promo INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (brand, country, banner, year_week)
 );
+
+-- One row per Outlook message+attachment the auto-importer has handled, so
+-- a restart or an overlapping poll never re-imports the same mail.
+CREATE TABLE IF NOT EXISTS email_imports (
+    message_id TEXT NOT NULL,
+    attachment_name TEXT NOT NULL,
+    subject TEXT,
+    received_at TEXT,
+    processed_at TEXT,
+    status TEXT,
+    message TEXT,
+    PRIMARY KEY (message_id, attachment_name)
+);
 """
 
 # Superseded default expressions for avg_sellout_per_store, in historical
@@ -328,6 +341,50 @@ def set_promotions(rows: list[tuple]):
             """,
             [(b, c, bn, yw, int(bool(p))) for (b, c, bn, yw, p) in rows],
         )
+
+
+def set_meta_value(key: str, value: str):
+    """Standalone setter for app_meta (set_meta needs a caller-held conn)."""
+    with get_conn() as conn:
+        set_meta(conn, key, value)
+
+
+def is_email_processed(message_id: str, attachment_name: str) -> bool:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM email_imports WHERE message_id=? AND attachment_name=?",
+            (message_id, attachment_name),
+        ).fetchone()
+        return row is not None
+
+
+def record_email_import(message_id, attachment_name, subject, received_at, status, message):
+    """Mark a message+attachment as handled. Recorded for failures too, but
+    with a 'failed' status — see auto_import for the retry policy."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO email_imports
+                (message_id, attachment_name, subject, received_at, processed_at, status, message)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(message_id, attachment_name) DO UPDATE SET
+                processed_at=excluded.processed_at,
+                status=excluded.status,
+                message=excluded.message
+            """,
+            (message_id, attachment_name, subject, received_at,
+             dt.datetime.utcnow().isoformat(), status, message),
+        )
+
+
+def get_email_imports(limit: int = 25) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT message_id, attachment_name, subject, received_at, processed_at, "
+            "status, message FROM email_imports ORDER BY processed_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def get_last_imports() -> list[dict]:
