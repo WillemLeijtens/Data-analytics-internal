@@ -175,12 +175,24 @@ def find_messages(subject_contains: str, since_days: int = 30, limit: int = 50) 
         if needle and needle not in subject.lower():
             continue
         out.append({
+            # "id" is the dedup key, "ref" is what get_xlsx_attachments takes.
+            # For Graph they're the same; the IMAP source uses Message-ID for
+            # dedup and the mailbox UID for fetching, so the split matters.
             "id": m["id"],
+            "ref": m["id"],
             "subject": subject,
             "received_at": m.get("receivedDateTime"),
             "from": (m.get("from", {}).get("emailAddress", {}) or {}).get("address"),
         })
     return out
+
+
+def status_text() -> str:
+    """One-line connection status for the Settings UI."""
+    if not os.environ.get("AZURE_CLIENT_ID", "").strip():
+        return "⚪ AZURE_CLIENT_ID niet ingesteld"
+    account = signed_in_account()
+    return f"🟢 Verbonden met {account}" if account else "⚪ Nog niet ingelogd bij Outlook"
 
 
 def get_xlsx_attachments(message_id: str) -> list[tuple[str, bytes]]:

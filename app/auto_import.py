@@ -26,13 +26,37 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import db
 import ingestion
-import outlook
 
 SUBJECT_KEY = "auto_import_subject"
 ENABLED_KEY = "auto_import_enabled"
 LAST_POLL_KEY = "auto_import_last_poll"
 LAST_RESULT_KEY = "auto_import_last_result"
+SOURCE_KEY = "auto_import_source"
 DEFAULT_SUBJECT = "DWH"
+DEFAULT_SOURCE = "imap"
+
+# Two interchangeable mail sources, both exposing find_messages() /
+# get_xlsx_attachments() / status_text():
+#   imap    — a dedicated forwarding mailbox (an Outlook rule forwards the
+#             reports there). The app never touches your own mailbox.
+#   outlook — direct Microsoft Graph access to your own mailbox (OAuth).
+SOURCES = {"imap": "Doorstuur-mailbox (IMAP)", "outlook": "Eigen Outlook-mailbox (Graph)"}
+
+
+def get_source_kind() -> str:
+    kind = db.get_meta(SOURCE_KEY) or DEFAULT_SOURCE
+    return kind if kind in SOURCES else DEFAULT_SOURCE
+
+
+def get_source(kind: str | None = None):
+    """Import the configured source module lazily, so a missing/misconfigured
+    source never breaks the rest of the app at import time."""
+    kind = kind or get_source_kind()
+    if kind == "outlook":
+        import outlook
+        return outlook
+    import imap_source
+    return imap_source
 
 
 def get_subject_filter() -> str:
@@ -70,13 +94,15 @@ def import_attachment(name: str, content: bytes, message_id: str, subject: str,
             Path(tmp_path).unlink(missing_ok=True)
 
 
-def poll_once(subject_filter: str | None = None, since_days: int = 30) -> dict:
+def poll_once(subject_filter: str | None = None, since_days: int = 30,
+              source=None) -> dict:
     """One pass over the mailbox. Returns a summary dict; also stores it as
     the app's 'last result' so the UI can show what happened."""
     subject_filter = subject_filter if subject_filter is not None else get_subject_filter()
+    source = source or get_source()
     summary = {"checked": 0, "imported": 0, "failed": 0, "skipped": 0, "error": None}
     try:
-        messages = outlook.find_messages(subject_filter, since_days=since_days)
+        messages = source.find_messages(subject_filter, since_days=since_days)
     except Exception as e:  # noqa: BLE001 - network/auth: retry next run
         summary["error"] = f"{type(e).__name__}: {e}"
         db.set_meta_value(LAST_POLL_KEY, dt.datetime.utcnow().isoformat())
@@ -86,7 +112,7 @@ def poll_once(subject_filter: str | None = None, since_days: int = 30) -> dict:
     for msg in messages:
         summary["checked"] += 1
         try:
-            attachments = outlook.get_xlsx_attachments(msg["id"])
+            attachments = source.get_xlsx_attachments(msg.get("ref", msg["id"]))
         except Exception as e:  # noqa: BLE001 - transient: leave unrecorded
             summary["error"] = f"{type(e).__name__}: {e}"
             break

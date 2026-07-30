@@ -1416,7 +1416,7 @@ def page_settings():
 def _auto_import_settings():
     """Settings block for the automatic Outlook import: connection, subject
     filter, on/off, a manual run, and the recent auto-import log."""
-    st.subheader("Automatische import uit Outlook")
+    st.subheader("Automatische import van mail")
     st.caption(
         "Haalt elke 15 minuten de nieuwe mails op met een bepaald onderwerp, "
         "downloadt de Excel-bijlagen en importeert ze via dezelfde controle "
@@ -1426,44 +1426,81 @@ def _auto_import_settings():
 
     try:
         import auto_import
-        import outlook
     except ImportError as e:
         st.error(f"Auto-import module niet beschikbaar: {e}")
         return
 
-    connected = outlook.is_connected()
-    account = outlook.signed_in_account()
-    if connected:
-        st.markdown(f"🟢 Verbonden met **{account or 'Outlook'}**")
-    else:
-        st.markdown("⚪ Nog niet verbonden met Outlook")
+    # Source choice: forwarding mailbox (no access to your own inbox) or
+    # direct Graph access to your own mailbox.
+    kinds = list(auto_import.SOURCES.keys())
+    current_kind = auto_import.get_source_kind()
+    chosen_label = st.radio(
+        "Waar haalt de app de mails op?",
+        [auto_import.SOURCES[k] for k in kinds],
+        index=kinds.index(current_kind),
+        help=(
+            "**Doorstuur-mailbox (aanbevolen):** je maakt in Outlook een regel "
+            "die de rapportmails doorstuurt naar een aparte mailbox; de app "
+            "leest alleen die. Geen toegang tot je eigen mailbox.\n\n"
+            "**Eigen Outlook-mailbox:** de app leest via Microsoft Graph "
+            "rechtstreeks je eigen mailbox (alleen leesrechten)."
+        ),
+        key="auto_source_choice",
+    )
+    kind = kinds[[auto_import.SOURCES[k] for k in kinds].index(chosen_label)]
+    if kind != current_kind:
+        db.set_meta_value(auto_import.SOURCE_KEY, kind)
+        st.rerun()
 
-    # Device-code sign-in: shown as two steps because the user has to
-    # authenticate in a browser in between.
-    with st.expander("Verbinding met Outlook instellen / vernieuwen", expanded=not connected):
-        st.markdown(
-            "Eenmalig inloggen. Daarna blijft de verbinding automatisch geldig "
-            "zolang de poller draait."
-        )
-        if st.button("Stap 1 — start inloggen"):
-            try:
-                st.session_state["device_flow"] = outlook.start_device_login()
-            except Exception as e:  # noqa: BLE001 - config errors are user-facing
-                st.error(str(e))
-        flow = st.session_state.get("device_flow")
-        if flow:
-            st.info(
-                f"Ga naar **{flow.get('verification_uri')}** en voer deze code in:\n\n"
-                f"## `{flow.get('user_code')}`"
+    source = auto_import.get_source(kind)
+    st.markdown(source.status_text())
+
+    if kind == "imap":
+        with st.expander("Zo stel je de doorstuur-mailbox in", expanded=True):
+            st.markdown(
+                "1. Maak een **aparte mailbox** aan die je alleen hiervoor "
+                "gebruikt. Let op: een tweede mailbox in je eigen Microsoft "
+                "365 werkt hier **niet** (Microsoft heeft IMAP met wachtwoord "
+                "uitgezet) — gebruik bijv. Gmail met een *App-wachtwoord*, of "
+                "een mailbox bij je webhosting.\n"
+                "2. Maak in Outlook een **regel**: mails met dit onderwerp → "
+                "doorsturen naar die mailbox.\n"
+                "3. Zet de gegevens in `.env` op de server en herstart:\n"
+                "```\nIMAP_HOST=imap.gmail.com\nIMAP_USER=rapporten@…\n"
+                "IMAP_PASSWORD=<app-wachtwoord>\nIMAP_FOLDER=INBOX\n```\n"
+                "De app leest de mailbox alleen-lezen: er wordt niets "
+                "gemarkeerd, verplaatst of verwijderd."
             )
-            if st.button("Stap 2 — ik ben ingelogd, voltooien"):
+        connected = source.is_configured()
+    else:
+        connected = source.is_connected()
+        # Device-code sign-in: two steps, because the user has to
+        # authenticate in a browser in between.
+        with st.expander("Verbinding met Outlook instellen / vernieuwen",
+                         expanded=not connected):
+            st.markdown(
+                "Eenmalig inloggen. Daarna blijft de verbinding automatisch "
+                "geldig zolang de poller draait."
+            )
+            if st.button("Stap 1 — start inloggen"):
                 try:
-                    user = outlook.finish_device_login(flow)
-                    st.session_state.pop("device_flow", None)
-                    st.success(f"Verbonden als {user}.")
-                    st.rerun()
-                except Exception as e:  # noqa: BLE001
+                    st.session_state["device_flow"] = source.start_device_login()
+                except Exception as e:  # noqa: BLE001 - config errors are user-facing
                     st.error(str(e))
+            flow = st.session_state.get("device_flow")
+            if flow:
+                st.info(
+                    f"Ga naar **{flow.get('verification_uri')}** en voer deze code in:\n\n"
+                    f"## `{flow.get('user_code')}`"
+                )
+                if st.button("Stap 2 — ik ben ingelogd, voltooien"):
+                    try:
+                        user = source.finish_device_login(flow)
+                        st.session_state.pop("device_flow", None)
+                        st.success(f"Verbonden als {user}.")
+                        st.rerun()
+                    except Exception as e:  # noqa: BLE001
+                        st.error(str(e))
 
     with st.form("auto_import_form"):
         enabled = st.checkbox(

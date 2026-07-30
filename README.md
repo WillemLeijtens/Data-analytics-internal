@@ -10,17 +10,60 @@ store in a normalized SQLite fact table → dashboard with
 brand/country/banner filters, YoY/YTD comparisons, per-item sparklines,
 promotion analysis, and "last received" / "last analyzed" timestamps.
 
-**Phase 2 (built, needs your Azure app):** automatic Outlook import — a
-poller watches the mailbox for mails whose subject matches a filter,
-downloads their `.xlsx` attachments, and runs them through the *same*
-ingestion pipeline as a manual upload. See "Automatic Outlook import" below.
+**Phase 2 (built, needs one mailbox setup step):** automatic mail import — a
+poller watches a mailbox for mails whose subject matches a filter, downloads
+their `.xlsx` attachments, and runs them through the *same* ingestion
+pipeline as a manual upload. Two interchangeable sources: a dedicated
+forwarding mailbox over IMAP (recommended — no access to your own mailbox),
+or your own mailbox over Microsoft Graph. See "Automatic mail import" below.
 
-## Automatic Outlook import
+## Automatic mail import
 
-The `poller` service (see `docker-compose.yml`) checks the mailbox every 15
-minutes. It is **off by default** and does nothing until you switch it on in
-Settings. Each mail+attachment is imported at most once (tracked in the
-`email_imports` table), so restarts and overlapping polls are safe.
+The `poller` service (see `docker-compose.yml`) checks a mailbox every 15
+minutes, downloads `.xlsx` attachments from mails whose subject matches a
+filter, and runs them through the same pipeline as a manual upload. It is
+**off by default** and does nothing until you switch it on in Settings. Each
+mail+attachment is imported at most once (tracked in `email_imports`), so
+restarts and overlapping polls are safe.
+
+Pick one of two sources in **Settings → Automatische import van mail**:
+
+| | A. Forwarding mailbox (IMAP) — *recommended* | B. Your own mailbox (Graph) |
+|---|---|---|
+| Access | Only a dedicated throwaway mailbox | Read access to your whole mailbox |
+| Setup | Outlook rule + IMAP credentials in `.env` | Azure app registration + one-time sign-in |
+| Credentials | Mailbox password/app password | OAuth refresh token |
+| Provider | Must be **non-Microsoft** (see below) | Any Microsoft mailbox |
+
+### Option A — forwarding mailbox (recommended)
+
+Smallest blast radius: if the credentials leak, they only reach a mailbox
+that contains nothing but forwarded reports.
+
+1. Create a **dedicated mailbox** used for nothing else. It must **not** be a
+   second mailbox in your own Microsoft 365 tenant — Microsoft disabled
+   IMAP-with-password for Exchange Online, so that would need OAuth anyway.
+   Use e.g. Gmail with an **App Password** (requires 2FA on that account), or
+   a mailbox at your web host.
+2. In Outlook, add a **rule**: mails with the report subject → *forward to*
+   that mailbox.
+3. Put the credentials in `.env` on the droplet and restart:
+   ```
+   IMAP_HOST=imap.gmail.com
+   IMAP_USER=rapporten@example.com
+   IMAP_PASSWORD=<app password>
+   IMAP_FOLDER=INBOX
+   ```
+   ```bash
+   docker compose up -d --build
+   ```
+4. In Settings: pick *Doorstuur-mailbox (IMAP)*, set the subject filter, tick
+   *Automatische import aan*, save, and use *Nu controleren* to test.
+
+The mailbox is opened **read-only** (`BODY.PEEK`): nothing is marked as read,
+moved or deleted.
+
+### Option B — your own mailbox via Microsoft Graph
 
 Auth uses **delegated OAuth (device-code flow)**: you sign in once, then the
 refresh token in `data/msal_cache.json` keeps it running unattended. There is
@@ -28,7 +71,7 @@ no password/app-password option — Microsoft retired basic auth (IMAP/POP)
 for Exchange Online and Outlook.com. The requested scope is `Mail.Read`
 only: the importer never modifies or deletes anything in the mailbox.
 
-### One-time setup
+#### One-time setup
 
 1. **Register an app** at [portal.azure.com](https://portal.azure.com) →
    *Microsoft Entra ID* → *App registrations* → *New registration*:
@@ -56,8 +99,10 @@ only: the importer never modifies or deletes anything in the mailbox.
 
 ### Troubleshooting
 
+- *"Inloggen bij de IMAP-mailbox is geweigerd"* — wrong user/password, or you
+  used the account password where the provider requires an app password.
 - *"Outlook sign-in has expired"* — the refresh token lapsed (poller down for
-  a long time, or a conditional-access policy). Redo step 6.
+  a long time, or a conditional-access policy). Redo step 6 of option B.
 - Poller logs: `docker compose logs -f poller`.
 - A file that fails to parse is logged with status ❌ in Settings and is not
   retried (it won't fix itself); network/auth failures are retried on the
