@@ -106,8 +106,9 @@ def _attribute_columns(ws, header_row1: int, header_row2: int, first_week_col: i
     return cols
 
 
-def _select_authoritative_sheet(wb):
-    """Pick the sheet whose data-row SKU count matches its own Total row."""
+def _sheet_candidates(wb):
+    """Scan every worksheet that looks like a data sheet, returning
+    (ws, header_row1, header_row2, n_data_rows, expected_total, total_row)."""
     candidates = []
     for ws in wb.worksheets:
         try:
@@ -133,7 +134,13 @@ def _select_authoritative_sheet(wb):
         if total_row is not None:
             expected = ws.cell(row=total_row, column=3).value
         candidates.append((ws, header_row1, header_row2, n_data_rows, expected, total_row))
+    return candidates
 
+
+def _pick_authoritative(candidates):
+    """Among sheets describing the SAME feed, pick the one whose data-row
+    count matches its own Total row — the others repeat each SKU per
+    GTIN/PLU variant and would double-count."""
     for ws, h1, h2, n_data_rows, expected, total_row in candidates:
         # A malformed Total cell (text instead of the row count) must make
         # this sheet fail the match, not crash the whole parse.
@@ -144,10 +151,8 @@ def _select_authoritative_sheet(wb):
         if matches:
             return ws, h1, h2, total_row
     # fallback: first parseable sheet
-    if candidates:
-        ws, h1, h2, _, _, total_row = candidates[0]
-        return ws, h1, h2, total_row
-    raise ValueError("No parseable sheet found in workbook")
+    ws, h1, h2, _, _, total_row = candidates[0]
+    return ws, h1, h2, total_row
 
 
 def parse_filename(filename: str) -> dict | None:
@@ -180,30 +185,73 @@ def _to_number(raw):
 
 
 def parse_workbook(path: str, filename: str) -> ParsedFile:
+    """Parse every distinct feed in the workbook.
+
+    A workbook can hold several sheets. Two cases, told apart by each
+    sheet's own metadata block (Brand/Country/Formula):
+
+      * Same metadata on several sheets — one feed exported at different
+        grains (the second repeats each SKU per GTIN/PLU variant). Only the
+        authoritative sheet is used, or the figures would double-count.
+      * DIFFERENT metadata — genuinely separate feeds in one file, e.g. a
+        store banner and an "online" banner. Every one of them is parsed;
+        an earlier version read only the first sheet's metadata and only one
+        sheet, silently dropping the others (and their banner never reached
+        the filters).
+    """
     wb = openpyxl.load_workbook(path, data_only=True)
-    meta = _cell_metadata(wb.worksheets[0])
+    candidates = _sheet_candidates(wb)
+    if not candidates:
+        raise ValueError("No parseable sheet found in workbook")
 
-    brand = str(meta.get("Brand", "")).strip()
-    country3 = str(meta.get("Country", "")).strip()
-    banner = str(meta.get("Formula", "")).strip()
-    country = _country_to_iso2(country3)
+    # Group sheets by the feed their own metadata block describes.
+    feeds: dict[tuple, list] = {}
+    for cand in candidates:
+        m = _cell_metadata(cand[0])
+        key = (
+            str(m.get("Brand", "")).strip(),
+            str(m.get("Country", "")).strip(),
+            str(m.get("Formula", "")).strip(),
+        )
+        feeds.setdefault(key, []).append(cand)
 
-    result = ParsedFile(brand=brand, country=country, banner=banner, source_filename=filename)
+    primary_brand, primary_country3, primary_banner = next(iter(feeds))
+    result = ParsedFile(
+        brand=primary_brand,
+        country=_country_to_iso2(primary_country3),
+        banner=primary_banner,
+        source_filename=filename,
+    )
 
     fn_info = parse_filename(filename)
     if fn_info:
-        if fn_info["country"] != country:
+        primary_country = _country_to_iso2(primary_country3)
+        if fn_info["country"] != primary_country:
             result.warnings.append(
                 f"Filename country '{fn_info['country']}' does not match "
-                f"in-file country '{country}' ({country3})."
+                f"in-file country '{primary_country}' ({primary_country3})."
             )
-        if fn_info["banner"] != banner:
+        if fn_info["banner"] != primary_banner:
             result.warnings.append(
                 f"Filename banner '{fn_info['banner']}' does not match "
-                f"in-file formula '{banner}'."
+                f"in-file formula '{primary_banner}'."
             )
 
-    ws, header_row1, header_row2, total_row = _select_authoritative_sheet(wb)
+    if len(feeds) > 1:
+        listed = ", ".join(f"{b}/{_country_to_iso2(c)}/{bn}" for b, c, bn in feeds)
+        result.warnings.append(
+            f"Workbook contains {len(feeds)} feeds — all imported: {listed}."
+        )
+
+    for (brand, country3, banner), group in feeds.items():
+        _parse_feed(result, group, brand, _country_to_iso2(country3), banner, country3)
+
+    return result
+
+
+def _parse_feed(result, candidates, brand, country, banner, country3):
+    """Parse one feed (one metadata group) into `result`."""
+    ws, header_row1, header_row2, total_row = _pick_authoritative(candidates)
 
     weeks = _week_columns(ws, header_row1, header_row2, ws.max_column)
     if not weeks:
@@ -235,6 +283,9 @@ def parse_workbook(path: str, filename: str) -> ParsedFile:
     non_numeric_cells = 0
     data_start = header_row2 + 1
     data_end = (total_row - 1) if total_row else ws.max_row
+    # Where this feed's facts start, so the Total-row reconciliation below
+    # sums only THIS feed and not other feeds already parsed from the file.
+    facts_start = len(result.facts)
 
     for r in range(data_start, data_end + 1):
         sku = ws.cell(row=r, column=sku_col).value
@@ -307,7 +358,7 @@ def parse_workbook(path: str, filename: str) -> ParsedFile:
             totals_by_week[year_week] = ws.cell(row=total_row, column=vol_col).value
 
         computed = {}
-        for f in result.facts:
+        for f in result.facts[facts_start:]:
             computed[f["year_week"]] = computed.get(f["year_week"], 0) + (f["sales_volume"] or 0)
 
         mismatches = 0
@@ -328,5 +379,3 @@ def parse_workbook(path: str, filename: str) -> ParsedFile:
             "Could not read Brand/Country/Formula from the metadata block "
             "(rows 1-7) — check the file layout."
         )
-
-    return result
