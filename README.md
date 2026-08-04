@@ -250,6 +250,11 @@ file's own metadata block (not just the filename).
   after the last real week — excluded from the per-week fact rows.
 - Some item-attribute columns share a header label (e.g. two "Size"
   columns) — first occurrence is kept.
+- One export can cover **several brands at once**. The metadata block then
+  joins them with a semicolon (`Brand: ALESSANDRO;DEPEND GEL IQ`) and only
+  the per-row "Brand" column says which brand a row belongs to, so the row's
+  own value is authoritative — each brand lands on its own `fact_sales` rows
+  and stays connected to its own history.
 
 ## Adding a new brand/source format
 

@@ -246,6 +246,13 @@ def parse_workbook(path: str, filename: str) -> ParsedFile:
     for (brand, country3, banner), group in feeds.items():
         _parse_feed(result, group, brand, _country_to_iso2(country3), banner, country3)
 
+    # The metadata block names the brand(s) the export was *requested* for and
+    # joins several with ';' ("ALESSANDRO;DEPEND GEL IQ"). The brands actually
+    # present are the ones read per row, so report those.
+    brands_found = sorted({i["brand"] for i in result.items if i.get("brand")})
+    if brands_found:
+        result.brand = ", ".join(brands_found)
+
     return result
 
 
@@ -277,6 +284,12 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
     package_col = attr_cols.get("Content") or attr_cols.get("Package")
     price_col = attr_cols.get("Price") or attr_cols.get("Consumer")
     gtin_col = attr_cols.get("GTIN/PLU")
+    # One export can cover several brands at once — then the metadata block
+    # lists them joined with ';' ("ALESSANDRO;DEPEND GEL IQ") and only the
+    # per-row "Brand" column says which brand a row belongs to. Using the
+    # metadata value for every row would invent a brand named after the whole
+    # list and detach the rows from that brand's own history.
+    brand_col = attr_cols.get("Brand")
 
     seen_skus = set()
     duplicate_rows = 0
@@ -297,15 +310,21 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
             result.warnings.append(f"Row {r}: non-numeric SKU '{sku}', skipped.")
             continue
 
-        if sku in seen_skus:
+        row_brand = brand
+        if brand_col:
+            raw_brand = ws.cell(row=r, column=brand_col).value
+            if raw_brand is not None and str(raw_brand).strip():
+                row_brand = str(raw_brand).strip()
+
+        if (row_brand, sku) in seen_skus:
             duplicate_rows += 1
             continue
-        seen_skus.add(sku)
+        seen_skus.add((row_brand, sku))
 
         result.items.append(
             {
                 "sku": sku,
-                "brand": brand,
+                "brand": row_brand,
                 "article_description": ws.cell(row=r, column=desc_col).value if desc_col else None,
                 "headgroup": ws.cell(row=r, column=headgroup_col).value if headgroup_col else None,
                 "size": ws.cell(row=r, column=size_col).value if size_col else None,
@@ -330,7 +349,7 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
                 non_numeric_cells += 1
             result.facts.append(
                 {
-                    "brand": brand,
+                    "brand": row_brand,
                     "country": country,
                     "banner": banner,
                     "sku": sku,
