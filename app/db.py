@@ -154,6 +154,17 @@ def _migrate(conn):
         (DEFAULT_KPIS[0][1], DEFAULT_KPIS[0][2], *_OLD_AVG_SELLOUT_EXPRS),
     )
 
+    # Purge rows written by the pre-per-row-brand parser: a multi-brand export
+    # ("Brand: ALESSANDRO;DEPEND GEL IQ") used to land under one combined
+    # brand literally containing ';'. Real brand names never contain ';', so
+    # these rows are unambiguously corrupt — they polluted the brand filter
+    # and sat outside each brand's own history. Re-importing the same file
+    # restores the data under the correct brands.
+    conn.execute("DELETE FROM fact_sales WHERE brand LIKE '%;%'")
+    conn.execute("DELETE FROM items WHERE brand LIKE '%;%'")
+    conn.execute("DELETE FROM store_counts WHERE brand LIKE '%;%'")
+    conn.execute("DELETE FROM promotions WHERE brand LIKE '%;%'")
+
 
 def init_db():
     with get_conn() as conn:
