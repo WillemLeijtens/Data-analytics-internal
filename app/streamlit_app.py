@@ -366,6 +366,17 @@ def page_upload():
         c3.metric("Banner", parsed.banner or "?")
         c4.metric("SKUs found", len(parsed.items))
 
+        # A multi-brand export must land split per brand — show the split
+        # before loading so a mis-parse is visible here, not in the dashboard.
+        brand_counts = {}
+        for it in parsed.items:
+            brand_counts[it["brand"]] = brand_counts.get(it["brand"], 0) + 1
+        if len(brand_counts) > 1:
+            st.caption(
+                "Meerdere merken in dit bestand — wordt gescheiden geïmporteerd: "
+                + " · ".join(f"**{b}**: {n} SKU's" for b, n in sorted(brand_counts.items()))
+            )
+
         if parsed.warnings:
             for w in parsed.warnings:
                 st.warning(w)
