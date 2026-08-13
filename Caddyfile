@@ -18,11 +18,12 @@
 	reverse_proxy app:8501
 }
 
-# De Retailer Console (multi-retailer herbouw) krijgt een eigen hostnaam in
-# plaats van een subpad: de SPA verwijst naar absolute /assets- en
-# /api-paden, dus een prefix eronder hangen zou die requests breken.
-# sslip.io resolvet elk voorvoegsel voor de IP-naam, dus dit werkt zonder
-# DNS-registratie en Caddy haalt er een eigen certificaat voor op.
-{$CONSOLE_ADDRESS:console.188-166-88-105.sslip.io} {
-	reverse_proxy console:8000
-}
+# De Retailer Console staat BEWUST niet in deze Caddy: die zou hem op een
+# publieke hostnaam zetten, terwijl toegang via het portaal loopt
+# (privé-adres + firewall-regel voor de gateway + forward-auth). De console
+# luistert intern op 8000 en wordt door de gateway bediend, niet hier.
+#
+# Let op als de gateway hem doorstuurt: de SPA gebruikt absolute /assets- en
+# /api-paden, dus hij moet op een eigen host/root staan, niet onder een
+# subpad. Uploads gaan als multipart naar POST /api/import (de UI noemt
+# 200 MB), dus zet de body-limiet van de gateway daarop.

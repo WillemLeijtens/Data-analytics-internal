@@ -22,30 +22,39 @@ De console draait als **één extra container** naast de bestaande
 Streamlit-app (eigen image, eigen database in `console/data/`), met een eigen
 hostnaam via Caddy. De bestaande app blijft ongewijzigd op de root staan.
 
-**Eerst een wachtwoord instellen** — de console toont verkoopcijfers en
-weigert zonder wachtwoord te starten (alleen die container; de app draait
-door). Voeg toe aan `.env`:
+Toegang loopt via het **portaal** (privé-adres + firewallregel voor de
+gateway + forward-auth), net als bij de andere apps. De console wordt dus
+**niet** op het publieke IP gepubliceerd en staat bewust niet in de Caddy
+van deze repo.
 
-```
-CONSOLE_PASSWORD=<zelfde waarde als STREAMLIT_APP_PASSWORD>
-```
+Kerngegevens voor de gateway-registratie:
 
-Daarna:
+| | |
+|---|---|
+| Interne poort | **8000** (uvicorn in de container; `CONSOLE_PORT` is alleen de host-kant) |
+| Hostbinding | standaard `127.0.0.1`; zet `CONSOLE_BIND` op het privé-adres als de gateway erbij moet — nooit `0.0.0.0` |
+| Healthcheck | `GET /healthz` — zonder auth, geeft 200, of 503 als de database niet antwoordt |
+| Protocol | gewone request/response; **geen** WebSockets of SSE |
+| Padgevoelig | ja: de SPA gebruikt absolute `/assets`- en `/api`-paden, dus eigen host/root, geen subpad |
+| Uploads | `POST /api/import` is multipart (UI noemt 200 MB) — body-limiet van de gateway daarop zetten |
 
 ```bash
-cd <repo>            # de map met docker-compose.yml
+cd <repo>
 git pull
-docker compose up -d --build console caddy
+docker compose up -d --build console      # bindt op 127.0.0.1:8010 -> :8000
+curl -fsS localhost:8010/healthz
 ```
 
-- App (ongewijzigd): `https://188-166-88-105.sslip.io`
-- Console: `https://console.188-166-88-105.sslip.io`
-- Valt Caddy uit (poort 443 al bezet op deze droplet): `http://<ip>:8010` —
-  de console publiceert die poort zelf, met hetzelfde wachtwoord. Aanpassen
-  met `CONSOLE_PORT`.
+**Wachtwoord.** De console weigert zonder `CONSOLE_PASSWORD` te starten
+(alleen die container; de app draait door). Achter forward-auth is dat
+wachtwoord geen toegangscontrole meer maar dubbelop, dus er zijn twee
+werkbare keuzes — kies er bewust één:
 
-Inloggen gaat via de browserprompt: gebruiker `console` (of `CONSOLE_USER`)
-met het wachtwoord uit `.env`.
+- `CONSOLE_ALLOW_OPEN=1` — geen basic auth in de app; de gateway is de enige
+  poortwachter. Alleen verdedigbaar als de bind écht privé is.
+- `CONSOLE_PASSWORD=<gegenereerd>` — dan moet de **gateway de
+  `Authorization: Basic`-header injecteren**, anders krijgt iedereen alsnog
+  een browserprompt met een wachtwoord dat niemand kent.
 
 Een eigen hostnaam in plaats van een subpad (`/console`) is bewust: de SPA
 verwijst naar absolute `/assets`- en `/api`-paden, die onder een prefix

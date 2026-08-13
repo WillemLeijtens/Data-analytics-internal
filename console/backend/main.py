@@ -39,6 +39,10 @@ if CONSOLE_PASSWORD:
     async def require_password(request, call_next):
         from starlette.responses import Response
 
+        # /healthz stays open: a gateway/orchestrator health probe must not
+        # need credentials, and it exposes no data.
+        if request.url.path == "/healthz":
+            return await call_next(request)
         header = request.headers.get("authorization", "")
         ok = False
         if header.startswith("Basic "):
@@ -332,6 +336,22 @@ def link_sharepoint(retailer_id: str, body: SharepointBody):
             (retailer_id, body.map_url))
         docs = contracts.sync_documents(conn, retailer_id)
         return {"ok": True, "documenten": docs}
+
+
+# ---------------------------------------------------------------- health
+# Unauthenticated, read-only and cheap: verifies the process is up AND that
+# its database answers, so a gateway probe fails when the app is truly
+# unusable rather than merely slow to render.
+
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    from starlette.responses import JSONResponse
+    try:
+        with db.get_conn() as conn:
+            conn.execute("SELECT 1 FROM retailers LIMIT 1").fetchone()
+    except Exception as e:  # noqa: BLE001 - probe must report, not raise
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------- frontend
