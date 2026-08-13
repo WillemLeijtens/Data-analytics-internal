@@ -212,17 +212,25 @@ own server long-term.
 
 ## Project layout
 
-- `app/ingestion.py` — parses a DWH export file: reads the metadata block
+- `app/retailers.py` — the retailer profile registry: one entry per
+  retailer describing its parser, period grain (week/month), unit grain
+  (SKU/store) and capabilities (items? volume?). Every page reads the
+  active profile and adapts.
+- `app/parsers/` — one parser module per retailer, all returning the same
+  `ParsedFile` contract (`parsers/base.py`). `parsers/kruidvat.py` parses a
+  Kruidvat DWH export: reads the metadata block
   (Country/Formula/Brand/Weeks/Date), picks the authoritative sheet (the one
   whose row count matches its own trailing "Total" row), forward-fills the
   merged year-week header, extracts item attributes and per-week
   sales volume/value, and reconciles computed weekly totals against the
-  file's own Total row and Total column.
-- `app/db.py` — SQLite schema and persistence: `items` (item attributes),
-  `fact_sales` (brand/country/banner/sku/year_week grain, append-only
-  history), `store_counts` (manually configured, per brand+country+banner,
-  with optional per-week overrides), `kpi_definitions` (config-driven KPI
-  formulas), `import_log`, `app_meta` (timestamps).
+  file's own Total row and Total column. `app/ingestion.py` is a
+  backwards-compatibility shim re-exporting the Kruidvat parser.
+- `app/db.py` — SQLite schema and persistence: `items` (item attributes,
+  per retailer), `fact_sales` (retailer/brand/country/banner/unit/period
+  grain, append-only history), `store_counts` (manually configured, per
+  retailer+brand+country+banner, with optional per-period overrides),
+  `kpi_definitions` (config-driven KPI formulas), `import_log`, `app_meta`
+  (timestamps + per-retailer auto-import settings).
 - `app/kpi.py` — safe arithmetic expression evaluator for KPI formulas
   (restricted to `+ - * / ()` over a fixed set of scope variables — no
   arbitrary code execution).
@@ -230,15 +238,21 @@ own server long-term.
 
 ## Data model
 
-One shared fact table across all brands, not separate databases per brand:
+One shared fact table across all retailers and brands, not separate
+databases per source:
 
 ```
-fact_sales(brand, country, banner, sku, year_week, sales_volume, sales_value)
+fact_sales(retailer, brand, country, banner, unit, period, sales_volume, sales_value)
 ```
 
-`banner` is the retail chain/formula code (e.g. `KV` = Kruidvat, `TP` =
-Trekpleister) — a dimension distinct from country, both read from each
-file's own metadata block (not just the filename).
+- `unit` is the SKU for an item-grain retailer (Kruidvat) or the store id
+  for a store-grain retailer; `period` is `YYYYWW` for weekly data and
+  `YYYYMM` for monthly data. How to *interpret* them comes from the
+  retailer's profile, never guessed from the data.
+- `sales_volume` may be NULL for retailers that only report value.
+- `banner` is the retail chain/formula code (e.g. `KV` = Kruidvat, `TP` =
+  Trekpleister) — a dimension distinct from country, both read from each
+  file's own metadata block (not just the filename).
 
 ## Known source-file quirks handled
 
@@ -260,5 +274,26 @@ file's own metadata block (not just the filename).
 
 Ingestion reads brand/country/banner from the file's metadata block, so a
 new brand generally needs no code change. If a new export has a
-structurally different layout, extend `ingestion.py`'s sheet-selection or
-column-detection logic rather than writing a brand-specific pipeline.
+structurally different layout, extend `parsers/kruidvat.py`'s
+sheet-selection or column-detection logic rather than writing a
+brand-specific pipeline.
+
+## Adding a new retailer (Etos, ICI Paris XL, Douglas, …)
+
+Never build a parser on assumptions — start from a **real sample file**.
+Then it is two small, isolated pieces of work:
+
+1. **One parser module** in `app/parsers/<retailer>.py` exposing
+   `parse_workbook(path, filename) -> parsers.base.ParsedFile`. Fill
+   `unit` with the SKU or store id, `period` with `YYYYWW` or `YYYYMM`,
+   and leave `items` empty / `sales_volume=None` for anything the
+   retailer doesn't deliver.
+2. **One profile entry** in `app/retailers.py` (`RETAILERS` dict) with the
+   right `period_type`, `unit_type`, `has_items`, `has_volume` flags.
+
+Nothing else changes. A retailer selector appears automatically at the top
+of every page once a second retailer is registered, each retailer gets its
+own import log, store counts, targets, promotions and auto-import mail
+settings, and the dashboard hides or relabels whatever that retailer can't
+deliver (e.g. monthly instead of weekly axes, no volume tiles, store-level
+instead of item-level analysis).

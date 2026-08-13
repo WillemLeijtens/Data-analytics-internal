@@ -14,11 +14,33 @@ import pandas as pd
 import streamlit as st
 
 import db
-import ingestion
+import retailers
 
 # Vega-Lite axis that prefixes every tick label with a euro sign, so money
 # charts are visually distinct from unit/volume charts.
 EUR_AXIS_LABEL = "'€ ' + format(datum.value, ',.0f')"
+
+
+def _retailer_bar() -> retailers.RetailerProfile:
+    """Retailer 'tabs': one segmented control rendered at the top of every
+    page, scoping the whole app (data, promotions, settings, imports) to
+    the chosen retailer. Hidden while only one retailer is registered, so
+    the single-retailer UX stays exactly as it was."""
+    ids = list(retailers.RETAILERS)
+    current = st.session_state.get("retailer_id", retailers.DEFAULT_RETAILER)
+    if current not in ids:
+        current = retailers.DEFAULT_RETAILER
+    if len(ids) > 1:
+        labels = [retailers.RETAILERS[i].display_name for i in ids]
+        chosen = st.segmented_control(
+            "Retailer", labels,
+            default=retailers.RETAILERS[current].display_name,
+            key="retailer_tab", label_visibility="collapsed",
+        )
+        if chosen in labels:
+            current = ids[labels.index(chosen)]
+    st.session_state["retailer_id"] = current
+    return retailers.RETAILERS[current]
 
 
 def eur(value: float) -> str:
@@ -30,10 +52,10 @@ def eur(value: float) -> str:
     return f"€ {value:,.0f}"
 
 
-def fmt_yw(year_week) -> str:
-    """Display a canonical YYYYWW value as YYYY-WW (e.g. 202601 -> 2026-01)."""
-    s = str(year_week)
-    return f"{s[:4]}-{s[4:]}" if len(s) >= 6 else s
+def fmt_yw(period, period_type: str = "week") -> str:
+    """Display a canonical period as a label: 202601 -> '2026-01' for weekly
+    retailers, 202607 -> '2026-jul' for monthly ones."""
+    return retailers.fmt_period(period, period_type)
 
 
 def _strip_line_indent(html_text: str) -> str:
@@ -154,7 +176,8 @@ def _dual_year_sparkline_svg(cur_vals: list[float], prior_vals: list[float],
 
 def _sparkline_cell_html(cur_vals: list[float], prior_vals: list[float],
                           week_axis: list[int], current_year: str, prior_year: str,
-                          fmt_number, width: int = 170, height: int = 40) -> str:
+                          fmt_number, width: int = 170, height: int = 40,
+                          period_word: str = "Week") -> str:
     """The sparkline SVG plus a plain-HTML overlay of one hoverable <div> per
     week, styled by SPARKLINE_HOVER_CSS. Div :hover is unconditionally
     supported by every browser — unlike SVG element hit-testing, which
@@ -166,7 +189,7 @@ def _sparkline_cell_html(cur_vals: list[float], prior_vals: list[float],
         cur_v = cur_vals[i] if i < len(cur_vals) else 0
         prior_v = prior_vals[i] if i < len(prior_vals) else 0
         tooltip = (
-            f"Week {wk}: {fmt_number(cur_v)} ({current_year}) vs "
+            f"{period_word} {wk}: {fmt_number(cur_v)} ({current_year}) vs "
             f"{fmt_number(prior_v)} ({prior_year})"
         )
         slices.append(f'<div class="spark-slice" data-tip="{html.escape(tooltip)}"></div>')
@@ -196,8 +219,10 @@ def _yoy_badge_html(cur_total: float, prior_total: float) -> str:
 
 
 def _augment_year_week(df: pd.DataFrame) -> pd.DataFrame:
-    """Add year / week / yw_label columns derived from the canonical YYYYWW
-    year_week, so visuals can compare the same week number across years."""
+    """Add year / week / yw_label columns derived from the canonical YYYYPP
+    period (WW week or MM month — the same split works for both), so visuals
+    can compare the same period number across years. The column is called
+    'week' for historical reasons; for a monthly retailer it holds 1-12."""
     out = df.copy()
     yw = out["year_week"].astype(str)
     out["year"] = yw.str[:4]
@@ -258,22 +283,26 @@ def _compute_promos(df: pd.DataFrame, promo_set: set) -> pd.DataFrame:
     return g[cols]
 
 
-def _yoy_chart(data: pd.DataFrame, value_col: str, y_title: str, money: bool):
-    """Year-over-year line chart: week number on the x-axis, one coloured line
-    per year with a legend. `data` must already have year / week columns."""
+def _yoy_chart(data: pd.DataFrame, value_col: str, y_title: str, money: bool,
+               profile: retailers.RetailerProfile):
+    """Year-over-year line chart: period number (week 1-53 or month 1-12,
+    from the retailer profile) on the x-axis, one coloured line per year
+    with a legend. `data` must already have year / week columns."""
     agg = data.groupby(["year", "week"], as_index=False)[value_col].sum()
     y_axis = alt.Axis(labelExpr=EUR_AXIS_LABEL) if money else alt.Axis()
     tip_fmt = ",.0f"
+    x_word = "Week" if profile.period_type == "week" else "Month"
     return (
         alt.Chart(agg)
         .mark_line(point=True, interpolate="monotone")
         .encode(
-            x=alt.X("week:Q", title="Week number", scale=alt.Scale(domain=[1, 53])),
+            x=alt.X("week:Q", title=f"{x_word} number",
+                    scale=alt.Scale(domain=[1, profile.period_max])),
             y=alt.Y(f"{value_col}:Q", title=y_title, axis=y_axis),
             color=alt.Color("year:N", title="Year"),
             tooltip=[
                 alt.Tooltip("year:N", title="Year"),
-                alt.Tooltip("week:Q", title="Week"),
+                alt.Tooltip("week:Q", title=x_word),
                 alt.Tooltip(f"{value_col}:Q", title=y_title, format=tip_fmt),
             ],
         )
@@ -334,11 +363,12 @@ def _fmt_ts(value: str | None) -> str:
 
 
 def page_upload():
-    st.header("Import weekly sellout files")
+    profile = _retailer_bar()
+    st.header(f"Import sellout files — {profile.display_name}")
     st.caption(
-        "Upload one or more DWH sellout export files (.xlsx). Brand, country "
-        "and retail banner are read from each file's own metadata block, "
-        "cross-checked against the filename."
+        f"Upload one or more {profile.file_hint} files. They are parsed with "
+        f"the {profile.display_name} parser; brand, country and retail "
+        "banner are read from each file's own contents."
     )
     uploaded = st.file_uploader(
         "Excel files", type=["xlsx"], accept_multiple_files=True
@@ -353,7 +383,7 @@ def page_upload():
             tmp_path = tmp.name
 
         try:
-            parsed = ingestion.parse_workbook(tmp_path, f.name)
+            parsed = profile.parser(tmp_path, f.name)
         except Exception as e:
             st.error(f"Failed to parse {f.name}: {e}")
             continue
@@ -397,29 +427,40 @@ def page_upload():
     with db.get_conn() as conn:
         log_df = pd.read_sql_query(
             "SELECT filename, brand, country, banner, imported_at, rows_loaded, status, message "
-            "FROM import_log ORDER BY id DESC LIMIT 20",
+            "FROM import_log WHERE retailer = ? ORDER BY id DESC LIMIT 20",
             conn,
+            params=(profile.id,),
         )
     st.dataframe(log_df, use_container_width=True)
 
 
-def _load_facts() -> pd.DataFrame:
+def _load_facts(retailer: str) -> pd.DataFrame:
+    """Facts for one retailer. The DB columns are the generic unit/period;
+    they are aliased to the names this UI has always used (sku/year_week) —
+    for a store-grain retailer 'sku' therefore holds the store id, and for a
+    monthly one 'year_week' holds YYYYMM. The active RetailerProfile decides
+    how those are labelled. article_description falls back to the unit id
+    when there is no item record (store-grain retailers have none)."""
     with db.get_conn() as conn:
         return pd.read_sql_query(
             """
-            SELECT f.brand, f.country, f.banner, f.sku, f.year_week,
-                   f.sales_volume, f.sales_value, i.article_description
+            SELECT f.brand, f.country, f.banner,
+                   f.unit AS sku, f.period AS year_week,
+                   f.sales_volume, f.sales_value,
+                   COALESCE(i.article_description, f.unit) AS article_description
             FROM fact_sales f
-            LEFT JOIN items i ON i.sku = f.sku
+            LEFT JOIN items i ON i.retailer = f.retailer AND i.sku = f.unit
+            WHERE f.retailer = ?
             """,
             conn,
+            params=(retailer,),
         )
 
 
-def _import_health():
+def _import_health(retailer: str):
     """Return (ok_count, total_count) over the most recent import per
-    brand+country+banner feed."""
-    last_imports = db.get_last_imports()
+    brand+country+banner feed of one retailer."""
+    last_imports = db.get_last_imports(retailer)
     total = len(last_imports)
     ok = sum(1 for imp in last_imports if str(imp.get("status", "")).startswith("ok"))
     return ok, total
@@ -449,12 +490,12 @@ def _relative_time(iso_str: str | None) -> str:
     return f"{days} day{'s' if days != 1 else ''} ago"
 
 
-def _import_failure_notices() -> list[str]:
-    """Failed-import notices — global, not scoped to the current filter
-    selection, since a failed brand import is worth surfacing regardless of
-    what's currently filtered."""
+def _import_failure_notices(retailer: str) -> list[str]:
+    """Failed-import notices for the active retailer — not scoped to the
+    current filter selection, since a failed brand import is worth surfacing
+    regardless of what's currently filtered."""
     notices = []
-    for imp in db.get_last_imports():
+    for imp in db.get_last_imports(retailer):
         if not str(imp.get("status", "")).startswith("ok"):
             label = f"{imp['brand']} / {imp['country']}/{imp['banner']}"
             reason = imp.get("message") or "see the Import status tab for details"
@@ -462,7 +503,7 @@ def _import_failure_notices() -> list[str]:
     return notices
 
 
-def _status_bar(notices: list[str]):
+def _status_bar(notices: list[str], retailer: str):
     """One compact status bar: overall import health (dot + text), when the
     data last came in, and a notices count — replacing what used to be two
     separate metric tiles, a standalone import-health line, and an inline
@@ -470,7 +511,7 @@ def _status_bar(notices: list[str]):
     notice text. `notices` combines global notices (failed imports) with
     ones scoped to the current brand/country/banner filter selection (e.g.
     missing store counts), passed in by the caller."""
-    ok, total = _import_health()
+    ok, total = _import_health(retailer)
     if total == 0:
         dot, colour, status_text = "⚪", "#888", "No imports yet"
     elif ok == total:
@@ -512,16 +553,16 @@ def _status_bar(notices: list[str]):
             st.markdown("No outstanding notices.")
 
 
-def _import_status_detail():
-    """Full per-brand import breakdown, shown on its own tab."""
-    st.header("Import status per brand")
+def _import_status_detail(profile: retailers.RetailerProfile):
+    """Full per-brand import breakdown for one retailer, on its own tab."""
+    st.header(f"Import status per brand — {profile.display_name}")
     st.caption(
         "The most recent import for each brand / country / banner feed. Green "
         "means that latest import succeeded; red means it failed (or the "
         "newest attempt errored). Use it to spot a brand whose weekly Monday "
         "file didn't come through."
     )
-    last_imports = db.get_last_imports()
+    last_imports = db.get_last_imports(profile.id)
     if not last_imports:
         st.info("No imports recorded yet.")
         return
@@ -719,11 +760,13 @@ def _avg_tile(label, store_slice, dim, combos_stores, colors, combine, delta=Non
     )
 
 
-def _week_section(scoped, store_scoped, combos_stores):
+def _week_section(scoped, store_scoped, combos_stores, profile):
     most_recent_week = scoped["year_week"].max()
+    p_word = "week" if profile.period_type == "week" else "month"
+    p_label = fmt_yw(most_recent_week, profile.period_type)
     dim = _section_header(
-        f"Most recent week — {most_recent_week}",
-        f"Headline figures for ISO week {most_recent_week}. The segmented "
+        f"Most recent {p_word} — {p_label}",
+        f"Headline figures for {p_word} {p_label}. The segmented "
         "control picks which dimension the per-value breakdown splits by.",
         key="dim_week",
     )
@@ -735,19 +778,28 @@ def _week_section(scoped, store_scoped, combos_stores):
     with c1:
         st.markdown(
             _strip_line_indent(_tile(
-                "Sales value (this week)", big=eur(week_df["sales_value"].sum()),
+                f"Sales value (this {p_word})", big=eur(week_df["sales_value"].sum()),
                 rows_html=_rows_block(_sum_rows(week_df, dim, "sales_value", colors, eur)),
             )),
             unsafe_allow_html=True,
         )
     with c2:
-        st.markdown(
-            _strip_line_indent(_tile(
-                "Sellout volume (this week)", big=_fmt_num(week_df["sales_volume"].sum()),
-                rows_html=_rows_block(_sum_rows(week_df, dim, "sales_volume", colors, _fmt_num)),
-            )),
-            unsafe_allow_html=True,
-        )
+        if profile.has_volume:
+            st.markdown(
+                _strip_line_indent(_tile(
+                    f"Sellout volume (this {p_word})", big=_fmt_num(week_df["sales_volume"].sum()),
+                    rows_html=_rows_block(_sum_rows(week_df, dim, "sales_volume", colors, _fmt_num)),
+                )),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                _strip_line_indent(_tile(
+                    f"Sellout volume (this {p_word})", big="—",
+                    footer=f"{profile.display_name} levert geen volumedata",
+                )),
+                unsafe_allow_html=True,
+            )
     with c3:
         combine = st.toggle("Combine avg / store", value=True, key="avg_combine_week")
         st.markdown(
@@ -758,7 +810,8 @@ def _week_section(scoped, store_scoped, combos_stores):
         )
 
 
-def _ytd_section(scoped, store_scoped, combos_stores):
+def _ytd_section(scoped, store_scoped, combos_stores, profile):
+    p_word = "weeks" if profile.period_type == "week" else "months"
     current_year = scoped["year"].max()
     current_week = int(scoped.loc[scoped["year"] == current_year, "week"].max())
     prior_year = str(int(current_year) - 1)
@@ -766,8 +819,8 @@ def _ytd_section(scoped, store_scoped, combos_stores):
     store_ytd_this, store_ytd_last = _ytd_slice(store_scoped, current_year, current_week, prior_year)
 
     dim = _section_header(
-        f"YTD {current_year} vs YTD {prior_year} (weeks 1–{current_week})",
-        "Year-to-date vs the same weeks last year. The segmented control "
+        f"YTD {current_year} vs YTD {prior_year} ({p_word} 1–{current_week})",
+        f"Year-to-date vs the same {p_word} last year. The segmented control "
         "picks which dimension the per-value breakdown splits by.",
         key="dim_ytd",
     )
@@ -791,14 +844,23 @@ def _ytd_section(scoped, store_scoped, combos_stores):
             unsafe_allow_html=True,
         )
     with c2:
-        st.markdown(
-            _strip_line_indent(_tile(
-                "YTD sellout volume", big=_fmt_num(volume_this), big_size=40,
-                delta=_pct_delta(volume_this, volume_last),
-                rows_html=_rows_block(_sum_rows(ytd_this, dim, "sales_volume", colors, _fmt_num)),
-            )),
-            unsafe_allow_html=True,
-        )
+        if profile.has_volume:
+            st.markdown(
+                _strip_line_indent(_tile(
+                    "YTD sellout volume", big=_fmt_num(volume_this), big_size=40,
+                    delta=_pct_delta(volume_this, volume_last),
+                    rows_html=_rows_block(_sum_rows(ytd_this, dim, "sales_volume", colors, _fmt_num)),
+                )),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                _strip_line_indent(_tile(
+                    "YTD sellout volume", big="—", big_size=40,
+                    footer=f"{profile.display_name} levert geen volumedata",
+                )),
+                unsafe_allow_html=True,
+            )
     with c3:
         # No Combine toggle here — only the top (Most recent week) avg tile
         # carries one; this tile always shows the combined (summed) figure.
@@ -818,22 +880,23 @@ def _ytd_section(scoped, store_scoped, combos_stores):
         )
 
 
-def _promo_section(scoped: pd.DataFrame):
-    """Dashboard 'Promoties' section: a horizontal bar per promo week showing
-    its revenue uplift vs the non-promo baseline. Uses the user's confirmed
-    marks; if none exist in the current selection, falls back to the
-    automatic suggestions and says so."""
+def _promo_section(scoped: pd.DataFrame, profile: retailers.RetailerProfile):
+    """Dashboard 'Promoties' section: a horizontal bar per promo period
+    showing its revenue uplift vs the non-promo baseline. Uses the user's
+    confirmed marks; if none exist in the current selection, falls back to
+    the automatic suggestions and says so."""
+    pw = profile.period_word
     st.subheader(
-        "Promoties — omzeteffect per week",
+        f"Promoties — omzeteffect per {pw}",
         help=(
-            "Per gemarkeerde promotieweek: hoeveel de omzet afwijkt van een "
-            "gemiddelde week zónder promotie. Markeer weken in het "
+            f"Per gemarkeerde promotie{pw}: hoeveel de omzet afwijkt van een "
+            f"gemiddelde {pw} zónder promotie. Markeer {pw}en in het "
             "'Promoties'-tabblad; zolang je niets hebt bevestigd, toont deze "
             "grafiek de automatische suggesties."
         ),
     )
 
-    confirmed = db.get_promotions()
+    confirmed = db.get_promotions(profile.id)
     result = _compute_promos(scoped, confirmed)
     using_suggestions = False
     if not result["is_promo"].any():
@@ -848,7 +911,7 @@ def _promo_section(scoped: pd.DataFrame):
 
     promo_rows = result[result["is_promo"] & result["uplift_pct"].notna()].copy()
     if promo_rows.empty:
-        st.caption("Geen promotieweken in de huidige selectie.")
+        st.caption(f"Geen promotie{pw}en in de huidige selectie.")
         return
 
     promo_rows["year"] = promo_rows["year_week"].astype(str).str[:4]
@@ -870,8 +933,12 @@ def _promo_section(scoped: pd.DataFrame):
     # Include brand in the label only when several brands are present, so the
     # common single-brand case stays short.
     multi_brand = promo_rows["brand"].nunique() > 1
+    def _period_part(r):
+        if profile.period_type == "week":
+            return f"{r.year}-wk{int(r.week):02d}"
+        return fmt_yw(r.year_week, "month")
     def _lbl(r):
-        base = f"{r.year}-wk{int(r.week):02d} · {r.country}/{r.banner}"
+        base = f"{_period_part(r)} · {r.country}/{r.banner}"
         return f"{r.brand} · {base}" if multi_brand else base
     promo_rows["label"] = [_lbl(r) for r in promo_rows.itertuples()]
     promo_rows = promo_rows.sort_values("uplift_pct", ascending=False)
@@ -892,9 +959,9 @@ def _promo_section(scoped: pd.DataFrame):
             'font-size:0.9em;color:#aaa;margin:-4px 0 8px">'
             f'<span><b style="color:#eee;font-size:1.15em">{n}</b> promoties</span>'
             f'<span>gem. uplift <b style="color:#22c55e">{avg_up:+.0f}%</b></span>'
-            f'<span>beste <b style="color:#eee">{best.year}-wk{int(best.week):02d}</b> '
+            f'<span>beste <b style="color:#eee">{_period_part(best)}</b> '
             f'<b style="color:#22c55e">{best.uplift_pct:+.0f}%</b></span>'
-            f'<span>zwakste <b style="color:#eee">{worst.year}-wk{int(worst.week):02d}</b> '
+            f'<span>zwakste <b style="color:#eee">{_period_part(worst)}</b> '
             f'<b style="color:{"#22c55e" if worst.uplift_pct>=0 else "#f97316"}">'
             f'{worst.uplift_pct:+.0f}%</b></span>'
             f'{note}</div>'
@@ -914,7 +981,7 @@ def _promo_section(scoped: pd.DataFrame):
                 axis=alt.Axis(labelLimit=240, labelFontSize=11, labelOverlap=False)),
     )
     bars = base.mark_bar(height=alt.RelativeBandSize(0.72)).encode(
-        x=alt.X("uplift_pct:Q", title="Omzeteffect t.o.v. gemiddelde week zónder promotie (%)"),
+        x=alt.X("uplift_pct:Q", title=f"Omzeteffect t.o.v. gemiddelde {pw} zónder promotie (%)"),
         color=color_enc,
         tooltip=[
             alt.Tooltip("label:N", title="Promotie"),
@@ -937,29 +1004,44 @@ def _promo_section(scoped: pd.DataFrame):
 
 
 def page_promotions():
+    profile = _retailer_bar()
+    pw = profile.period_word
     st.header("Promoties")
-    st.markdown(
-        "Markeer per **merk / land / banner** en **week** of er een promotie "
-        "(kortingsactie) liep. De app doet een suggestie:\n\n"
-        "- Voor elke week wordt de **gemiddelde stukprijs** berekend "
-        "(omzet ÷ volume).\n"
-        "- Ligt die meer dan "
-        f"**{PROMO_PRICE_DROP_THRESHOLD*100:.0f}%** onder de **mediane** "
-        "stukprijs van die feed, dan is er waarschijnlijk afgeprijsd → de app "
-        "zet er een **⭕** bij (een suggestie; hij vinkt niets automatisch aan).\n"
-        "- De **uplift** (in het dashboard) is de omzet van een promotieweek "
-        "vergeleken met de **gemiddelde omzet van weken zónder promotie**.\n\n"
-        "Vink de promotieweken aan die je wilt bevestigen en klik **Opslaan**. "
-        "Bevestigde weken worden uit de basislijn gehouden, zodat de uplift "
+    intro = (
+        f"Markeer per **merk / land / banner** en **{pw}** of er een promotie "
+        "(kortingsactie) liep. "
+    )
+    if profile.has_volume:
+        intro += (
+            "De app doet een suggestie:\n\n"
+            f"- Voor elke {pw} wordt de **gemiddelde stukprijs** berekend "
+            "(omzet ÷ volume).\n"
+            "- Ligt die meer dan "
+            f"**{PROMO_PRICE_DROP_THRESHOLD*100:.0f}%** onder de **mediane** "
+            "stukprijs van die feed, dan is er waarschijnlijk afgeprijsd → de app "
+            "zet er een **⭕** bij (een suggestie; hij vinkt niets automatisch aan).\n"
+        )
+    else:
+        intro += (
+            f"\n\n- {profile.display_name} levert geen volumedata, dus een "
+            "stukprijs-suggestie is hier niet mogelijk — markeer promoties "
+            "handmatig.\n"
+        )
+    intro += (
+        f"- De **uplift** (in het dashboard) is de omzet van een promotie{pw} "
+        f"vergeleken met de **gemiddelde omzet van {pw}en zónder promotie**.\n\n"
+        f"Vink de promotie{pw}en aan die je wilt bevestigen en klik **Opslaan**. "
+        f"Bevestigde {pw}en worden uit de basislijn gehouden, zodat de uplift "
         "klopt."
     )
+    st.markdown(intro)
 
-    df = _load_facts()
+    df = _load_facts(profile.id)
     if df.empty:
         st.info("Nog geen data — importeer eerst bestanden.")
         return
 
-    confirmed = db.get_promotions()
+    confirmed = db.get_promotions(profile.id)
     analysis = _compute_promos(df, confirmed).sort_values(
         ["brand", "country", "banner", "year_week"]
     )
@@ -976,7 +1058,7 @@ def page_promotions():
         "Merk": view["brand"],
         "Land": view["country"],
         "Banner": view["banner"],
-        "Week": [fmt_yw(w) for w in view["year_week"]],
+        "Week": [fmt_yw(w, profile.period_type) for w in view["year_week"]],
         "Suggestie": ["⭕" if s else "" for s in view["suggested"]],
         "Promotie": list(view["is_promo"]),
         "_key": [f"{r.brand}|{r.country}|{r.banner}|{r.year_week}" for r in view.itertuples()],
@@ -988,12 +1070,13 @@ def page_promotions():
         use_container_width=True,
         height=520,
         column_config={
+            "Week": st.column_config.TextColumn("Week" if profile.period_type == "week" else "Maand"),
             "Suggestie": st.column_config.TextColumn(
-                "Suggestie", help="⭕ = de app vermoedt een promotieweek (lage stukprijs).",
+                "Suggestie", help=f"⭕ = de app vermoedt een promotie{pw} (lage stukprijs).",
                 disabled=True,
             ),
             "Promotie": st.column_config.CheckboxColumn(
-                "Promotie", help="Aanvinken = bevestigde promotieweek.",
+                "Promotie", help=f"Aanvinken = bevestigde promotie{pw}.",
             ),
             "_key": None,  # hidden helper column
         },
@@ -1006,12 +1089,13 @@ def page_promotions():
         for _, row in edited.iterrows():
             b, c, bn, yw = str(row["_key"]).split("|")
             rows.append((b, c, bn, yw, bool(row["Promotie"])))
-        db.set_promotions(rows)
-        st.success(f"{sum(1 for r in rows if r[4])} promotieweek(en) opgeslagen.")
+        db.set_promotions(profile.id, rows)
+        st.success(f"{sum(1 for r in rows if r[4])} promotie{pw}(en) opgeslagen.")
 
 
 def page_dashboard():
-    st.header("Data analyse agent")
+    profile = _retailer_bar()
+    st.header(f"Data analyse agent — {profile.display_name}")
 
     # The status bar must render above the brand/country/banner filters, but
     # some of its notices (e.g. missing store counts) depend on which
@@ -1019,12 +1103,12 @@ def page_dashboard():
     # run, further down this function. st.empty() reserves the visual slot
     # here; filling it later still draws in this position.
     status_placeholder = st.empty()
-    global_notices = _import_failure_notices()
+    global_notices = _import_failure_notices(profile.id)
 
-    df = _load_facts()
+    df = _load_facts(profile.id)
     if df.empty:
         with status_placeholder.container():
-            _status_bar(global_notices)
+            _status_bar(global_notices, profile.id)
         st.info("No data loaded yet — go to 'Import' to upload files.")
         return
 
@@ -1044,7 +1128,7 @@ def page_dashboard():
     ]
     if scoped.empty:
         with status_placeholder.container():
-            _status_bar(global_notices)
+            _status_bar(global_notices, profile.id)
         st.warning("No data matches the current filter selection.")
         return
 
@@ -1067,8 +1151,8 @@ def page_dashboard():
     target_sum = 0.0            # plain sum of per-brand targets (combined method)
     any_target = False
     for b, c, bn in scoped_combos:
-        n = db.get_store_count(b, c, bn, "DEFAULT") or 0
-        t = db.get_target(b, c, bn)
+        n = db.get_store_count(profile.id, b, c, bn, "DEFAULT") or 0
+        t = db.get_target(profile.id, b, c, bn)
         if n:
             combos_stores[(b, c, bn)] = n
             num_stores_total += n
@@ -1100,41 +1184,42 @@ def page_dashboard():
             "to include them."
         )
     with status_placeholder.container():
-        _status_bar(scope_notices)
+        _status_bar(scope_notices, profile.id)
 
-    _week_section(scoped, store_scoped, combos_stores)
+    p_word = "week" if profile.period_type == "week" else "month"
+    _week_section(scoped, store_scoped, combos_stores, profile)
     st.divider()
-    _ytd_section(scoped, store_scoped, combos_stores)
+    _ytd_section(scoped, store_scoped, combos_stores, profile)
     st.divider()
+
+    if profile.has_volume:
+        st.subheader(
+            f"Total sellout per {p_word} — year-over-year",
+            help=(
+                f"Total sellout volume (units sold) per {p_word} number, with "
+                "one coloured line per year so the same period compares "
+                "across years. Summed across the current selection."
+            ),
+        )
+        st.altair_chart(
+            _yoy_chart(scoped, "sales_volume", "Sellout volume (units)", money=False, profile=profile),
+            use_container_width=True,
+        )
 
     st.subheader(
-        "Total sellout per week — year-over-year",
+        f"Total sales value per {p_word} — year-over-year",
         help=(
-            "Total sellout volume (units sold) per week number, with one "
-            "coloured line per year so the same week compares across years "
-            "(e.g. week 1 of 2025 vs 2026). Summed across every SKU in the "
-            "current selection."
+            f"Total sales value (€) per {p_word} number, with one coloured "
+            "line per year so the same period compares across years. Summed "
+            "across the current selection."
         ),
     )
     st.altair_chart(
-        _yoy_chart(scoped, "sales_volume", "Sellout volume (units)", money=False),
-        use_container_width=True,
-    )
-
-    st.subheader(
-        "Total sales value per week — year-over-year",
-        help=(
-            "Total sales value (€) per week number, with one coloured line per "
-            "year so the same week compares across years (e.g. week 1 of 2025 "
-            "vs 2026). Summed across every SKU in the current selection."
-        ),
-    )
-    st.altair_chart(
-        _yoy_chart(scoped, "sales_value", "Sales value (€)", money=True),
+        _yoy_chart(scoped, "sales_value", "Sales value (€)", money=True, profile=profile),
         use_container_width=True,
     )
     years_in_view = sorted(scoped["year"].unique())
-    if len(years_in_view) < 2:
+    if len(years_in_view) < 2 and profile.period_type == "week":
         st.info(
             f"Only **{years_in_view[0]}** is in view, so there is a single "
             "line. These DWH exports label weeks by ISO year-week, so week "
@@ -1151,12 +1236,12 @@ def page_dashboard():
     # there is deliberately no Blended/Combined control here (the only
     # combine control lives on the top avg tile).
     st.subheader(
-        "Avg revenue per store per week — year-over-year",
+        f"Avg revenue per store per {p_word} — year-over-year",
         help=(
             "Sum of each brand/country/banner combination's own revenue per "
-            "store, per week number, one coloured line per year. Only counts "
-            "combinations with a configured store count. The dashed line is "
-            "the sum of the per-brand targets from Settings."
+            f"store, per {p_word} number, one coloured line per year. Only "
+            "counts combinations with a configured store count. The dashed "
+            "line is the sum of the per-brand targets from Settings."
         ),
     )
     target_line = target_combined
@@ -1175,7 +1260,8 @@ def page_dashboard():
             alt.Chart(avg_df)
             .mark_line(point=True, interpolate="monotone")
             .encode(
-                x=alt.X("week:Q", title="Week number", scale=alt.Scale(domain=[1, 53])),
+                x=alt.X("week:Q", title=f"{p_word.capitalize()} number",
+                        scale=alt.Scale(domain=[1, profile.period_max])),
                 y=alt.Y(
                     "avg_rev:Q",
                     title="Avg revenue / store (€)",
@@ -1206,15 +1292,26 @@ def page_dashboard():
     else:
         st.caption("Set store counts in Settings to see this chart.")
 
-    _promo_section(scoped)
+    _promo_section(scoped, profile)
 
-    # Per-item analysis with year-over-year comparison (volume + value).
+    # Per-unit analysis (items for SKU-grain retailers, stores for
+    # store-grain ones) with year-over-year comparison. Hidden when the
+    # retailer supplies neither items nor a per-store split.
+    unit_word = profile.unit_word            # "Item" | "Winkel"
+    has_unit_detail = profile.has_items or profile.unit_type == "store"
+    if not has_unit_detail:
+        st.caption(
+            f"{profile.display_name} levert geen artikel- of winkelniveau — "
+            "de detailanalyse per item/winkel is voor deze retailer niet "
+            "beschikbaar."
+        )
+        return
     st.subheader(
-        "Item analysis — year-over-year",
+        f"{unit_word} analysis — year-over-year",
         help=(
-            "Pick an item to see its sellout volume and sales value per week "
-            "number, with one coloured line per year so weeks compare across "
-            "years. Below, the full per-item volume table for all items."
+            f"Pick a {unit_word.lower()} to see its figures per {p_word} "
+            "number, with one coloured line per year so periods compare "
+            "across years. Below, the full breakdown table."
         ),
     )
     item_options = (
@@ -1225,26 +1322,33 @@ def page_dashboard():
     item_labels = {
         f"{r.sku} — {r.article_description}": r.sku for r in item_options.itertuples()
     }
-    chosen_label = st.selectbox("Item", list(item_labels.keys()))
+    chosen_label = st.selectbox(unit_word, list(item_labels.keys()))
     chosen_sku = item_labels[chosen_label]
     item_df = scoped[scoped["sku"] == chosen_sku]
 
-    ic1, ic2 = st.columns(2)
-    with ic1:
-        st.caption("Volume per week")
+    if profile.has_volume:
+        ic1, ic2 = st.columns(2)
+        with ic1:
+            st.caption(f"Volume per {p_word}")
+            st.altair_chart(
+                _yoy_chart(item_df, "sales_volume", "Volume (units)", money=False, profile=profile),
+                use_container_width=True,
+            )
+        with ic2:
+            st.caption(f"Value per {p_word} (€)")
+            st.altair_chart(
+                _yoy_chart(item_df, "sales_value", "Value (€)", money=True, profile=profile),
+                use_container_width=True,
+            )
+    else:
+        st.caption(f"Value per {p_word} (€)")
         st.altair_chart(
-            _yoy_chart(item_df, "sales_volume", "Volume (units)", money=False),
-            use_container_width=True,
-        )
-    with ic2:
-        st.caption("Value per week (€)")
-        st.altair_chart(
-            _yoy_chart(item_df, "sales_value", "Value (€)", money=True),
+            _yoy_chart(item_df, "sales_value", "Value (€)", money=True, profile=profile),
             use_container_width=True,
         )
 
     st.subheader(
-        "Sellout per item per week (all items)",
+        f"Sellout per {unit_word.lower()} per {p_word}",
         help=(
             "Sellout volume or value broken down per item, for the current "
             "selection. The sparkline view compares this year's weekly shape "
@@ -1266,22 +1370,24 @@ def page_dashboard():
             horizontal=True,
         )
     with metric_col_ui:
-        if view == "Sparkline":
+        if view == "Sparkline" and profile.has_volume:
             metric_choice = st.radio(
                 "Metric", ["Volume", "Value"], horizontal=True, key="item_sparkline_metric",
             )
+        elif view == "Sparkline":
+            metric_choice = "Value"   # no volume data for this retailer
         else:
-            metric_choice = "Volume"  # Data table view is volume-only; selector n/a
+            metric_choice = "Volume" if profile.has_volume else "Value"
 
     if view == "Data table":
         item_pivot = scoped.pivot_table(
             index=["sku", "article_description"],
             columns="year_week",
-            values="sales_volume",
+            values="sales_volume" if profile.has_volume else "sales_value",
             aggfunc="sum",
             fill_value=0,
         ).sort_index(axis=1)
-        item_pivot.columns = [fmt_yw(c) for c in item_pivot.columns]
+        item_pivot.columns = [fmt_yw(c, profile.period_type) for c in item_pivot.columns]
         st.dataframe(item_pivot, use_container_width=True)
     else:
         metric_col = "sales_volume" if metric_choice == "Volume" else "sales_value"
@@ -1314,7 +1420,8 @@ def page_dashboard():
         ).reindex(columns=week_axis, fill_value=0)
 
         has_prior_year = prior_year in scoped["year"].values
-        ytd_label = f"YTD (wk 1–{current_week})"
+        p_abbr = "wk" if profile.period_type == "week" else "m"
+        ytd_label = f"YTD ({p_abbr} 1–{current_week})"
         legend = (
             f'<span style="color:{_SPARK_CUR_COLOR};font-weight:600;">● {current_year} {ytd_label}</span>'
             f'&nbsp;&nbsp;<span style="color:{_SPARK_PRIOR_COLOR};font-weight:600;">- - {prior_year} same weeks (LYTD)</span>'
@@ -1330,6 +1437,7 @@ def page_dashboard():
             prior_vals = prior_pivot.loc[sku].tolist() if sku in prior_pivot.index else [0.0] * len(week_axis)
             svg = _sparkline_cell_html(
                 cur_vals, prior_vals, week_axis, current_year, prior_year, fmt_number,
+                period_word=p_word.capitalize(),
             )
             badge = _yoy_badge_html(sum(cur_vals), sum(prior_vals))
             latest_val = all_time.loc[(sku, desc), all_week_cols[-1]] if all_week_cols else 0
@@ -1352,11 +1460,11 @@ def page_dashboard():
         <table style="width:100%;border-collapse:collapse;font-size:0.92em;">
         <thead style="position:sticky;top:0;background:var(--background-color,#0e1117);z-index:1;">
         <tr style="border-bottom:1px solid rgba(128,128,128,0.35);text-align:left;">
-        <th style="padding:8px 12px;">SKU</th>
-        <th style="padding:8px 12px;">Item</th>
+        <th style="padding:8px 12px;">{"SKU" if profile.unit_type == "sku" else "Winkel-ID"}</th>
+        <th style="padding:8px 12px;">{unit_word}</th>
         <th style="padding:8px 12px;">{metric_choice} trend (YTD)</th>
         <th style="padding:8px 12px;">YTD vs LYTD</th>
-        <th style="padding:8px 12px;text-align:right;" title="The single most recent imported week for this item.">Latest week</th>
+        <th style="padding:8px 12px;text-align:right;" title="The single most recent imported period.">Latest {p_word}</th>
         <th style="padding:8px 12px;text-align:right;" title="Sum of the current year's weeks 1..N shown in the sparkline (YTD) — not the item's full import history.">Total (YTD)</th>
         </tr>
         </thead>
@@ -1370,7 +1478,9 @@ def page_dashboard():
 
 
 def page_settings():
-    st.header("Settings")
+    profile = _retailer_bar()
+    p_word = "week" if profile.period_type == "week" else "month"
+    st.header(f"Settings — {profile.display_name}")
 
     st.subheader("Store counts & targets")
     st.caption(
@@ -1382,7 +1492,7 @@ def page_settings():
         "atomic save avoids the easy mistake of editing several rows but "
         "only clicking one row's save button."
     )
-    df = _load_facts()
+    df = _load_facts(profile.id)
     combos = sorted(set(zip(df["brand"], df["country"], df["banner"]))) if not df.empty else []
 
     if not combos:
@@ -1392,12 +1502,12 @@ def page_settings():
             hdr = st.columns([3, 2, 2])
             hdr[0].markdown("**Brand / country / banner**")
             hdr[1].markdown("**# stores**")
-            hdr[2].markdown("**Target avg € / store / week**")
+            hdr[2].markdown(f"**Target avg € / store / {p_word}**")
 
             field_keys = []
             for brand, country, banner in combos:
-                current = db.get_store_count(brand, country, banner, "DEFAULT") or 0
-                current_target = db.get_target(brand, country, banner) or 0.0
+                current = db.get_store_count(profile.id, brand, country, banner, "DEFAULT") or 0
+                current_target = db.get_target(profile.id, brand, country, banner) or 0.0
                 cols = st.columns([3, 2, 2])
                 cols[0].write(f"**{brand}** / {country} / {banner}")
                 stores_key = f"stores_{brand}_{country}_{banner}"
@@ -1415,19 +1525,20 @@ def page_settings():
             submitted = st.form_submit_button("Save all")
             if submitted:
                 for brand, country, banner, stores_key, target_key in field_keys:
-                    db.set_store_count(brand, country, banner, "DEFAULT", int(st.session_state[stores_key]))
+                    db.set_store_count(profile.id, brand, country, banner, "DEFAULT", int(st.session_state[stores_key]))
                     new_target = float(st.session_state[target_key])
-                    db.set_target(brand, country, banner, new_target if new_target > 0 else None)
+                    db.set_target(profile.id, brand, country, banner, new_target if new_target > 0 else None)
                 st.success(f"Saved {len(field_keys)} row(s).")
 
     st.divider()
-    _auto_import_settings()
+    _auto_import_settings(profile)
 
 
-def _auto_import_settings():
-    """Settings block for the automatic Outlook import: connection, subject
-    filter, on/off, a manual run, and the recent auto-import log."""
-    st.subheader("Automatische import van mail")
+def _auto_import_settings(profile: retailers.RetailerProfile):
+    """Settings block for the automatic mail import of one retailer:
+    connection, subject filter, on/off, a manual run, and the recent
+    auto-import log."""
+    st.subheader(f"Automatische import van mail — {profile.display_name}")
     st.caption(
         "Haalt elke 15 minuten de nieuwe mails op met een bepaald onderwerp, "
         "downloadt de Excel-bijlagen en importeert ze via dezelfde controle "
@@ -1444,7 +1555,7 @@ def _auto_import_settings():
     # Source choice: forwarding mailbox (no access to your own inbox) or
     # direct Graph access to your own mailbox.
     kinds = list(auto_import.SOURCES.keys())
-    current_kind = auto_import.get_source_kind()
+    current_kind = auto_import.get_source_kind(profile.id)
     chosen_label = st.radio(
         "Waar haalt de app de mails op?",
         [auto_import.SOURCES[k] for k in kinds],
@@ -1456,11 +1567,11 @@ def _auto_import_settings():
             "**Eigen Outlook-mailbox:** de app leest via Microsoft Graph "
             "rechtstreeks je eigen mailbox (alleen leesrechten)."
         ),
-        key="auto_source_choice",
+        key=f"auto_source_choice_{profile.id}",
     )
     kind = kinds[[auto_import.SOURCES[k] for k in kinds].index(chosen_label)]
     if kind != current_kind:
-        db.set_meta_value(auto_import.SOURCE_KEY, kind)
+        db.set_meta_value(auto_import.meta_key(auto_import.SOURCE_KEY, profile.id), kind)
         st.rerun()
 
     source = auto_import.get_source(kind)
@@ -1513,25 +1624,29 @@ def _auto_import_settings():
                     except Exception as e:  # noqa: BLE001
                         st.error(str(e))
 
-    with st.form("auto_import_form"):
+    with st.form(f"auto_import_form_{profile.id}"):
         enabled = st.checkbox(
             "Automatische import aan",
-            value=auto_import.is_enabled(),
+            value=auto_import.is_enabled(profile.id),
             help="Staat standaard uit; de poller doet niets tot dit aan staat.",
         )
         subject = st.text_input(
             "Mails met dit onderwerp (of deel daarvan)",
-            value=auto_import.get_subject_filter(),
+            value=auto_import.get_subject_filter(profile.id),
             help="Niet gevoelig voor hoofdletters. Bijv. 'DWH' of "
                  "'Sales volume per week'.",
         )
         if st.form_submit_button("Opslaan"):
-            db.set_meta_value(auto_import.ENABLED_KEY, "1" if enabled else "0")
-            db.set_meta_value(auto_import.SUBJECT_KEY, subject.strip())
+            db.set_meta_value(
+                auto_import.meta_key(auto_import.ENABLED_KEY, profile.id),
+                "1" if enabled else "0")
+            db.set_meta_value(
+                auto_import.meta_key(auto_import.SUBJECT_KEY, profile.id),
+                subject.strip())
             st.success("Instellingen opgeslagen.")
 
-    last_poll = db.get_meta(auto_import.LAST_POLL_KEY)
-    last_result = db.get_meta(auto_import.LAST_RESULT_KEY)
+    last_poll = db.get_meta(auto_import.meta_key(auto_import.LAST_POLL_KEY, profile.id))
+    last_result = db.get_meta(auto_import.meta_key(auto_import.LAST_RESULT_KEY, profile.id))
     st.caption(
         f"Laatste controle: {_fmt_ts(last_poll)}"
         + (f" — {last_result}" if last_result else "")
@@ -1539,7 +1654,7 @@ def _auto_import_settings():
 
     if st.button("Nu controleren", disabled=not connected):
         with st.spinner("Mailbox controleren…"):
-            summary = auto_import.poll_once()
+            summary = auto_import.poll_once(profile.id)
         if summary.get("error"):
             st.error(summary["error"])
         else:
@@ -1548,7 +1663,7 @@ def _auto_import_settings():
                 f"{summary['skipped']} al eerder verwerkt."
             )
 
-    rows = db.get_email_imports(15)
+    rows = db.get_email_imports(15, profile.id)
     if rows:
         st.markdown("**Recente automatische imports**")
         st.dataframe(
@@ -1566,7 +1681,7 @@ def _auto_import_settings():
 
 
 def page_import_status():
-    _import_status_detail()
+    _import_status_detail(_retailer_bar())
 
 
 PAGES = {

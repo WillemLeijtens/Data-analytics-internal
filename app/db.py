@@ -1,5 +1,14 @@
 """SQLite persistence layer: items, fact_sales, store_counts, kpi
-definitions, import log, and app-level metadata (timestamps)."""
+definitions, import log, and app-level metadata (timestamps).
+
+Multi-retailer model: every dimension table carries a ``retailer`` column
+(part of the primary key where rows must not collide across retailers).
+The fact grain is generic — ``unit`` is the SKU for SKU-grain retailers or
+the store id for store-grain ones, and ``period`` is YYYYWW or YYYYMM
+depending on the retailer's cadence (declared in retailers.py, not stored
+per row). Databases created before this model are migrated in place, with
+all existing rows assigned to retailer 'KRUIDVAT'.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +19,16 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "analytics.db"
 
-SCHEMA = """
+LEGACY_RETAILER = "KRUIDVAT"   # owner of all rows written before the retailer column existed
+
+# Per-table DDL, shared between fresh installs (SCHEMA below) and the
+# rebuild migration for pre-retailer databases (which must create the new
+# shape explicitly).
+DDL = {
+    "items": """
 CREATE TABLE IF NOT EXISTS items (
-    sku TEXT PRIMARY KEY,
+    retailer TEXT NOT NULL,
+    sku TEXT NOT NULL,
     brand TEXT NOT NULL,
     article_description TEXT,
     headgroup TEXT,
@@ -21,29 +37,51 @@ CREATE TABLE IF NOT EXISTS items (
     type TEXT,
     package_content TEXT,
     consumer_price REAL,
-    gtin TEXT
+    gtin TEXT,
+    PRIMARY KEY (retailer, sku)
 );
-
+""",
+    "fact_sales": """
 CREATE TABLE IF NOT EXISTS fact_sales (
+    retailer TEXT NOT NULL,
     brand TEXT NOT NULL,
     country TEXT NOT NULL,
     banner TEXT NOT NULL,
-    sku TEXT NOT NULL,
-    year_week TEXT NOT NULL,
-    sales_volume REAL NOT NULL DEFAULT 0,
+    unit TEXT NOT NULL,
+    period TEXT NOT NULL,
+    sales_volume REAL,
     sales_value REAL NOT NULL DEFAULT 0,
-    PRIMARY KEY (brand, country, banner, sku, year_week)
+    PRIMARY KEY (retailer, brand, country, banner, unit, period)
 );
-
+""",
+    "store_counts": """
 CREATE TABLE IF NOT EXISTS store_counts (
+    retailer TEXT NOT NULL,
     brand TEXT NOT NULL,
     country TEXT NOT NULL,
     banner TEXT NOT NULL,
-    year_week TEXT NOT NULL DEFAULT 'DEFAULT',
+    period TEXT NOT NULL DEFAULT 'DEFAULT',
     num_stores INTEGER NOT NULL,
-    PRIMARY KEY (brand, country, banner, year_week)
+    target_rev_per_store REAL,
+    PRIMARY KEY (retailer, brand, country, banner, period)
 );
+""",
+    "promotions": """
+CREATE TABLE IF NOT EXISTS promotions (
+    retailer TEXT NOT NULL,
+    brand TEXT NOT NULL,
+    country TEXT NOT NULL,
+    banner TEXT NOT NULL,
+    period TEXT NOT NULL,
+    is_promo INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (retailer, brand, country, banner, period)
+);
+""",
+}
 
+SCHEMA = (
+    DDL["items"] + DDL["fact_sales"] + DDL["store_counts"] + DDL["promotions"]
+    + """
 CREATE TABLE IF NOT EXISTS kpi_definitions (
     name TEXT PRIMARY KEY,
     expression TEXT NOT NULL,
@@ -52,6 +90,7 @@ CREATE TABLE IF NOT EXISTS kpi_definitions (
 
 CREATE TABLE IF NOT EXISTS import_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    retailer TEXT,
     filename TEXT,
     brand TEXT,
     country TEXT,
@@ -67,20 +106,12 @@ CREATE TABLE IF NOT EXISTS app_meta (
     value TEXT
 );
 
-CREATE TABLE IF NOT EXISTS promotions (
-    brand TEXT NOT NULL,
-    country TEXT NOT NULL,
-    banner TEXT NOT NULL,
-    year_week TEXT NOT NULL,
-    is_promo INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (brand, country, banner, year_week)
-);
-
--- One row per Outlook message+attachment the auto-importer has handled, so
--- a restart or an overlapping poll never re-imports the same mail.
+-- One row per mail message+attachment the auto-importer has handled, so a
+-- restart or an overlapping poll never re-imports the same mail.
 CREATE TABLE IF NOT EXISTS email_imports (
     message_id TEXT NOT NULL,
     attachment_name TEXT NOT NULL,
+    retailer TEXT,
     subject TEXT,
     received_at TEXT,
     processed_at TEXT,
@@ -89,6 +120,7 @@ CREATE TABLE IF NOT EXISTS email_imports (
     PRIMARY KEY (message_id, attachment_name)
 );
 """
+)
 
 # Superseded default expressions for avg_sellout_per_store, in historical
 # order. A deployed database whose stored expression still matches one of
@@ -132,14 +164,75 @@ def get_conn():
         conn.close()
 
 
+def _columns(conn, table: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _rebuild(conn, table: str, copy_sql: str):
+    """Rebuild `table` into the new DDL shape (SQLite cannot alter a primary
+    key in place): rename aside, create fresh, copy via `copy_sql` (which
+    must SELECT from {old}), drop the old table."""
+    old = f"{table}_pre_retailer"
+    conn.execute(f"ALTER TABLE {table} RENAME TO {old}")
+    conn.executescript(DDL[table])
+    conn.execute(copy_sql.format(old=old))
+    conn.execute(f"DROP TABLE {old}")
+
+
 def _migrate(conn):
     """Lightweight, idempotent schema migrations for databases created by an
     earlier version (CREATE TABLE IF NOT EXISTS never adds new columns)."""
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(store_counts)")}
-    if "target_rev_per_store" not in existing:
-        # Per brand+country+banner target for average revenue per store per
-        # week — drawn as a target line on the KPI chart. Set in Settings.
-        conn.execute("ALTER TABLE store_counts ADD COLUMN target_rev_per_store REAL")
+    # --- pre-retailer -> multi-retailer model -----------------------------
+    # Old shape: no retailer column, fact grain sku/year_week, per-key
+    # tables without retailer in the PK. All existing rows belong to the
+    # Kruidvat feed (the only retailer that existed then).
+    if "retailer" not in _columns(conn, "fact_sales"):
+        _rebuild(conn, "fact_sales", f"""
+            INSERT INTO fact_sales (retailer, brand, country, banner, unit,
+                                    period, sales_volume, sales_value)
+            SELECT '{LEGACY_RETAILER}', brand, country, banner, sku,
+                   year_week, sales_volume, sales_value FROM {{old}}
+        """)
+    if "retailer" not in _columns(conn, "items"):
+        _rebuild(conn, "items", f"""
+            INSERT INTO items (retailer, sku, brand, article_description,
+                               headgroup, size, colour, type,
+                               package_content, consumer_price, gtin)
+            SELECT '{LEGACY_RETAILER}', sku, brand, article_description,
+                   headgroup, size, colour, type, package_content,
+                   consumer_price, gtin FROM {{old}}
+        """)
+    if "retailer" not in _columns(conn, "store_counts"):
+        # target_rev_per_store was itself added by an earlier migration, so
+        # a very old database may lack it — pad with NULL in that case.
+        has_target = "target_rev_per_store" in _columns(conn, "store_counts")
+        target_expr = "target_rev_per_store" if has_target else "NULL"
+        _rebuild(conn, "store_counts", f"""
+            INSERT INTO store_counts (retailer, brand, country, banner,
+                                      period, num_stores, target_rev_per_store)
+            SELECT '{LEGACY_RETAILER}', brand, country, banner, year_week,
+                   num_stores, {target_expr} FROM {{old}}
+        """)
+    if "retailer" not in _columns(conn, "promotions"):
+        _rebuild(conn, "promotions", f"""
+            INSERT INTO promotions (retailer, brand, country, banner, period, is_promo)
+            SELECT '{LEGACY_RETAILER}', brand, country, banner, year_week,
+                   is_promo FROM {{old}}
+        """)
+    if "retailer" not in _columns(conn, "import_log"):
+        conn.execute("ALTER TABLE import_log ADD COLUMN retailer TEXT")
+        conn.execute("UPDATE import_log SET retailer = ?", (LEGACY_RETAILER,))
+    if "retailer" not in _columns(conn, "email_imports"):
+        conn.execute("ALTER TABLE email_imports ADD COLUMN retailer TEXT")
+        conn.execute("UPDATE email_imports SET retailer = ?", (LEGACY_RETAILER,))
+    # Auto-import settings written before they were per-retailer belong to
+    # the Kruidvat feed: copy them to the suffixed keys (see auto_import).
+    for key in ("auto_import_subject", "auto_import_enabled", "auto_import_source"):
+        conn.execute(
+            "INSERT OR IGNORE INTO app_meta (key, value) "
+            "SELECT ? , value FROM app_meta WHERE key = ?",
+            (f"{key}:{LEGACY_RETAILER}", key),
+        )
 
     # Upgrade the built-in avg_sellout_per_store KPI on already-deployed
     # databases whenever its stored expression still matches a superseded
@@ -178,15 +271,15 @@ def init_db():
             )
 
 
-def upsert_items(conn, items: list[dict]):
+def upsert_items(conn, retailer: str, items: list[dict]):
     for it in items:
         conn.execute(
             """
-            INSERT INTO items (sku, brand, article_description, headgroup, size,
-                                colour, type, package_content, consumer_price, gtin)
-            VALUES (:sku, :brand, :article_description, :headgroup, :size,
+            INSERT INTO items (retailer, sku, brand, article_description, headgroup,
+                                size, colour, type, package_content, consumer_price, gtin)
+            VALUES (:retailer, :sku, :brand, :article_description, :headgroup, :size,
                     :colour, :type, :package_content, :consumer_price, :gtin)
-            ON CONFLICT(sku) DO UPDATE SET
+            ON CONFLICT(retailer, sku) DO UPDATE SET
                 brand=excluded.brand,
                 article_description=excluded.article_description,
                 headgroup=excluded.headgroup,
@@ -197,7 +290,7 @@ def upsert_items(conn, items: list[dict]):
                 consumer_price=excluded.consumer_price,
                 gtin=excluded.gtin
             """,
-            it,
+            {**it, "retailer": retailer},
         )
 
 
@@ -205,11 +298,11 @@ def upsert_facts(conn, facts: list[dict]) -> int:
     for f in facts:
         conn.execute(
             """
-            INSERT INTO fact_sales (brand, country, banner, sku, year_week,
+            INSERT INTO fact_sales (retailer, brand, country, banner, unit, period,
                                      sales_volume, sales_value)
-            VALUES (:brand, :country, :banner, :sku, :year_week,
+            VALUES (:retailer, :brand, :country, :banner, :unit, :period,
                     :sales_volume, :sales_value)
-            ON CONFLICT(brand, country, banner, sku, year_week) DO UPDATE SET
+            ON CONFLICT(retailer, brand, country, banner, unit, period) DO UPDATE SET
                 sales_volume=excluded.sales_volume,
                 sales_value=excluded.sales_value
             """,
@@ -218,14 +311,15 @@ def upsert_facts(conn, facts: list[dict]) -> int:
     return len(facts)
 
 
-def log_import(conn, filename, brand, country, banner, rows_loaded, status, message):
+def log_import(conn, retailer, filename, brand, country, banner, rows_loaded, status, message):
     conn.execute(
         """
-        INSERT INTO import_log (filename, brand, country, banner, imported_at,
-                                 rows_loaded, status, message)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO import_log (retailer, filename, brand, country, banner,
+                                 imported_at, rows_loaded, status, message)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            retailer,
             filename,
             brand,
             country,
@@ -253,14 +347,15 @@ def get_meta(key: str) -> str | None:
 
 
 def load_parsed_file(parsed) -> tuple[int, list[str]]:
-    """Persist a ParsedFile (see ingestion.py) into the database, updating
+    """Persist a ParsedFile (see parsers/base.py) into the database, updating
     timestamps and the import log. Returns (rows_loaded, warnings)."""
     now = dt.datetime.utcnow().isoformat()
     with get_conn() as conn:
-        upsert_items(conn, parsed.items)
+        upsert_items(conn, parsed.retailer, parsed.items)
         rows_loaded = upsert_facts(conn, parsed.facts)
         log_import(
             conn,
+            parsed.retailer,
             parsed.source_filename,
             parsed.brand,
             parsed.country,
@@ -274,83 +369,87 @@ def load_parsed_file(parsed) -> tuple[int, list[str]]:
     return rows_loaded, parsed.warnings
 
 
-def get_store_count(brand: str, country: str, banner: str, year_week: str) -> int | None:
+def get_store_count(retailer: str, brand: str, country: str, banner: str, period: str) -> int | None:
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT num_stores FROM store_counts WHERE brand=? AND country=? AND banner=? AND year_week=?",
-            (brand, country, banner, year_week),
+            "SELECT num_stores FROM store_counts "
+            "WHERE retailer=? AND brand=? AND country=? AND banner=? AND period=?",
+            (retailer, brand, country, banner, period),
         ).fetchone()
         if row:
             return row["num_stores"]
         row = conn.execute(
-            "SELECT num_stores FROM store_counts WHERE brand=? AND country=? AND banner=? AND year_week='DEFAULT'",
-            (brand, country, banner),
+            "SELECT num_stores FROM store_counts "
+            "WHERE retailer=? AND brand=? AND country=? AND banner=? AND period='DEFAULT'",
+            (retailer, brand, country, banner),
         ).fetchone()
         return row["num_stores"] if row else None
 
 
-def set_store_count(brand: str, country: str, banner: str, year_week: str, num_stores: int):
+def set_store_count(retailer: str, brand: str, country: str, banner: str, period: str, num_stores: int):
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO store_counts (brand, country, banner, year_week, num_stores)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(brand, country, banner, year_week) DO UPDATE SET
+            INSERT INTO store_counts (retailer, brand, country, banner, period, num_stores)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(retailer, brand, country, banner, period) DO UPDATE SET
                 num_stores=excluded.num_stores
             """,
-            (brand, country, banner, year_week, num_stores),
+            (retailer, brand, country, banner, period, num_stores),
         )
 
 
-def get_target(brand: str, country: str, banner: str) -> float | None:
-    """Target average revenue per store per week for a brand+country+banner
+def get_target(retailer: str, brand: str, country: str, banner: str) -> float | None:
+    """Target average revenue per store per period for a brand+country+banner
     (stored on the DEFAULT row). None if unset."""
     with get_conn() as conn:
         row = conn.execute(
             "SELECT target_rev_per_store FROM store_counts "
-            "WHERE brand=? AND country=? AND banner=? AND year_week='DEFAULT'",
-            (brand, country, banner),
+            "WHERE retailer=? AND brand=? AND country=? AND banner=? AND period='DEFAULT'",
+            (retailer, brand, country, banner),
         ).fetchone()
         return row["target_rev_per_store"] if row and row["target_rev_per_store"] is not None else None
 
 
-def set_target(brand: str, country: str, banner: str, target: float | None):
+def set_target(retailer: str, brand: str, country: str, banner: str, target: float | None):
     """Set (or clear, with None) the revenue-per-store target on the DEFAULT
     row, creating that row if it does not exist yet."""
     with get_conn() as conn:
         conn.execute(
             """
-            INSERT INTO store_counts (brand, country, banner, year_week, num_stores, target_rev_per_store)
-            VALUES (?, ?, ?, 'DEFAULT', 0, ?)
-            ON CONFLICT(brand, country, banner, year_week) DO UPDATE SET
+            INSERT INTO store_counts (retailer, brand, country, banner, period, num_stores, target_rev_per_store)
+            VALUES (?, ?, ?, ?, 'DEFAULT', 0, ?)
+            ON CONFLICT(retailer, brand, country, banner, period) DO UPDATE SET
                 target_rev_per_store=excluded.target_rev_per_store
             """,
-            (brand, country, banner, target),
+            (retailer, brand, country, banner, target),
         )
 
 
-def get_promotions() -> set[tuple[str, str, str, str]]:
-    """Set of (brand, country, banner, year_week) keys marked as a promotion
-    week by the user."""
+def get_promotions(retailer: str) -> set[tuple[str, str, str, str]]:
+    """Set of (brand, country, banner, period) keys marked as a promotion
+    period by the user, for one retailer."""
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT brand, country, banner, year_week FROM promotions WHERE is_promo = 1"
+            "SELECT brand, country, banner, period FROM promotions "
+            "WHERE retailer=? AND is_promo = 1",
+            (retailer,),
         ).fetchall()
-        return {(r["brand"], r["country"], r["banner"], r["year_week"]) for r in rows}
+        return {(r["brand"], r["country"], r["banner"], r["period"]) for r in rows}
 
 
-def set_promotions(rows: list[tuple]):
-    """Upsert a batch of (brand, country, banner, year_week, is_promo) marks
-    in a single transaction."""
+def set_promotions(retailer: str, rows: list[tuple]):
+    """Upsert a batch of (brand, country, banner, period, is_promo) marks
+    for one retailer in a single transaction."""
     with get_conn() as conn:
         conn.executemany(
             """
-            INSERT INTO promotions (brand, country, banner, year_week, is_promo)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(brand, country, banner, year_week) DO UPDATE SET
+            INSERT INTO promotions (retailer, brand, country, banner, period, is_promo)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(retailer, brand, country, banner, period) DO UPDATE SET
                 is_promo=excluded.is_promo
             """,
-            [(b, c, bn, yw, int(bool(p))) for (b, c, bn, yw, p) in rows],
+            [(retailer, b, c, bn, yw, int(bool(p))) for (b, c, bn, yw, p) in rows],
         )
 
 
@@ -369,49 +468,56 @@ def is_email_processed(message_id: str, attachment_name: str) -> bool:
         return row is not None
 
 
-def record_email_import(message_id, attachment_name, subject, received_at, status, message):
+def record_email_import(message_id, attachment_name, retailer, subject, received_at, status, message):
     """Mark a message+attachment as handled. Recorded for failures too, but
     with a 'failed' status — see auto_import for the retry policy."""
     with get_conn() as conn:
         conn.execute(
             """
             INSERT INTO email_imports
-                (message_id, attachment_name, subject, received_at, processed_at, status, message)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (message_id, attachment_name, retailer, subject, received_at, processed_at, status, message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(message_id, attachment_name) DO UPDATE SET
+                retailer=excluded.retailer,
                 processed_at=excluded.processed_at,
                 status=excluded.status,
                 message=excluded.message
             """,
-            (message_id, attachment_name, subject, received_at,
+            (message_id, attachment_name, retailer, subject, received_at,
              dt.datetime.utcnow().isoformat(), status, message),
         )
 
 
-def get_email_imports(limit: int = 25) -> list[dict]:
+def get_email_imports(limit: int = 25, retailer: str | None = None) -> list[dict]:
     with get_conn() as conn:
+        where = "WHERE retailer=?" if retailer else ""
+        params: tuple = (retailer, limit) if retailer else (limit,)
         rows = conn.execute(
-            "SELECT message_id, attachment_name, subject, received_at, processed_at, "
-            "status, message FROM email_imports ORDER BY processed_at DESC LIMIT ?",
-            (limit,),
+            "SELECT message_id, attachment_name, retailer, subject, received_at, "
+            f"processed_at, status, message FROM email_imports {where} "
+            "ORDER BY processed_at DESC LIMIT ?",
+            params,
         ).fetchall()
         return [dict(r) for r in rows]
 
 
-def get_last_imports() -> list[dict]:
-    """Most recent import per brand+country+banner, with its status — used
-    for the per-brand freshness indicator on the dashboard."""
+def get_last_imports(retailer: str | None = None) -> list[dict]:
+    """Most recent import per brand+country+banner (optionally for one
+    retailer), with its status — used for the per-brand freshness indicator
+    on the dashboard."""
     with get_conn() as conn:
+        where = "AND retailer=?" if retailer else ""
         rows = conn.execute(
-            """
-            SELECT brand, country, banner, imported_at, status, rows_loaded
+            f"""
+            SELECT retailer, brand, country, banner, imported_at, status, rows_loaded
             FROM import_log
             WHERE id IN (
                 SELECT MAX(id) FROM import_log
-                WHERE brand IS NOT NULL
-                GROUP BY brand, country, banner
+                WHERE brand IS NOT NULL {where}
+                GROUP BY retailer, brand, country, banner
             )
-            ORDER BY brand, country, banner
-            """
+            ORDER BY retailer, brand, country, banner
+            """,
+            (retailer,) if retailer else (),
         ).fetchall()
         return [dict(r) for r in rows]
