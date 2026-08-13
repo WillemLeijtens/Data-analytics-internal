@@ -35,11 +35,24 @@ services:
     volumes:
       - ./data:/app/data
 
+  # Retailer Console: de multi-retailer herbouw (FastAPI + gebouwde React-SPA
+  # in één image). Draait naast de Streamlit-app op zijn eigen database, zodat
+  # de bestaande app ongemoeid blijft tot de overstap gemaakt wordt.
+  console:
+    build:
+      context: ./console
+    restart: unless-stopped
+    volumes:
+      - ./console/data:/srv/data
+    expose:
+      - "8000"
+
   caddy:
     image: caddy:2
     restart: unless-stopped
     environment:
       - SITE_ADDRESS=${SITE_ADDRESS:-188.166.88.105}
+      - CONSOLE_ADDRESS=${CONSOLE_ADDRESS:-console.188-166-88-105.sslip.io}
     ports:
       # Only 443: this droplet's host port 80 is already used by an
       # existing nginx instance for another app — left untouched.
@@ -50,6 +63,7 @@ services:
       - caddy_config:/config
     depends_on:
       - app
+      - console
 
 volumes:
   caddy_data:

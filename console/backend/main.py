@@ -10,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import db
@@ -22,6 +24,16 @@ app = FastAPI(title="Retailer Console")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 db.init_db()
+
+# A fresh install must not boot without parser profiles — bootstrap loads the
+# profiles/settings/contracts (no sales facts). Idempotent, so it is a no-op
+# on every start after the first. Demo sales data: `make seed`.
+with db.get_conn() as _conn:
+    _needs_bootstrap = not _conn.execute(
+        "SELECT 1 FROM parser_profiles LIMIT 1").fetchone()
+if _needs_bootstrap:
+    import seed as _seed
+    _seed.bootstrap()
 
 
 def _retailer_or_404(conn, retailer_id: str):
@@ -274,3 +286,20 @@ def link_sharepoint(retailer_id: str, body: SharepointBody):
             (retailer_id, body.map_url))
         docs = contracts.sync_documents(conn, retailer_id)
         return {"ok": True, "documenten": docs}
+
+
+# ---------------------------------------------------------------- frontend
+# In the container the built SPA sits in backend/static; in local dev it is
+# absent and Vite serves the frontend on :5173 instead.
+
+STATIC = Path(__file__).resolve().parent / "static"
+if STATIC.is_dir():
+    app.mount("/assets", StaticFiles(directory=STATIC / "assets"), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa(full_path: str):
+        """Client-side routing: every non-API path renders the SPA."""
+        candidate = STATIC / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(STATIC / "index.html")

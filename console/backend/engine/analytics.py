@@ -287,10 +287,11 @@ def assortment(conn, retailer_id: str) -> dict:
                 "resolution": res.as_dict(), "labels": base_labels + res.labels}
     labels = base_labels + res.labels
 
+    empty_stats = {"op_target": 0, "onder_target": 0, "delist": 0}
     rows = load_facts(conn, retailer_id)
     if not rows:
         return {"available": True, "artikelen": [], "labels": labels,
-                "resolution": res.as_dict()}
+                "resolution": res.as_dict(), "stats": empty_stats}
     n_stores, _from_facts = store_count(conn, retailer_id, caps, rows, None)
     periods = {r["periode"] for r in rows}
     weeks = len(periods) or 1

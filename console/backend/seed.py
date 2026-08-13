@@ -163,7 +163,12 @@ def build_history_files() -> list[tuple[str, bytes]]:
     return files
 
 
-def seed():
+def bootstrap():
+    """Everything a fresh install needs to be USABLE: the parser profiles,
+    default settings and the interpreted contract documents — but no sales
+    facts. Idempotent; runs automatically on first container start so the
+    console never boots without profiles. Demo sales data is deliberately
+    separate (see seed()), so nobody mistakes it for real numbers."""
     db.init_db()
     with db.get_conn() as conn:
         # Profiles verbatim from the handoff (version/status as delivered).
@@ -199,6 +204,11 @@ def seed():
                 (retailer, f"https://leijtens.sharepoint.com/sites/retail/{retailer}/contracten"))
             contracts.sync_documents(conn, retailer)
 
+
+def seed():
+    """bootstrap() + demo sales data through the REAL import pipeline."""
+    bootstrap()
+    with db.get_conn() as conn:
         results = [importer.run_import(conn, name, content)
                    for name, content in build_seed_files()]
         history = [importer.run_import(conn, name, content)

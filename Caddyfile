@@ -17,3 +17,12 @@
 {$SITE_ADDRESS:188-166-88-105.sslip.io} {
 	reverse_proxy app:8501
 }
+
+# De Retailer Console (multi-retailer herbouw) krijgt een eigen hostnaam in
+# plaats van een subpad: de SPA verwijst naar absolute /assets- en
+# /api-paden, dus een prefix eronder hangen zou die requests breken.
+# sslip.io resolvet elk voorvoegsel voor de IP-naam, dus dit werkt zonder
+# DNS-registratie en Caddy haalt er een eigen certificaat voor op.
+{$CONSOLE_ADDRESS:console.188-166-88-105.sslip.io} {
+	reverse_proxy console:8000
+}

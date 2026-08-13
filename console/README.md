@@ -16,6 +16,32 @@ make seed   # voorbeelddata door de echte import-pipeline
 make dev    # backend :8000 + frontend :5173
 ```
 
+## Deployen op de droplet
+
+De console draait als **één extra container** naast de bestaande
+Streamlit-app (eigen image, eigen database in `console/data/`), met een eigen
+hostnaam via Caddy. De bestaande app blijft ongewijzigd op de root staan.
+
+```bash
+cd <repo>            # de map met docker-compose.yml
+git pull
+docker compose up -d --build console caddy
+```
+
+- App (ongewijzigd): `https://188-166-88-105.sslip.io`
+- Console: `https://console.188-166-88-105.sslip.io`
+
+Een eigen hostnaam in plaats van een subpad (`/console`) is bewust: de SPA
+verwijst naar absolute `/assets`- en `/api`-paden, die onder een prefix
+zouden breken. `sslip.io` resolvet elk voorvoegsel, dus dit werkt zonder
+DNS-registratie; Caddy haalt automatisch een certificaat op. Andere
+hostnaam? Zet `CONSOLE_ADDRESS` in `.env`.
+
+Bij de **eerste start** laadt de console automatisch de vier parser-profielen,
+standaardinstellingen en contractdocumenten (`bootstrap()`) — nooit
+verkoopcijfers, zodat er geen demodata voor echte cijfers aangezien kan
+worden. Demodata erbij: `make seed` (of `docker compose exec console python seed.py`).
+
 ## Stack & motivatie
 
 - **Backend**: FastAPI + SQLite via **plain `sqlite3`** (geen ORM). Bewuste

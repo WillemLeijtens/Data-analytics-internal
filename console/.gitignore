@@ -1,4 +1,6 @@
 node_modules/
 dist/
-console/data/
+data/
 __pycache__/
+backend/static/
+*.tsbuildinfo
