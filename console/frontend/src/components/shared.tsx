@@ -1,0 +1,162 @@
+import { useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { BRAND_COLORS, fmtEur, fmtNum } from "../api";
+
+export function LevelStrip({ labels, uitleg, retailer }:
+  { labels: string[]; uitleg?: string; retailer: string }) {
+  if (!labels.length) return null;
+  return (
+    <div className="level-strip">
+      <span className="eyebrow">Niveau</span>
+      <span className="chips">
+        {labels.map((l) => <span key={l} className="chip static">{l}</span>)}
+      </span>
+      {uitleg && <span className="sub">{uitleg}</span>}
+      <Link to={`/${retailer}/parser`}>Profiel bekijken</Link>
+    </div>
+  );
+}
+
+export function EmptyProfileCard({ retailer, go }:
+  { retailer: string; go: (r: string, s: string) => void }) {
+  return (
+    <div className="card empty-card">
+      <div className="eyebrow">Parser profiel ontbreekt</div>
+      <h2 style={{ marginTop: 10 }}>Deze retailer is nog niet aangesloten</h2>
+      <p className="sub" style={{ maxWidth: 420, margin: "10px auto 22px" }}>
+        Er is nog geen gepubliceerd parser-profiel. Stel de kolom-mapping in en
+        publiceer het profiel; daarna verschijnen alle analyses vanzelf.
+      </p>
+      <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+        <button className="btn" onClick={() => go(retailer, "parser")}>Parser instellen</button>
+        <button className="btn ghost" onClick={() => go(retailer, "import")}>Voorbeeldbestand uploaden</button>
+      </div>
+    </div>
+  );
+}
+
+export function BrandDot({ merk }: { merk: string | null }) {
+  return <span className="brand-dot" style={{ background: BRAND_COLORS[merk ?? ""] ?? "#7E8D92" }} />;
+}
+
+export function DeltaTag({ pct }: { pct: number | null }) {
+  if (pct == null) return <span className="tag">—</span>;
+  const cls = pct > 0 ? "pos" : pct < 0 ? "neg" : "";
+  return <span className={`tag ${cls}`}>{pct > 0 ? "+" : ""}{pct.toLocaleString("nl-NL")}%</span>;
+}
+
+/* ------------------------------------------------------------ TrendChart */
+
+type Series = Record<number, Record<number, number>>; // year -> periodNum -> value
+
+export function TrendChart({ series, years, isEuro, periodWord }:
+  { series: Series; years: number[]; isEuro: boolean; periodWord: string }) {
+  const W = 860, H = 260, PAD = 42;
+  const [hover, setHover] = useState<number | null>(null);
+  const ref = useRef<SVGSVGElement>(null);
+
+  const nums = Array.from(new Set(years.flatMap((y) => Object.keys(series[y] ?? {}).map(Number)))).sort((a, b) => a - b);
+  if (!nums.length) return <p className="sub">Nog geen data.</p>;
+  const maxX = Math.max(...nums), minX = Math.min(...nums);
+  const maxY = Math.max(1, ...years.flatMap((y) => Object.values(series[y] ?? {})));
+  const x = (p: number) => PAD + ((p - minX) / Math.max(1, maxX - minX)) * (W - 2 * PAD);
+  const y = (v: number) => H - PAD - (v / maxY) * (H - 2 * PAD);
+  const colors = ["#BAC3C8", "#7E8D92", "#0E323B"]; // oldest -> newest
+
+  const onMove = (e: React.MouseEvent) => {
+    const rect = ref.current!.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * W;
+    const nearest = nums.reduce((a, b) => (Math.abs(x(b) - px) < Math.abs(x(a) - px) ? b : a));
+    setHover(nearest);
+  };
+
+  const fmt = (v: number) => (isEuro ? fmtEur(v) : fmtNum(Math.round(v)));
+  const hoverPct = hover != null ? Math.min(86, Math.max(14, ((x(hover)) / W) * 100)) : 0;
+
+  return (
+    <div style={{ position: "relative" }}>
+      <svg ref={ref} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", cursor: "crosshair" }}
+        onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        {[0.25, 0.5, 0.75, 1].map((f) => (
+          <line key={f} x1={PAD} x2={W - PAD} y1={y(maxY * f)} y2={y(maxY * f)} stroke="#EAEFF1" />
+        ))}
+        <line x1={PAD} x2={W - PAD} y1={H - PAD} y2={H - PAD} stroke="#BAC3C8" />
+        {nums.filter((_, i) => i % Math.ceil(nums.length / 12) === 0).map((p) => (
+          <text key={p} x={x(p)} y={H - PAD + 16} textAnchor="middle" fontSize="9.5" fill="#7E8D92">{p}</text>
+        ))}
+        {[maxY, maxY / 2].map((v, i) => (
+          <text key={i} x={PAD - 6} y={y(v) + 3} textAnchor="end" fontSize="9.5" fill="#7E8D92">
+            {isEuro ? "€" + Math.round(v / 1000) + "k" : fmtNum(Math.round(v))}
+          </text>
+        ))}
+        {years.map((yr, i) => {
+          const pts = nums.filter((p) => series[yr]?.[p] != null);
+          if (!pts.length) return null;
+          const d = pts.map((p, j) => `${j ? "L" : "M"}${x(p)},${y(series[yr][p])}`).join(" ");
+          return <path key={yr} d={d} fill="none" stroke={colors[colors.length - years.length + i]} strokeWidth={yr === years[years.length - 1] ? 2 : 1.4} />;
+        })}
+        {hover != null && (
+          <g>
+            <line x1={x(hover)} x2={x(hover)} y1={PAD} y2={H - PAD} stroke="#7E8D92" strokeDasharray="3 3" />
+            {years.map((yr, i) => series[yr]?.[hover] != null && (
+              <circle key={yr} cx={x(hover)} cy={y(series[yr][hover])} r={3.5}
+                fill={colors[colors.length - years.length + i]} />
+            ))}
+          </g>
+        )}
+      </svg>
+      {hover != null && (
+        <div className="tooltip" style={{ left: `${hoverPct}%`, top: 8 }}>
+          <b>{periodWord} {hover}</b>
+          {years.map((yr) => (
+            <div key={yr}>{yr}: {series[yr]?.[hover] != null ? fmt(series[yr][hover]) : "—"}</div>
+          ))}
+        </div>
+      )}
+      <div className="sub" style={{ display: "flex", gap: 16, marginTop: 6 }}>
+        {years.map((yr, i) => (
+          <span key={yr}><span style={{ display: "inline-block", width: 14, height: 2, background: colors[colors.length - years.length + i], verticalAlign: "middle", marginRight: 5 }} />{yr}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ Sparkline */
+
+export function Sparkline({ ytd, lytd, isEuro, periodWord }:
+  { ytd: Record<number, number>; lytd: Record<number, number>; isEuro: boolean; periodWord: string }) {
+  const W = 150, H = 34;
+  const [hover, setHover] = useState<number | null>(null);
+  const ref = useRef<SVGSVGElement>(null);
+  const nums = Array.from(new Set([...Object.keys(ytd), ...Object.keys(lytd)].map(Number))).sort((a, b) => a - b);
+  if (!nums.length) return null;
+  const maxX = Math.max(...nums), minX = Math.min(...nums);
+  const maxY = Math.max(1, ...Object.values(ytd), ...Object.values(lytd));
+  const x = (p: number) => 2 + ((p - minX) / Math.max(1, maxX - minX)) * (W - 4);
+  const y = (v: number) => H - 3 - (v / maxY) * (H - 6);
+  const path = (s: Record<number, number>) =>
+    nums.filter((p) => s[p] != null).map((p, i) => `${i ? "L" : "M"}${x(p)},${y(s[p])}`).join(" ");
+  const fmt = (v?: number) => (v == null ? "—" : isEuro ? fmtEur(v) : fmtNum(Math.round(v)));
+  return (
+    <span style={{ position: "relative", display: "inline-block" }}>
+      <svg ref={ref} width={W} height={H}
+        onMouseMove={(e) => {
+          const rect = ref.current!.getBoundingClientRect();
+          const px = e.clientX - rect.left;
+          setHover(nums.reduce((a, b) => (Math.abs(x(b) - px) < Math.abs(x(a) - px) ? b : a)));
+        }}
+        onMouseLeave={() => setHover(null)}>
+        <path d={path(lytd)} fill="none" stroke="#BAC3C8" strokeWidth="1.2" strokeDasharray="3 3" />
+        <path d={path(ytd)} fill="none" stroke="#0E323B" strokeWidth="1.5" />
+        {hover != null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="#7E8D92" strokeDasharray="2 2" />}
+      </svg>
+      {hover != null && (
+        <span className="tooltip" style={{ left: x(hover), top: -46 }}>
+          <b>{periodWord} {hover}</b><br />
+          2026: {fmt(ytd[hover])} · 2025: {fmt(lytd[hover])}
+        </span>
+      )}
+    </span>
+  );
+}

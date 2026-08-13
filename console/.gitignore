@@ -1,0 +1,4 @@
+node_modules/
+dist/
+console/data/
+__pycache__/
