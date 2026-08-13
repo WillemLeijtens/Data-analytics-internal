@@ -1,0 +1,60 @@
+{
+  "retailer_id": "etos",
+  "version": 2,
+  "status": "test",
+  "detection": {
+    "filename_glob": "etos_sales_wk*.csv",
+    "sheet": null,
+    "header_row": 1,
+    "required_headers": [
+      "Year/Week",
+      "GTIN",
+      "Sales value"
+    ],
+    "filetype": "csv",
+    "csv_delimiter": ";",
+    "decimal": "."
+  },
+  "period": {
+    "type": "week",
+    "source_column": "Year/Week",
+    "format": "yyyy-Www"
+  },
+  "mapping": [
+    {
+      "source": "GTIN",
+      "target": "artikel_ean"
+    },
+    {
+      "source": "Description",
+      "target": "artikel_naam"
+    },
+    {
+      "source": "Supplier brand",
+      "target": "merk",
+      "normalize": "upper"
+    },
+    {
+      "source": "Sales units",
+      "target": "volume"
+    },
+    {
+      "source": "Sales value",
+      "target": "omzet"
+    },
+    {
+      "source": "Region",
+      "target": null
+    },
+    {
+      "source": "Supplier code",
+      "target": null
+    }
+  ],
+  "constants": {
+    "land": "NL"
+  },
+  "thresholds": {
+    "promo_price_drop": 0.05
+  }
+}

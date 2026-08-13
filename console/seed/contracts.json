@@ -1,0 +1,39 @@
+{
+  "kruidvat": [
+    {
+      "naam": "Jaarcontract 2026",
+      "type": "contract",
+      "geldig_tot": "2026-12-31",
+      "signaal": "green"
+    },
+    {
+      "naam": "Bonusafspraak TWEEZERMAN",
+      "type": "bonusafspraak",
+      "geldig_tot": "2026-09-30",
+      "signaal": "orange"
+    }
+  ],
+  "etos": [
+    {
+      "naam": "Leveringsvoorwaarden 2026",
+      "type": "contract",
+      "geldig_tot": "2026-12-31",
+      "signaal": "green"
+    }
+  ],
+  "ici-paris-xl": [
+    {
+      "naam": "Distributieovereenkomst",
+      "type": "contract",
+      "geldig_tot": "2026-08-31",
+      "signaal": "red"
+    },
+    {
+      "naam": "Prijslijst H2",
+      "type": "prijslijst",
+      "geldig_tot": "2026-12-31",
+      "signaal": "green"
+    }
+  ],
+  "douglas": []
+}

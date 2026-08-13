@@ -1,0 +1,53 @@
+{
+  "retailer_id": "douglas",
+  "version": 1,
+  "status": "concept",
+  "detection": {
+    "filename_glob": "Douglas_Abverkauf_KW*.xlsx",
+    "sheet": "Sheet1",
+    "header_row": 1,
+    "required_headers": [
+      "Kalenderwoche",
+      "Umsatz"
+    ],
+    "filetype": "xlsx",
+    "csv_delimiter": null,
+    "decimal": ","
+  },
+  "period": {
+    "type": "week",
+    "source_column": "Kalenderwoche",
+    "format": "yyyy-Www"
+  },
+  "mapping": [
+    {
+      "source": "Kalenderwoche",
+      "target": null,
+      "note": "voorstel: periode"
+    },
+    {
+      "source": "Artikelnummer",
+      "target": null,
+      "note": "voorstel: artikel_ean, formaat onbekend (DG-88231)"
+    },
+    {
+      "source": "Marke",
+      "target": null,
+      "note": "voorstel: merk"
+    },
+    {
+      "source": "Absatz",
+      "target": null,
+      "note": "voorstel: volume"
+    },
+    {
+      "source": "Umsatz",
+      "target": null,
+      "note": "voorstel: omzet"
+    }
+  ],
+  "constants": {},
+  "thresholds": {
+    "promo_price_drop": 0.05
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "retailer_id": "ici-paris-xl",
+  "version": 1,
+  "status": "live",
+  "detection": {
+    "filename_glob": "ICIP_*_MTH_*.xlsx",
+    "sheet": "Data by store",
+    "header_row": 3,
+    "required_headers": [
+      "Month",
+      "Store code",
+      "Net sales"
+    ],
+    "filetype": "xlsx",
+    "csv_delimiter": null,
+    "decimal": ","
+  },
+  "period": {
+    "type": "maand",
+    "source_column": "Month",
+    "format": "mm-yyyy"
+  },
+  "mapping": [
+    {
+      "source": "Store code",
+      "target": "winkel_id"
+    },
+    {
+      "source": "Store name",
+      "target": "winkel_naam"
+    },
+    {
+      "source": "Country",
+      "target": "land",
+      "normalize": "upper"
+    },
+    {
+      "source": "Brand",
+      "target": "merk",
+      "normalize": "upper"
+    },
+    {
+      "source": "Units",
+      "target": "volume"
+    },
+    {
+      "source": "Net sales",
+      "target": "omzet"
+    }
+  ],
+  "constants": {},
+  "thresholds": {
+    "promo_price_drop": 0.03
+  }
+}

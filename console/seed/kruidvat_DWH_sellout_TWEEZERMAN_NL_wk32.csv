@@ -1,0 +1,8 @@
+# Stand-in voor DWH_sellout_TWEEZERMAN_NL_wk32.xlsx (sheet "Sellout", header op rij 9 na metadatablok)
+# Bouw in make-seed een xlsx-generator die dit csv naar het echte formaat omzet (8 metadata-rijen + header).
+Weeknummer;EAN;Artikelomschrijving;Merk;Land;Banner;Winkelnr;Aantal;Omzet excl BTW
+202632;4049469072773;Tweezerman Slant Tweezer;TWEEZERMAN;NL;KV;1042;12;209,88
+202632;4049469072773;Tweezerman Slant Tweezer;TWEEZERMAN;NL;KV;1043;9;157,41
+202632;4049469083120;Tweezerman Nail Clipper;TWEEZERMAN;NL;KV;1042;7;91,00
+202632;4049469083120;Tweezerman Nail Clipper;TWEEZERMAN;NL;TP;2011;5;65,00
+202632;4049469072773;Tweezerman Slant Tweezer;TWEEZERMAN;BE;KV;3308;11;192,39
