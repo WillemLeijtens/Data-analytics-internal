@@ -43,9 +43,14 @@ services:
       context: ./console
     restart: unless-stopped
     environment:
-      # Zet CONSOLE_PASSWORD in .env (bijv. dezelfde waarde als
-      # STREAMLIT_APP_PASSWORD). Zonder wachtwoord weigert alleen DEZE
-      # container te starten; de app hierboven draait gewoon door.
+      # Toegangscontrole is de forward-auth van het portaal, niet een tweede
+      # wachtwoord hier (dat zou alleen een prompt opleveren waarvan niemand
+      # de inloggegevens heeft). Dit mag omdat de container uitsluitend prive
+      # gebonden is: de app weigert te starten bij ALLOW_OPEN + 0.0.0.0.
+      # Wil je toch een eigen wachtwoord? Zet CONSOLE_PASSWORD in .env en
+      # CONSOLE_ALLOW_OPEN=0, en laat de gateway de auth-header injecteren.
+      - CONSOLE_ALLOW_OPEN=${CONSOLE_ALLOW_OPEN:-1}
+      - CONSOLE_BIND=${CONSOLE_BIND:-127.0.0.1}
       - CONSOLE_PASSWORD=${CONSOLE_PASSWORD:-}
       - CONSOLE_USER=${CONSOLE_USER:-console}
     volumes:

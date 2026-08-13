@@ -45,16 +45,19 @@ docker compose up -d --build console      # bindt op 127.0.0.1:8010 -> :8000
 curl -fsS localhost:8010/healthz
 ```
 
-**Wachtwoord.** De console weigert zonder `CONSOLE_PASSWORD` te starten
-(alleen die container; de app draait door). Achter forward-auth is dat
-wachtwoord geen toegangscontrole meer maar dubbelop, dus er zijn twee
-werkbare keuzes — kies er bewust één:
+**Toegangscontrole.** De console heeft geen eigen wachtwoord
+(`CONSOLE_ALLOW_OPEN=1`, de standaard): de forward-auth van het portaal is
+de poortwachter, zoals bij de andere apps. Een tweede wachtwoord zou alleen
+een browserprompt opleveren waarvan niemand de inloggegevens heeft.
 
-- `CONSOLE_ALLOW_OPEN=1` — geen basic auth in de app; de gateway is de enige
-  poortwachter. Alleen verdedigbaar als de bind écht privé is.
-- `CONSOLE_PASSWORD=<gegenereerd>` — dan moet de **gateway de
-  `Authorization: Basic`-header injecteren**, anders krijgt iedereen alsnog
-  een browserprompt met een wachtwoord dat niemand kent.
+Dat mag uitsluitend omdat de container privé gebonden is, en dat wordt
+afgedwongen: **`CONSOLE_ALLOW_OPEN=1` samen met `CONSOLE_BIND=0.0.0.0`
+weigert te starten** — de enige combinatie die verkoopcijfers stilletjes
+publiek zou zetten. Loopback en een privé-adres starten wel.
+
+Wil je tóch een eigen wachtwoord (bijv. een tweede laag naast forward-auth):
+zet `CONSOLE_PASSWORD` en `CONSOLE_ALLOW_OPEN=0`, en laat de gateway de
+`Authorization: Basic`-header injecteren.
 
 Een eigen hostnaam in plaats van een subpad (`/console`) is bewust: de SPA
 verwijst naar absolute `/assets`- en `/api`-paden, die onder een prefix

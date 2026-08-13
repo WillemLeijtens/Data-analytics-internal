@@ -58,8 +58,21 @@ if CONSOLE_PASSWORD:
                             headers={"WWW-Authenticate": 'Basic realm="Retailer Console"'})
         return await call_next(request)
 elif os.environ.get("CONSOLE_ALLOW_OPEN") == "1":
-    print("[console] WAARSCHUWING: draait ZONDER wachtwoord "
-          "(CONSOLE_ALLOW_OPEN=1). Alleen bedoeld voor lokale ontwikkeling.",
+    # Sanctioned setup: the portal gateway does forward-auth, so a second
+    # password here would only add a prompt nobody has the credentials for.
+    # That only holds while the container is NOT reachable from outside, so
+    # the one combination that would silently publish sales data — open app
+    # plus a bind on every interface — is refused outright.
+    _bind = os.environ.get("CONSOLE_BIND", "127.0.0.1")
+    if _bind in ("0.0.0.0", "::", "*", ""):
+        raise RuntimeError(
+            f"CONSOLE_ALLOW_OPEN=1 samen met CONSOLE_BIND={_bind!r} zou de "
+            "console zonder enige toegangscontrole op alle interfaces "
+            "publiceren. Bind op 127.0.0.1 of het prive-adres (toegang loopt "
+            "via het portaal), of zet CONSOLE_PASSWORD."
+        )
+    print(f"[console] Geen eigen wachtwoord (CONSOLE_ALLOW_OPEN=1); toegang "
+          f"loopt via de forward-auth van het portaal. Gebonden op {_bind}.",
           flush=True)
 else:
     # Fail closed: refusing to boot is the only failure mode that cannot
