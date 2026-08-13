@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import os
+import secrets
 import sys
 from pathlib import Path
 
@@ -21,6 +24,49 @@ from engine.profile import (Profile, active_profile, capabilities, get_profiles,
                             missing_required, save_profile)
 
 app = FastAPI(title="Retailer Console")
+
+# ---------------------------------------------------------------- access
+# The console shows sales data, so it is password-protected the same way the
+# Streamlit app is. CONSOLE_PASSWORD comes from the environment (compose
+# defaults it to STREAMLIT_APP_PASSWORD, so the existing password just
+# works). Empty password = open, which is fine for local development but is
+# logged loudly on start so it can never happen unnoticed in production.
+CONSOLE_PASSWORD = os.environ.get("CONSOLE_PASSWORD", "")
+CONSOLE_USER = os.environ.get("CONSOLE_USER", "console")
+
+if CONSOLE_PASSWORD:
+    @app.middleware("http")
+    async def require_password(request, call_next):
+        from starlette.responses import Response
+
+        header = request.headers.get("authorization", "")
+        ok = False
+        if header.startswith("Basic "):
+            try:
+                user, _, pw = base64.b64decode(header[6:]).decode().partition(":")
+                # compare_digest on both halves: no early-exit timing leak.
+                ok = (secrets.compare_digest(user, CONSOLE_USER)
+                      and secrets.compare_digest(pw, CONSOLE_PASSWORD))
+            except Exception:  # noqa: BLE001 - malformed header is just a failed login
+                ok = False
+        if not ok:
+            return Response(status_code=401, content="Inloggen vereist",
+                            headers={"WWW-Authenticate": 'Basic realm="Retailer Console"'})
+        return await call_next(request)
+elif os.environ.get("CONSOLE_ALLOW_OPEN") == "1":
+    print("[console] WAARSCHUWING: draait ZONDER wachtwoord "
+          "(CONSOLE_ALLOW_OPEN=1). Alleen bedoeld voor lokale ontwikkeling.",
+          flush=True)
+else:
+    # Fail closed: refusing to boot is the only failure mode that cannot
+    # silently publish sales data. Only this container stops — the Streamlit
+    # app is a separate service and keeps running.
+    raise RuntimeError(
+        "CONSOLE_PASSWORD is niet gezet. Zet hem in .env naast "
+        "STREAMLIT_APP_PASSWORD, of start met CONSOLE_ALLOW_OPEN=1 als je "
+        "bewust zonder wachtwoord lokaal wilt draaien."
+    )
+
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 db.init_db()

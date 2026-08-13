@@ -22,6 +22,16 @@ De console draait als **één extra container** naast de bestaande
 Streamlit-app (eigen image, eigen database in `console/data/`), met een eigen
 hostnaam via Caddy. De bestaande app blijft ongewijzigd op de root staan.
 
+**Eerst een wachtwoord instellen** — de console toont verkoopcijfers en
+weigert zonder wachtwoord te starten (alleen die container; de app draait
+door). Voeg toe aan `.env`:
+
+```
+CONSOLE_PASSWORD=<zelfde waarde als STREAMLIT_APP_PASSWORD>
+```
+
+Daarna:
+
 ```bash
 cd <repo>            # de map met docker-compose.yml
 git pull
@@ -30,6 +40,12 @@ docker compose up -d --build console caddy
 
 - App (ongewijzigd): `https://188-166-88-105.sslip.io`
 - Console: `https://console.188-166-88-105.sslip.io`
+- Valt Caddy uit (poort 443 al bezet op deze droplet): `http://<ip>:8010` —
+  de console publiceert die poort zelf, met hetzelfde wachtwoord. Aanpassen
+  met `CONSOLE_PORT`.
+
+Inloggen gaat via de browserprompt: gebruiker `console` (of `CONSOLE_USER`)
+met het wachtwoord uit `.env`.
 
 Een eigen hostnaam in plaats van een subpad (`/console`) is bewust: de SPA
 verwijst naar absolute `/assets`- en `/api`-paden, die onder een prefix
