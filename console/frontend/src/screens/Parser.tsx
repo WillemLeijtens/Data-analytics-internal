@@ -166,12 +166,52 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
               <span className={`tag ${sel.status === "live" ? "pos" : "accent"}`}>{sel.status}</span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, margin: "14px 0" }}>
-              {[["Bestandstype", det.filetype], ["Bestandsnaam-patroon", det.filename_glob],
-                ["Werkblad", det.sheet ?? "—"], ["Header-rij", det.header_row]].map(([l, v]) => (
-                <div key={l as string}><div className="eyebrow" style={{ fontSize: 9 }}>{l}</div>
-                  <div className="mono" style={{ marginTop: 4 }}>{String(v)}</div></div>
-              ))}
+              <div>
+                <div className="eyebrow" style={{ fontSize: 9 }}>Bestandstype</div>
+                <div className="mono" style={{ marginTop: 4 }}>{String(det.filetype)}</div>
+              </div>
+              {isBuiltin ? (
+                // Ingebouwde parser: herkenning en tabkeuze zitten in de
+                // parser zelf — hier valt niets in te stellen.
+                [["Bestandsnaam-patroon", det.filename_glob],
+                 ["Werkblad", "automatisch (op structuur)"],
+                 ["Header-rij", "automatisch"]].map(([l, v]) => (
+                  <div key={l as string}>
+                    <div className="eyebrow" style={{ fontSize: 9 }}>{l}</div>
+                    <div className="mono" style={{ marginTop: 4 }}>{String(v)}</div>
+                  </div>
+                ))
+              ) : (
+                <>
+                  <div>
+                    <div className="eyebrow" style={{ fontSize: 9 }}>Bestandsnaam-patroon</div>
+                    <input type="text" className="mono" style={{ marginTop: 4, width: "100%" }}
+                      value={det.filename_glob ?? ""}
+                      onChange={(e) => setDraft({ ...draft, detection: { ...det, filename_glob: e.target.value } })} />
+                  </div>
+                  <div>
+                    <div className="eyebrow" style={{ fontSize: 9 }}>Werkblad (tabblad)</div>
+                    <input type="text" className="mono" style={{ marginTop: 4, width: "100%" }}
+                      placeholder="leeg = eerste tabblad"
+                      value={det.sheet ?? ""}
+                      onChange={(e) => setDraft({ ...draft, detection: { ...det, sheet: e.target.value || null } })} />
+                  </div>
+                  <div>
+                    <div className="eyebrow" style={{ fontSize: 9 }}>Header-rij</div>
+                    <input type="number" min={1} className="mono" style={{ marginTop: 4, width: 80 }}
+                      value={det.header_row ?? 1}
+                      onChange={(e) => setDraft({ ...draft, detection: { ...det, header_row: Math.max(1, +e.target.value || 1) } })} />
+                  </div>
+                </>
+              )}
             </div>
+            {!isBuiltin && (
+              <p className="sub" style={{ margin: "0 0 12px" }}>
+                Eenmalig instellen: het tabblad en de header-rij worden in dit profiel
+                opgeslagen en gelden daarna voor élk volgend bestand van deze retailer.
+                Controleer met "Testen op bestand" en publiceer.
+              </p>
+            )}
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <span className="eyebrow">Periodiciteit</span>
               <span className="seg">
