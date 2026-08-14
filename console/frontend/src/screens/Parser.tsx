@@ -20,12 +20,31 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
   const [msg, setMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const [voorstel, setVoorstel] = useState<any | null>(null);
   const refresh = () => apiGet("/parser/profielen").then((ps) => {
     setProfiles(ps);
     const mine = ps.filter((p: any) => p.retailer_id === ctx.retailer);
     if (mine.length && (selId == null || !ps.some((p: any) => p.id === selId))) setSelId(mine[0].id);
   });
-  useEffect(() => { refresh(); setDraft(null); setTestResult(null); }, [ctx.retailer]);
+  useEffect(() => {
+    refresh(); setDraft(null); setTestResult(null);
+    apiGet("/parser/voorstel").then(setVoorstel).catch(() => setVoorstel(null));
+  }, [ctx.retailer]);
+
+  const adoptVoorstel = () => {
+    // Neem detectie + kolommen van de laatste onbekende import over,
+    // maar bewaar wat de gebruiker al instelde (periodiciteit e.d.).
+    if (!voorstel?.beschikbaar) return;
+    const v = voorstel.definition;
+    setDraft((d: any) => ({
+      ...(d ?? {}),
+      detection: v.detection,
+      mapping: v.mapping,
+      period: d?.period?.source_column ? d.period : v.period,
+      constants: d?.constants ?? v.constants,
+      thresholds: d?.thresholds ?? v.thresholds,
+    }));
+  };
 
   const sel = profiles.find((p) => p.id === selId) ?? null;
   useEffect(() => {
@@ -44,12 +63,17 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
       volume: t.has("volume"), omzet: t.has("omzet") };
   }, [draft]);
 
-  const missing = caps ? [!caps.volume && "volume", !caps.omzet && "omzet"].filter(Boolean) as string[] : [];
+  const missing = caps ? [
+    !caps.volume && "volume",
+    !caps.omzet && "omzet",
+    !draft?.period?.source_column && "periodekolom",
+  ].filter(Boolean) as string[] : [];
 
   const publish = async (status: "live" | "test" | "concept") => {
     try {
       const r = await apiSend(`/parser/${sel.retailer_id}/profielen`, "POST", { definition: draft, status });
-      setMsg(`Gepubliceerd als v${r.version} (${status}).`);
+      setMsg(`Gepubliceerd als v${r.version} (${status}).` +
+        (status !== "concept" ? " Upload het bestand nu opnieuw via Import — dan wordt het herkend en ingelezen." : ""));
       await refresh();
     } catch (e: any) { setMsg(String(e.message ?? e)); }
   };
@@ -66,10 +90,14 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
       <h1>Parser — {ctx.card?.naam}</h1>
       <div className="card empty-card">
         <p className="sub">Nog geen profiel voor deze retailer.</p>
+        {voorstel?.beschikbaar && (
+          <p className="sub">Laatst onbekende import: <span className="mono">{voorstel.filename}</span> —
+            de kolommen daaruit worden alvast ingevuld.</p>
+        )}
         <button className="btn" onClick={async () => {
           await apiSend(`/parser/${ctx.retailer}/profielen`, "POST", {
             status: "concept",
-            definition: {
+            definition: voorstel?.beschikbaar ? voorstel.definition : {
               detection: { filename_glob: "*.xlsx", sheet: null, header_row: 1, required_headers: [], filetype: "xlsx", csv_delimiter: null, decimal: "," },
               period: { type: "week", source_column: "", format: "yyyyww" },
               mapping: [], constants: {}, thresholds: { promo_price_drop: 0.05 },
@@ -124,46 +152,97 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
                   <div className="mono" style={{ marginTop: 4 }}>{String(v)}</div></div>
               ))}
             </div>
-            <div>
-              <span className="eyebrow" style={{ marginRight: 10 }}>Periodiciteit</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <span className="eyebrow">Periodiciteit</span>
               <span className="seg">
                 {["week", "maand"].map((t) => (
                   <button key={t} className={draft.period.type === t ? "on" : ""}
-                    onClick={() => setDraft({ ...draft, period: { ...draft.period, type: t } })}>{t}</button>
+                    onClick={() => setDraft({
+                      ...draft,
+                      period: {
+                        ...draft.period, type: t,
+                        // formaat mee laten schakelen als het nog op het
+                        // andere graan staat
+                        format: t === "maand" && ["yyyyww", "yyyy-Www"].includes(draft.period.format) ? "mm-yyyy"
+                          : t === "week" && ["mm-yyyy", "yyyy-mm"].includes(draft.period.format) ? "yyyyww"
+                          : draft.period.format,
+                      },
+                    })}>{t}</button>
                 ))}
               </span>
-              <span className="sub" style={{ marginLeft: 12 }}>
-                bron: <span className="mono">{draft.period.source_column || "—"}</span> · formaat {draft.period.format}
+              <span className="sub">
+                bron: <span className="mono">{draft.period.source_column || "— kies 'periode' in de mapping"}</span>
               </span>
+              <span className="sub">formaat:</span>
+              <select className="pill" value={draft.period.format}
+                onChange={(e) => setDraft({ ...draft, period: { ...draft.period, format: e.target.value } })}>
+                {(draft.period.type === "week" ? ["yyyyww", "yyyy-Www"] : ["mm-yyyy", "yyyy-mm"]).map((f) => (
+                  <option key={f} value={f}>{f}</option>
+                ))}
+              </select>
+              <span className="sub">decimaal:</span>
+              <select className="pill" value={det.decimal ?? ","}
+                onChange={(e) => setDraft({ ...draft, detection: { ...det, decimal: e.target.value } })}>
+                <option value=",">komma (1.234,56)</option>
+                <option value=".">punt (1,234.56)</option>
+              </select>
             </div>
           </div>
 
           <div className="card">
-            <div className="eyebrow" style={{ marginBottom: 10 }}>Kolom-mapping</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div className="eyebrow">Kolom-mapping</div>
+              {voorstel?.beschikbaar && draft.mapping.length === 0 && (
+                <button className="btn ghost" onClick={adoptVoorstel}>
+                  Kolommen overnemen uit {voorstel.filename}
+                </button>
+              )}
+            </div>
+            {draft.mapping.length === 0 && (
+              <p className="sub">Nog geen kolommen. Upload het bestand eerst via <b>Import</b> —
+                een onbekend bestand krijgt daar de status PROFIEL NODIG en zijn kolommen
+                verschijnen hier vanzelf.</p>
+            )}
             <table className="data" style={{ border: 0 }}>
-              <thead><tr><th>Bronkolom</th><th>Canoniek veld</th><th>Niveau</th></tr></thead>
+              <thead><tr><th>Bronkolom</th><th>Canoniek veld</th><th>Voorbeeldwaarde</th><th>Niveau</th></tr></thead>
               <tbody>
-                {draft.mapping.map((m: any, i: number) => (
-                  <tr key={m.source}>
-                    <td className="mono">{m.source}{m.note && <div className="sub">{m.note}</div>}</td>
-                    <td>
-                      <select className={`pill ${m.target ? "" : m.note ? "open" : "unused"}`}
-                        value={m.target ?? ""}
-                        onChange={(e) => {
-                          const mapping = [...draft.mapping];
-                          mapping[i] = { ...m, target: e.target.value || null };
-                          setDraft({ ...draft, mapping });
-                        }}>
-                        <option value="">{m.note ? "KIES VELD" : "bewust ongebruikt"}</option>
-                        {CANONICAL.filter((c) => c !== "periode").map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </td>
-                    <td>{m.target
-                      ? <span className="tag pos">GEMAPT</span>
-                      : m.note ? <span className="tag accent">ONTBREEKT</span> : <span className="tag">ONGEBRUIKT</span>}
-                    </td>
-                  </tr>
-                ))}
+                {draft.mapping.map((m: any, i: number) => {
+                  const isPeriod = draft.period?.source_column === m.source;
+                  const value = isPeriod ? "periode" : m.target ?? "";
+                  return (
+                    <tr key={m.source}>
+                      <td className="mono">{m.source}{m.note && !isPeriod && !m.target && <div className="sub">{m.note}</div>}</td>
+                      <td>
+                        <select className={`pill ${value ? "" : m.note ? "open" : "unused"}`}
+                          value={value}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            const mapping = [...draft.mapping];
+                            let period = { ...draft.period };
+                            if (isPeriod && v !== "periode") period = { ...period, source_column: "" };
+                            if (v === "periode") {
+                              period = { ...period, source_column: m.source };
+                              mapping[i] = { ...m, target: null };
+                            } else {
+                              mapping[i] = { ...m, target: v || null };
+                            }
+                            setDraft({ ...draft, mapping, period });
+                          }}>
+                          <option value="">{m.note ? "KIES VELD" : "bewust ongebruikt"}</option>
+                          <option value="periode">periode</option>
+                          {CANONICAL.filter((c) => c !== "periode").map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </td>
+                      <td className="mono sub">{m.voorbeeld ?? ""}</td>
+                      <td>{isPeriod
+                        ? <span className="tag pos">PERIODE</span>
+                        : m.target
+                          ? <span className="tag pos">GEMAPT</span>
+                          : m.note ? <span className="tag accent">ONTBREEKT</span> : <span className="tag">ONGEBRUIKT</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             {Object.keys(draft.constants ?? {}).length > 0 && (

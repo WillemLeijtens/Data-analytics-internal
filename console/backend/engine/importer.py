@@ -35,11 +35,15 @@ def run_import(conn, filename: str, content: bytes) -> dict:
         conn.execute("DELETE FROM imports WHERE id=?", (existing["id"],))
 
     if profile is None:
+        # Look inside the file anyway: the Parser screen prefills its mapping
+        # table with these columns, so the user maps instead of typing.
+        sniffed = parser_mod.sniff(filename, content)
         cur = conn.execute(
-            "INSERT INTO imports (retailer_id, profile_id, filename, file_hash, status) "
-            "VALUES (NULL, NULL, ?, ?, 'profiel_nodig')", (filename, h))
+            "INSERT INTO imports (retailer_id, profile_id, filename, file_hash, status, "
+            "error_detail) VALUES (NULL, NULL, ?, ?, 'profiel_nodig', ?)",
+            (filename, h, json.dumps({"sniff": sniffed}, ensure_ascii=False)))
         return {"import_id": cur.lastrowid, "status": "profiel_nodig", "filename": filename,
-                "retailer_id": None, "rows": 0,
+                "retailer_id": None, "rows": 0, "sniff": sniffed,
                 "detail": "geen (eenduidig) profiel herkend — kolommen mappen in de Parser"}
 
     try:

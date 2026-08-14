@@ -72,6 +72,98 @@ def probe_headers(content: bytes, detection: dict) -> list[str] | None:
 
 # ---------------------------------------------------------------- detection
 
+def sniff(filename: str, content: bytes) -> dict | None:
+    """Best-effort look inside an UNRECOGNISED file, so the Parser screen can
+    offer its real columns instead of an empty mapping table.
+
+    Returns {filetype, sheet, header_row, csv_delimiter, columns, voorbeeld}
+    or None when nothing table-like is found. Never raises: a file we cannot
+    read simply yields no suggestion.
+    """
+    name = filename.lower()
+    try:
+        if name.endswith((".csv", ".txt", ".tsv")):
+            return _sniff_csv(content)
+        if name.endswith((".xlsx", ".xlsm")):
+            return _sniff_xlsx(content)
+        # Unknown extension: try both, spreadsheet first.
+        return _sniff_xlsx(content) or _sniff_csv(content)
+    except Exception:  # noqa: BLE001 - a failed sniff is not an error
+        return None
+
+
+def _score(cells: list) -> int:
+    """How much a row looks like a header: non-empty, non-numeric labels."""
+    score = 0
+    for c in cells:
+        s = str(c).strip()
+        if not s or s.startswith("#"):
+            continue
+        try:
+            float(s.replace(",", "."))
+        except ValueError:
+            score += 1
+    return score
+
+
+def _pick_header(rows: list[list], limit: int = 25) -> tuple[int, list[str]] | None:
+    """Header = the highest-scoring row in the first `limit` rows; ties go to
+    the earliest. Handles metadata blocks above the real header."""
+    best = None
+    for i, row in enumerate(rows[:limit]):
+        s = _score(row)
+        if s >= 2 and (best is None or s > best[0]):
+            best = (s, i)
+    if best is None:
+        return None
+    idx = best[1]
+    headers = [str(c).strip() for c in rows[idx]]
+    while headers and not headers[-1]:
+        headers.pop()
+    return idx, headers
+
+
+def _sniff_csv(content: bytes) -> dict | None:
+    text = content.decode("utf-8-sig", errors="replace")
+    best = None
+    for delim in (";", ",", "\t", "|"):
+        rows = [r for r in csv.reader(io.StringIO(text), delimiter=delim)]
+        rows = [r for r in rows if not (r and str(r[0]).startswith("#"))]
+        picked = _pick_header(rows)
+        if picked and (best is None or len(picked[1]) > len(best[1][1])):
+            best = (delim, picked, rows)
+    if not best or len(best[1][1]) < 2:
+        return None
+    delim, (idx, headers), rows = best
+    sample = rows[idx + 1] if len(rows) > idx + 1 else []
+    return {"filetype": "csv", "sheet": None, "header_row": idx + 1,
+            "csv_delimiter": delim, "columns": headers,
+            "voorbeeld": [str(c) for c in sample[:len(headers)]]}
+
+
+def _sniff_xlsx(content: bytes) -> dict | None:
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    best = None
+    for sheet in wb.sheetnames:
+        ws = wb[sheet]
+        rows = []
+        for i, row in enumerate(ws.iter_rows(values_only=True)):
+            rows.append(["" if c is None else c for c in row])
+            if i >= 30:
+                break
+        picked = _pick_header(rows)
+        if picked and (best is None or len(picked[1]) > len(best[1][1])):
+            best = (sheet, picked, rows)
+    if not best or len(best[1][1]) < 2:
+        return None
+    sheet, (idx, headers), rows = best
+    sample = rows[idx + 1] if len(rows) > idx + 1 else []
+    return {"filetype": "xlsx", "sheet": sheet, "header_row": idx + 1,
+            "csv_delimiter": None, "columns": headers,
+            "voorbeeld": [str(c) for c in sample[:len(headers)]]}
+
+
 def detect(filename: str, content: bytes, profiles: list[Profile]) -> Profile | None:
     """Pick the profile for a file. None => 'profiel_nodig'."""
     candidates = [p for p in profiles if p.status in ("live", "test")

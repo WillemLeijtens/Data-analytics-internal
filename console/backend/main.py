@@ -262,6 +262,57 @@ def list_profiles():
         return out
 
 
+@app.get("/api/parser/voorstel")
+def profile_proposal():
+    """Draft definition for a new profile, prefilled from the newest
+    unrecognised import ('PROFIEL NODIG'). The mapping lists the file's real
+    columns with empty targets, so the Parser screen starts from the file
+    instead of from nothing."""
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "SELECT filename, error_detail FROM imports WHERE status='profiel_nodig' "
+            "ORDER BY created_at DESC, id DESC LIMIT 1").fetchone()
+    if not row:
+        return {"beschikbaar": False}
+    sniffed = None
+    if row["error_detail"]:
+        try:
+            sniffed = json.loads(row["error_detail"]).get("sniff")
+        except ValueError:
+            sniffed = None
+    if not sniffed:
+        return {"beschikbaar": False, "filename": row["filename"],
+                "reden": "kolommen konden niet gelezen worden"}
+    # Filename glob suggestion: digit runs become wildcards, so
+    # 'Douglas_Abverkauf_KW32.xlsx' matches every week's delivery.
+    import re as _re
+    glob = _re.sub(r"\d+", "*", row["filename"])
+    voorbeeld = sniffed.get("voorbeeld") or []
+    return {
+        "beschikbaar": True,
+        "filename": row["filename"],
+        "definition": {
+            "detection": {
+                "filename_glob": glob,
+                "sheet": sniffed.get("sheet"),
+                "header_row": sniffed.get("header_row", 1),
+                "required_headers": sniffed.get("columns", [])[:3],
+                "filetype": sniffed.get("filetype", "xlsx"),
+                "csv_delimiter": sniffed.get("csv_delimiter"),
+                "decimal": ",",
+            },
+            "period": {"type": "week", "source_column": "", "format": "yyyyww"},
+            "mapping": [
+                {"source": col, "target": None, "note": "KIES VELD",
+                 "voorbeeld": voorbeeld[i] if i < len(voorbeeld) else ""}
+                for i, col in enumerate(sniffed.get("columns", []))
+            ],
+            "constants": {},
+            "thresholds": {"promo_price_drop": 0.05},
+        },
+    }
+
+
 class ProfileBody(BaseModel):
     definition: dict
     status: str = "concept"   # concept | test | live
