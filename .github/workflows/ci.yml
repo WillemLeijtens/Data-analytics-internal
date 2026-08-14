@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: console/backend/requirements.txt
+      - run: python -m pip install -r console/backend/requirements.txt
+      # Console-tests draaien vanuit hun eigen map: ze zetten sys.path op
+      # backend/ en importeren modules op naam.
+      - run: python -m pytest -q tests
+      - run: python -m pytest -q tests
+        working-directory: console/backend
+      - run: python -m compileall -q app console/backend
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: console/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build

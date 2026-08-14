@@ -36,7 +36,7 @@ Kerngegevens voor de gateway-registratie:
 | Healthcheck | `GET` én `HEAD` op `/healthz` en `/healthz/` — altijd zonder auth, ook als `CONSOLE_PASSWORD` gezet is; 200, of 503 als de database niet antwoordt |
 | Protocol | gewone request/response; **geen** WebSockets of SSE |
 | Padgevoelig | ja: de SPA gebruikt absolute `/assets`- en `/api`-paden, dus eigen host/root, geen subpad |
-| Uploads | `POST /api/import` is multipart (UI noemt 200 MB) — body-limiet van de gateway daarop zetten |
+| Uploads | `POST /api/import` is multipart; backendlimiet standaard **200 MB per bestand** (`CONSOLE_MAX_UPLOAD_MB`) — zet de gatewaylimiet minimaal even hoog |
 
 ```bash
 cd <repo>
@@ -100,8 +100,9 @@ docker compose exec console python cleanup_demo.py --doen   # opruimen
   aggregaties zwaar worden.
 - **Frontend**: React 18 + Vite + TypeScript, zonder UI-library; tokens en
   fonts 1:1 uit het design system (`frontend/src/ds/`).
-- **Tests**: pytest voor de parser-engine en fallback-logica (het kritieke
-  deel, 31 tests).
+- **Tests**: pytest voor parser-engine, imports, analyses, stabiliteit en
+  toegangscontrole; GitHub Actions draait ze bij elke PR samen met een
+  productiebuild van de frontend.
 
 ## Architectuur
 

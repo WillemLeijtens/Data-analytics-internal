@@ -70,9 +70,23 @@ def test_correct_credentials_pass(client_with_password):
 
 def test_open_mode_refuses_to_bind_all_interfaces(tmp_path, monkeypatch):
     """The one combination that would publish sales data unprotected."""
-    with pytest.raises(RuntimeError, match="alle interfaces"):
+    with pytest.raises(RuntimeError, match="publiek"):
         build_app(tmp_path, monkeypatch, CONSOLE_AUTH="gateway",
                   CONSOLE_BIND="0.0.0.0")
+
+
+def test_open_mode_refuses_specific_public_address(tmp_path, monkeypatch):
+    """Alleen wildcards weigeren is niet genoeg: een publiek IP publiceert
+    de console net zo goed onbeschermd."""
+    with pytest.raises(RuntimeError, match="publiek"):
+        build_app(tmp_path, monkeypatch, CONSOLE_AUTH="gateway",
+                  CONSOLE_BIND="8.8.8.8")
+
+
+def test_open_mode_accepts_private_address(tmp_path, monkeypatch):
+    main = build_app(tmp_path, monkeypatch, CONSOLE_AUTH="gateway",
+                     CONSOLE_BIND="10.110.0.5")
+    assert TestClient(main.app).get("/healthz").status_code == 200
 
 
 def test_no_mode_chosen_refuses(tmp_path, monkeypatch):

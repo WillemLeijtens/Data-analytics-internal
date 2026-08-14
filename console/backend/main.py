@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import sys
+from ipaddress import ip_address
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -19,8 +20,9 @@ from pydantic import BaseModel
 import db
 from engine import analytics, contracts, importer, signals
 from engine import parser as parser_mod
+from engine.periods import sort_key
 from engine.profile import (Profile, active_profile, capabilities, get_profiles,
-                            missing_required, save_profile)
+                            missing_required, save_profile, validate_definition)
 
 app = FastAPI(title="Retailer Console")
 
@@ -41,7 +43,25 @@ CONSOLE_PASSWORD = os.environ.get("CONSOLE_PASSWORD", "")
 CONSOLE_USER = os.environ.get("CONSOLE_USER", "console")
 CONSOLE_BIND = os.environ.get("CONSOLE_BIND", "127.0.0.1")
 
-_PUBLIC_BINDS = ("0.0.0.0", "::", "*", "")
+try:
+    MAX_UPLOAD_MB = int(os.environ.get("CONSOLE_MAX_UPLOAD_MB", "200"))
+except ValueError as e:
+    raise RuntimeError("CONSOLE_MAX_UPLOAD_MB moet een geheel getal zijn") from e
+if MAX_UPLOAD_MB <= 0:
+    raise RuntimeError("CONSOLE_MAX_UPLOAD_MB moet groter dan nul zijn")
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+
+def _is_private_bind(value: str) -> bool:
+    """Gateway-modus mag alleen op loopback/privé/link-local binden. Een
+    lijst met wildcards afwijzen is niet genoeg: een publiek IP invullen
+    zou de console net zo goed onbeschermd publiceren."""
+    try:
+        address = ip_address(value.strip().strip("[]").split("%", 1)[0])
+    except ValueError:
+        return value.strip().lower() == "localhost"
+    return (address.is_loopback or address.is_private or address.is_link_local) \
+        and not address.is_unspecified
 
 CONSOLE_AUTH = os.environ.get("CONSOLE_AUTH", "").strip().lower()
 if not CONSOLE_AUTH:
@@ -63,11 +83,10 @@ if CONSOLE_AUTH not in ("gateway", "password"):
     )
 if CONSOLE_AUTH == "password" and not CONSOLE_PASSWORD:
     raise RuntimeError("CONSOLE_AUTH=password vereist een gevulde CONSOLE_PASSWORD.")
-if CONSOLE_AUTH == "gateway" and CONSOLE_BIND in _PUBLIC_BINDS:
-    # The one combination that would publish sales data unprotected.
+if CONSOLE_AUTH == "gateway" and not _is_private_bind(CONSOLE_BIND):
     raise RuntimeError(
         f"CONSOLE_AUTH=gateway samen met CONSOLE_BIND={CONSOLE_BIND!r} zou de "
-        "console zonder enige toegangscontrole op alle interfaces publiceren. "
+        "console zonder toegangscontrole publiek kunnen publiceren. "
         "Bind op 127.0.0.1 of het prive-adres, of kies CONSOLE_AUTH=password."
     )
 
@@ -193,24 +212,42 @@ def assortiment(retailer_id: str):
 
 # ---------------------------------------------------------------- import
 
+async def _read_upload_limited(upload: UploadFile) -> bytes:
+    """Lees in stukken en faal vóór een onbegrensde geheugentoewijzing."""
+    content = bytearray()
+    while chunk := await upload.read(1024 * 1024):
+        if len(content) + len(chunk) > MAX_UPLOAD_BYTES:
+            raise ValueError(f"bestand is groter dan {MAX_UPLOAD_MB} MB")
+        content.extend(chunk)
+    return bytes(content)
+
+
+def _safe_filename(upload: UploadFile) -> str:
+    """Alleen de basisnaam: een pad in de bestandsnaam hoort nooit in de
+    importlog of in een foutmelding terecht te komen."""
+    return (upload.filename or "upload").replace("\\", "/").rsplit("/", 1)[-1] or "upload"
+
+
 @app.post("/api/import")
 async def do_import(files: list[UploadFile]):
     # One transaction PER FILE: a crash halfway through file 3 must not roll
     # back files 1 and 2 while the response still reports them as loaded.
     results = []
     for f in files:
-        content = await f.read()
+        filename = _safe_filename(f)
         try:
+            content = await _read_upload_limited(f)
             with db.get_conn() as conn:
-                results.append(importer.run_import(conn, f.filename, content))
+                results.append(importer.run_import(conn, filename, content))
         except Exception as e:  # noqa: BLE001 - one bad file must not kill the batch
-            results.append({"filename": f.filename, "status": "error",
+            results.append({"filename": filename, "status": "error",
                             "rows": 0, "retailer_id": None, "detail": str(e)})
     return {"results": results}
 
 
 @app.get("/api/imports")
 def list_imports(retailer_id: str | None = None, limit: int = 50):
+    limit = max(1, min(limit, 200))
     with db.get_conn() as conn:
         sql = ("SELECT im.*, p.version AS profiel_versie FROM imports im "
                "LEFT JOIN parser_profiles p ON p.id = im.profile_id ")
@@ -236,18 +273,32 @@ def import_status(retailer_id: str | None = None):
             if retailer_id and r["id"] != retailer_id:
                 continue
             prof = active_profile(conn, r["id"])
-            rows = conn.execute(
-                "SELECT f.merk, f.land, f.banner, f.winkel_id, f.periode, MAX(im.created_at) AS ts, "
-                "SUM(1) AS rijen FROM sellout_facts f JOIN imports im ON im.id=f.import_id "
-                "AND im.status IN ('ingelezen','test') WHERE f.retailer_id=? "
-                "GROUP BY f.merk", (r["id"],)).fetchall()
             caps = capabilities(prof.definition) if prof else None
-            feeds = []
+            statuses = ("ingelezen", "test") if prof and prof.status == "test" else ("ingelezen",)
+            rows = conn.execute(
+                "SELECT f.merk, f.land, f.banner, f.periode, im.created_at AS ts "
+                "FROM sellout_facts f JOIN imports im ON im.id=f.import_id "
+                f"AND im.status IN ({','.join('?' * len(statuses))}) WHERE f.retailer_id=?",
+                (*statuses, r["id"])).fetchall()
+            # Per feed de LAATSTE periode tonen. De oude query groepeerde op
+            # merk maar liet een willekeurige periode zien met het totaal
+            # aantal rijen over alle periodes erbij — dat las als "actueel"
+            # terwijl het over de hele historie ging.
+            grouped: dict[tuple, list] = {}
             for row in rows:
+                key = (row["merk"], row["land"],
+                       row["banner"] if caps and caps["banner"] else None)
+                grouped.setdefault(key, []).append(row)
+            feeds = []
+            for (merk, land, banner), feed_rows in sorted(
+                    grouped.items(), key=lambda kv: tuple(x or "" for x in kv[0])):
+                latest = max((row["periode"] for row in feed_rows), key=sort_key)
+                latest_rows = [row for row in feed_rows if row["periode"] == latest]
                 scope = "per winkel" if caps and caps["winkel"] and not caps["banner"] else \
-                    "/".join(x for x in (row["land"], row["banner"]) if x) or "—"
-                feeds.append({"feed": row["merk"] or "—", "scope": scope,
-                              "periode": row["periode"], "ts": row["ts"], "rijen": row["rijen"]})
+                    "/".join(x for x in (land, banner) if x) or "—"
+                feeds.append({"feed": merk or "—", "scope": scope, "periode": latest,
+                              "ts": max(row["ts"] for row in latest_rows),
+                              "rijen": len(latest_rows)})
             out.append({"retailer": r["id"], "naam": r["naam"],
                         "profiel": {"versie": prof.version, "status": prof.status} if prof else None,
                         "periode_type": caps["periode"] if caps else None,
@@ -330,9 +381,10 @@ class ProfileBody(BaseModel):
 def publish_profile(retailer_id: str, body: ProfileBody):
     if body.status not in ("concept", "test", "live"):
         raise HTTPException(422, "status moet concept|test|live zijn")
-    if body.status == "live" and missing_required(body.definition):
-        raise HTTPException(422, "profiel mist verplichte velden: "
-                            + ", ".join(sorted(missing_required(body.definition))))
+    try:
+        validate_definition(body.definition, require_complete=body.status in ("test", "live"))
+    except (TypeError, ValueError) as e:
+        raise HTTPException(422, str(e)) from e
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
         p = save_profile(conn, retailer_id, body.definition, body.status)
@@ -349,9 +401,11 @@ async def test_profile(retailer_id: str, file: UploadFile,
     without it, the newest saved profile."""
     if definition:
         try:
+            draft = json.loads(definition)
+            validate_definition(draft, require_complete=True)
             profile = Profile(id=None, retailer_id=retailer_id, version=0,
-                              status="concept", definition=json.loads(definition))
-        except ValueError as e:
+                              status="concept", definition=draft)
+        except (TypeError, ValueError) as e:
             raise HTTPException(422, f"ongeldige definitie: {e}")
     else:
         with db.get_conn() as conn:
@@ -359,9 +413,12 @@ async def test_profile(retailer_id: str, file: UploadFile,
         if not profs:
             raise HTTPException(404, "geen profiel")
         profile = profs[0]
-    content = await file.read()
     try:
-        result = parser_mod.parse_file(file.filename, content, profile)
+        content = await _read_upload_limited(file)
+    except ValueError as e:
+        raise HTTPException(413, str(e)) from e
+    try:
+        result = parser_mod.parse_file(_safe_filename(file), content, profile)
         return {"ok": True, "rijen": len(result["facts"]),
                 "periodes": result["periodes"],
                 "voorbeeld": result["facts"][:5]}

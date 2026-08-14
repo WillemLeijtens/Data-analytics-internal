@@ -116,9 +116,9 @@ streamlit run app/streamlit_app.py
 ```
 
 The SQLite database is created at `data/analytics.db` on first run. Set
-`STREAMLIT_APP_PASSWORD` in the environment to require a password before the
-app loads (recommended once any real data is in it); without it, the app
-runs with no login and shows a warning.
+`STREAMLIT_APP_PASSWORD` in the environment before starting the app. The app
+fails closed when it is missing or still set to the example value
+`change-me`, so a forgotten variable can never publish the data.
 
 ## Deploying — current plan: a Droplet (interim), proper internal web app later
 

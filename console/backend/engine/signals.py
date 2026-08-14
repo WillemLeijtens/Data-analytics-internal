@@ -69,10 +69,12 @@ def periods_behind(latest: str, ptype: str, today: dt.date | None = None) -> int
 def data_signal(conn, retailer_id: str) -> tuple[str, str]:
     """Feeds behind the expected cadence: newest period vs the last completed
     period. <=1 behind = green, <=4 = orange, more = red."""
+    prof = active_profile(conn, retailer_id)
+    statuses = ("ingelezen", "test") if prof and prof.status == "test" else ("ingelezen",)
     row = conn.execute(
         "SELECT f.periode, f.periode_type FROM sellout_facts f "
-        "JOIN imports im ON im.id=f.import_id AND im.status IN ('ingelezen','test') "
-        "WHERE f.retailer_id=? ", (retailer_id,)).fetchall()
+        f"JOIN imports im ON im.id=f.import_id AND im.status IN ({','.join('?' * len(statuses))}) "
+        "WHERE f.retailer_id=? ", (*statuses, retailer_id)).fetchall()
     if not row:
         return "grey", "Nog geen data"
     latest = max((r["periode"] for r in row), key=sort_key)

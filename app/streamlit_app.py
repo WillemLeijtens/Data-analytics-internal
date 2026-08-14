@@ -322,12 +322,17 @@ def _check_password() -> bool:
             configured = st.secrets.get("app_password")
         except FileNotFoundError:
             configured = None
-    if not configured:
-        st.warning(
-            "No app_password configured in secrets — running without a "
-            "login gate. Set app_password before deploying publicly."
+    if not configured or str(configured).strip() == "change-me":
+        # Deze app wordt via Caddy publiek ontsloten en bevat verkoopcijfers.
+        # Ontbrekende inloggegevens moeten daarom dichtvallen: een
+        # waarschuwing gevolgd door `return True` zette de hele app open na
+        # één vergeten omgevingsvariabele of een gekopieerde voorbeeldwaarde.
+        st.error(
+            "Geen geldig app-wachtwoord ingesteld. Zet STREAMLIT_APP_PASSWORD "
+            "op een sterke, unieke waarde in .env en herstart de app "
+            "(`docker compose up -d --build app`)."
         )
-        return True
+        return False
 
     if st.session_state.get("authenticated"):
         return True
@@ -449,7 +454,8 @@ def _load_facts(retailer: str) -> pd.DataFrame:
                    f.sales_volume, f.sales_value,
                    COALESCE(i.article_description, f.unit) AS article_description
             FROM fact_sales f
-            LEFT JOIN items i ON i.retailer = f.retailer AND i.sku = f.unit
+            LEFT JOIN items i ON i.retailer = f.retailer
+                             AND i.brand = f.brand AND i.sku = f.unit
             WHERE f.retailer = ?
             """,
             conn,

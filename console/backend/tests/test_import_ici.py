@@ -93,3 +93,31 @@ def test_real_ici_reconciles_with_its_own_brand_tab(client):
     assert r["status"] == "ingelezen" and r["retailer_id"] == "ici-paris-xl"
     assert r["detail"] is None, f"reconciliatie-waarschuwing: {r['detail']}"
     assert r["rows"] == 4355
+
+
+def test_ici_missing_reconciliation_tab_fails_closed(client):
+    import io
+    import seed
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(seed.make_ici_xlsx(seed._ici_demo_blocks(["202607"]))))
+    del wb["Brands"]
+    out = io.BytesIO()
+    wb.save(out)
+    r = upload(client, "Maandelijkse_resultaten_ICI_Paris_geen-brands.xlsx", out.getvalue())
+    assert r["status"] == "error" and "reconciliatie niet mogelijk" in r["detail"]
+
+
+def test_ici_missing_scope_is_not_silently_approved(client):
+    """Een merk dat in de winkeltabs ontbreekt maar wél in de merk-tab staat,
+    mag niet door de reconciliatie glippen."""
+    import io
+    import seed
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(seed.make_ici_xlsx(seed._ici_demo_blocks(["202607"]))))
+    wb["Brands"].cell(row=3, column=3, value="ONTBREKEND_MERK")
+    out = io.BytesIO()
+    wb.save(out)
+    r = upload(client, "Maandelijkse_resultaten_ICI_Paris_ontbrekend.xlsx", out.getvalue())
+    assert r["status"] == "error" and "merk/maand" in r["detail"]

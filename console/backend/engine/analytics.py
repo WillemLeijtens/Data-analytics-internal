@@ -36,26 +36,55 @@ def _facts(conn, retailer_id: str, include_test: bool, extra: str = "", params: 
 
 
 def load_facts(conn, retailer_id: str, merk=None, land=None, banner=None):
+    # Feiten uit een test-profiel tellen alleen mee zolang dát profiel het
+    # actieve is; zodra er een live versie staat, horen oude testcijfers niet
+    # meer in de analyses thuis.
+    prof = active_profile(conn, retailer_id)
+    include_test = bool(prof and prof.status == "test")
     conds, params = [], []
     for col, vals in (("merk", merk), ("land", land), ("banner", banner)):
         if vals:
             conds.append(f"AND f.{col} IN ({','.join('?' * len(vals))})")
             params.extend(vals)
-    return _facts(conn, retailer_id, include_test=True,
+    return _facts(conn, retailer_id, include_test=include_test,
                   extra=" ".join(conds), params=tuple(params))
 
 
-def store_count(conn, retailer_id: str, caps: dict, rows, latest: str | None) -> tuple[int | None, bool]:
-    """(number_of_stores, from_facts). Falls back to manual settings (SCHATTING)."""
+def manual_store_settings(conn, retailer_id: str) -> list[dict]:
+    return [dict(r) for r in conn.execute(
+        "SELECT merk, land, banner, aantal_winkels FROM retailer_settings "
+        "WHERE retailer_id=? AND aantal_winkels IS NOT NULL", (retailer_id,))]
+
+
+def store_count(conn, retailer_id: str, caps: dict, rows, latest: str | None,
+                settings: list[dict] | None = None) -> tuple[int | None, bool]:
+    """(aantal winkels, uit_de_feiten). Valt terug op de handmatige
+    instellingen (SCHATTING).
+
+    Instellingen staan per merk. Hetzelfde fysieke winkelbestand komt dus
+    één keer per merk voor; simpelweg optellen zou het aantal winkels
+    vermenigvuldigen met het aantal merken en de omzet per winkel even zo
+    vaak te laag maken. Binnen een land/banner-scope telt daarom het
+    grootste ingestelde aantal, en scopes worden bij elkaar opgeteld."""
     if caps.get("winkel"):
         stores = {r["winkel_id"] for r in rows if r["winkel_id"]
                   and (latest is None or r["periode"] == latest)}
         if stores:
             return len(stores), True
-    total = conn.execute(
-        "SELECT SUM(aantal_winkels) AS n FROM retailer_settings WHERE retailer_id=?",
-        (retailer_id,)).fetchone()["n"]
-    return total, False
+    if settings is None:
+        settings = manual_store_settings(conn, retailer_id)
+    selected = {(r["merk"], r["land"], r["banner"] if caps.get("banner") else None)
+                for r in rows}
+    per_scope: dict[tuple, int] = {}
+    for s in settings:
+        if not s["aantal_winkels"] or s["aantal_winkels"] <= 0:
+            continue
+        key = (s["merk"], s["land"], s["banner"] if caps.get("banner") else None)
+        if key not in selected:
+            continue
+        scope = (s["land"], s["banner"] if caps.get("banner") else None)
+        per_scope[scope] = max(per_scope.get(scope, 0), s["aantal_winkels"])
+    return (sum(per_scope.values()) or None), False
 
 
 # ---------------------------------------------------------------- dashboard
@@ -67,10 +96,12 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
     res = fallback.resolve(caps, week=True, winkel=True, banner=True)
     labels = base_labels + res.labels
 
+    all_rows = load_facts(conn, retailer_id)
     rows = load_facts(conn, retailer_id, merk, land, banner)
     if not rows:
         return {"available": True, "empty": True, "resolution": res.as_dict(),
                 "labels": labels, "capabilities": caps}
+    settings = manual_store_settings(conn, retailer_id)
 
     periods = sorted({r["periode"] for r in rows}, key=sort_key)
     latest = periods[-1]
@@ -88,19 +119,35 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
                       key=lambda x: -x["waarde"])
 
     kpi = agg(latest_rows)
-    n_stores, from_facts = store_count(conn, retailer_id, caps, rows, latest)
+    n_stores, from_facts = store_count(conn, retailer_id, caps, rows, latest, settings)
+    if not from_facts and fallback.LABEL_SCHATTING not in labels:
+        labels.append(fallback.LABEL_SCHATTING)
     per_store = (kpi["omzet"] / n_stores) if n_stores else None
 
     # YTD vs LYTD: same period window (1..latest number) in this and prior year.
     y_now = period_year(latest)
     upto = period_number(latest)
 
-    def ytd(year):
-        return agg([r for r in rows if period_year(r["periode"]) == year
-                    and period_number(r["periode"]) <= upto])
+    def ytd_rows(year):
+        return [r for r in rows if period_year(r["periode"]) == year
+                and period_number(r["periode"]) <= upto]
 
-    ytd_now, ytd_prior = ytd(y_now), ytd(y_now - 1)
-    stores_all, _ = store_count(conn, retailer_id, caps, rows, None)
+    now_rows, prior_rows = ytd_rows(y_now), ytd_rows(y_now - 1)
+    ytd_now, ytd_prior = agg(now_rows), agg(prior_rows)
+
+    def stores_for(year_rows):
+        # Per jaar het winkelbestand van de laatste periode in dat jaar:
+        # een gegroeid of gekrompen filiaalnet maakt anders de YoY-
+        # vergelijking per winkel onvergelijkbaar.
+        if not year_rows:
+            return None, False
+        final = max((r["periode"] for r in year_rows), key=sort_key)
+        return store_count(conn, retailer_id, caps, year_rows, final, settings)
+
+    stores_now, facts_now = stores_for(now_rows)
+    stores_prior, facts_prior = stores_for(prior_rows)
+    per_store_now = ytd_now["omzet"] / stores_now if stores_now else None
+    per_store_prior = ytd_prior["omzet"] / stores_prior if stores_prior else None
 
     def delta(now, prev):
         return round((now - prev) / prev * 100, 1) if prev else None
@@ -115,10 +162,21 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
             if y in per_year:
                 per_year[y][period_number(r["periode"])] += r[metric]
         trend["series"][metric] = {y: dict(per_year[y]) for y in years}
-    if n_stores:
-        trend["series"]["per_winkel"] = {
-            y: {p: v / n_stores for p, v in perline.items()}
-            for y, perline in trend["series"]["omzet"].items()}
+    # Omzet per winkel per periode met het winkelbestand ván die periode:
+    # één vast aantal over de hele reeks vertekent elke groei of krimp.
+    rows_by_period = defaultdict(list)
+    for r in rows:
+        rows_by_period[r["periode"]].append(r)
+    per_winkel: dict = {}
+    for y, perline in trend["series"]["omzet"].items():
+        per_winkel[y] = {}
+        for p, value in perline.items():
+            canonical = f"{y}-W{p:02d}" if caps["periode"] == "week" else f"{y}-{p:02d}"
+            count, _ = store_count(conn, retailer_id, caps,
+                                   rows_by_period[canonical], canonical, settings)
+            if count:
+                per_winkel[y][p] = value / count
+    trend["series"]["per_winkel"] = per_winkel
 
     return {
         "available": True, "empty": False, "capabilities": caps,
@@ -137,16 +195,16 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
             "volume": {"nu": ytd_now["volume"], "vorig": ytd_prior["volume"],
                        "delta_pct": delta(ytd_now["volume"], ytd_prior["volume"])},
             "omzet_per_winkel": {
-                "nu": ytd_now["omzet"] / stores_all if stores_all else None,
-                "vorig": ytd_prior["omzet"] / stores_all if stores_all else None,
-                "delta_pct": delta(ytd_now["omzet"], ytd_prior["omzet"]),
-                "schatting": not from_facts},
+                "nu": per_store_now, "vorig": per_store_prior,
+                "delta_pct": delta(per_store_now, per_store_prior)
+                if per_store_now is not None and per_store_prior is not None else None,
+                "schatting": not (facts_now and facts_prior)},
         },
         "trend": trend,
         "filters": {
-            "merk": sorted({r["merk"] for r in _facts(conn, retailer_id, True) if r["merk"]}),
-            "land": sorted({r["land"] for r in _facts(conn, retailer_id, True) if r["land"]}),
-            "banner": sorted({r["banner"] for r in _facts(conn, retailer_id, True) if r["banner"]}),
+            "merk": sorted({r["merk"] for r in all_rows if r["merk"]}),
+            "land": sorted({r["land"] for r in all_rows if r["land"]}),
+            "banner": sorted({r["banner"] for r in all_rows if r["banner"]}),
         },
     }
 
@@ -308,9 +366,15 @@ def assortment(conn, retailer_id: str) -> dict:
     # push healthy items toward a false 'delist' as history grows.
     latest_year = max(period_year(r["periode"]) for r in all_rows)
     rows = [r for r in all_rows if period_year(r["periode"]) == latest_year]
-    n_stores, _from_facts = store_count(conn, retailer_id, caps, rows, None)
+    n_stores, from_facts = store_count(conn, retailer_id, caps, rows, None)
+    if not from_facts and fallback.LABEL_SCHATTING not in labels:
+        labels.append(fallback.LABEL_SCHATTING)
     periods = {r["periode"] for r in rows}
-    weeks = len(periods) or 1
+    # De rotatietarget staat in stuks per winkel per WEEK; bij een maandfeed
+    # moeten de periodes naar weken omgerekend worden, anders lijkt de
+    # rotatie ruim vier keer zo hoog.
+    weeks = (len(periods) * 52 / 12) if caps["periode"] == "maand" else len(periods)
+    weeks = weeks or 1
     targets = {r["merk"]: r["stuks_per_winkel_per_week"] for r in conn.execute(
         "SELECT merk, stuks_per_winkel_per_week FROM rotatie_targets WHERE retailer_id=?",
         (retailer_id,))}

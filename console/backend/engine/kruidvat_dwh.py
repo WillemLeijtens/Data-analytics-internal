@@ -22,6 +22,7 @@ from __future__ import annotations
 # parser has been proven against the real DWH sample files. Keep the two in
 # sync when the export format changes; only this import block differs.
 
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -157,7 +158,16 @@ def _pick_authoritative(candidates):
             matches = False
         if matches:
             return ws, h1, h2, total_row
-    # fallback: first parseable sheet
+    # Sloot geen enkel blad aan op zijn eigen Total-rij, dan is niet vast te
+    # stellen welk blad gezaghebbend is — en het verkeerde blad kiezen telt
+    # elke SKU per GTIN-variant dubbel. Alleen als GEEN van de bladen een
+    # Total-rij heeft valt er niets te reconciliëren en gebruiken we het
+    # eerste blad, met een waarschuwing.
+    if any(c[5] is not None for c in candidates):
+        raise ValueError(
+            "Geen werkblad sluit aan op de SKU-telling in de Total-rij; "
+            "import afgebroken om dubbeltelling te voorkomen."
+        )
     ws, h1, h2, _, _, total_row = candidates[0]
     return ws, h1, h2, total_row
 
@@ -180,13 +190,22 @@ def _to_number(raw):
     this, a text cell (e.g. 'n/a' or a stray '-') would flow straight into
     the sales_volume/sales_value REAL columns as a string — SQLite stores it
     happily, and pandas aggregations over the column then misbehave."""
-    if raw is None:
+    if raw is None or isinstance(raw, bool):
         return None
     if isinstance(raw, (int, float)):
-        return float(raw)
-    s = str(raw).strip().replace(",", ".")
+        number = float(raw)
+        return number if math.isfinite(number) else None
+    s = (str(raw).strip().replace("€", "").replace(" ", "")
+         .replace(" ", "").replace(" ", "").replace("'", ""))
+    if "," in s and "." in s:
+        decimal = "," if s.rfind(",") > s.rfind(".") else "."
+        thousands = "." if decimal == "," else ","
+        s = s.replace(thousands, "").replace(decimal, ".")
+    elif "," in s:
+        s = s.replace(",", ".")
     try:
-        return float(s)
+        number = float(s)
+        return number if math.isfinite(number) else None
     except ValueError:
         return None
 
@@ -276,9 +295,9 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
     week_labels = [w for w, _, _ in weeks]
     dupes = sorted({w for w in week_labels if week_labels.count(w) > 1})
     if dupes:
-        result.warnings.append(
-            f"Duplicate week column(s) in the sheet: {', '.join(dupes)} — "
-            "later columns overwrite earlier ones for the same week."
+        raise ValueError(
+            f"Dubbele weekkolom(men) in werkblad {ws.title!r}: {', '.join(dupes)}; "
+            "import afgebroken om dubbeltelling te voorkomen."
         )
     first_week_col = weeks[0][1]
     attr_cols = _attribute_columns(ws, header_row1, header_row2, first_week_col)
@@ -374,9 +393,9 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
             "first occurrence (same SKU repeated, e.g. differing GTIN)."
         )
     if non_numeric_cells:
-        result.warnings.append(
-            f"{non_numeric_cells} volume/value cell(s) contained non-numeric "
-            "text and were treated as 0 — check the source file."
+        raise ValueError(
+            f"{non_numeric_cells} volume/omzetcel(len) bevatten niet-numerieke tekst; "
+            "import afgebroken in plaats van de waarden stil als 0 te boeken."
         )
 
     # Reconcile against the printed Total row per week, if present.
@@ -397,13 +416,13 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
             if abs(got - expected_total) > 0.01:
                 mismatches += 1
         if mismatches:
-            result.warnings.append(
-                f"{mismatches} week(s) had a sales-volume total that did not "
-                "reconcile with the file's own Total row — review before trusting."
+            raise ValueError(
+                f"{mismatches} week/weken sluiten niet aan op de volume-totalen "
+                "in de Total-rij; import afgebroken."
             )
 
     if not brand or not country3 or not banner:
-        result.warnings.append(
-            "Could not read Brand/Country/Formula from the metadata block "
-            "(rows 1-7) — check the file layout."
+        raise ValueError(
+            "Brand/Country/Formula ontbreken in het metadatablok (rij 1-7); "
+            "import afgebroken."
         )

@@ -19,7 +19,8 @@ from engine import analytics, importer
 from engine import parser as parser_mod
 from engine.fallback import resolve
 from engine.periods import PeriodError, parse_period, period_number, period_year
-from engine.profile import Profile, capabilities, missing_required
+from engine.profile import (Profile, capabilities, missing_required,
+                            validate_definition)
 
 BASE = Path(__file__).resolve().parents[2]
 # Profieldefinities uit het ontwerppakket: fictieve formaten, alleen nog
@@ -305,3 +306,91 @@ def test_fifth_retailer_pure_profile(conn):
 
     promo = analytics.promotions(conn, "fantasia")
     assert promo["available"] and promo["resolution"]["level_used"]["scope"] == "merk+land"
+
+
+# ------------------------------------------------------------ audit-fixes
+
+def test_decimal_edge_cases():
+    assert parser_mod.parse_number("1234.56", ",") == 1234.56      # punt in komma-export
+    assert parser_mod.parse_number("1,234.56", ",") == 1234.56
+    assert parser_mod.parse_number("1.234,56", ".") == 1234.56
+    assert parser_mod.parse_number("€ 1 234,50", ",") == 1234.5
+    assert parser_mod.parse_number("1.234", ",") == 1234.0         # duizendtallen
+    assert parser_mod.parse_number("1.234", ".") == 1.234          # decimaal
+    for bad in (True, float("inf"), float("nan")):
+        with pytest.raises(ValueError):
+            parser_mod.parse_number(bad, ",")
+
+
+def test_profile_definition_rejects_duplicate_targets():
+    definition = json.loads(json.dumps(load_profile("etos.json").definition))
+    definition["mapping"][1]["target"] = "artikel_ean"
+    with pytest.raises(ValueError, match="meer dan één keer gemapt"):
+        validate_definition(definition, require_complete=True)
+
+
+def test_profile_definition_rejects_unknown_target_and_constant():
+    definition = json.loads(json.dumps(load_profile("etos.json").definition))
+    definition["mapping"][0]["target"] = "verzonnen_veld"
+    with pytest.raises(ValueError, match="onbekend doelveld"):
+        validate_definition(definition)
+    definition = json.loads(json.dumps(load_profile("etos.json").definition))
+    definition["constants"]["onzin"] = "x"
+    with pytest.raises(ValueError, match="onbekende constants"):
+        validate_definition(definition)
+
+
+def test_profile_definition_accepts_builtin_profiles():
+    for name in ("kruidvat-dwh.json", "ici-maandrapport.json"):
+        d = json.loads((BASE / "profiles" / name).read_text())
+        validate_definition(d, require_complete=True)
+
+
+def test_parse_rejects_duplicate_headers():
+    etos = load_profile("etos.json")
+    content = csv_bytes(ETOS_HEADER + ";Sales value",
+                        "2026-W32;4049469072773;Slant;Tweezerman;1;10.00;N;S1;11.00")
+    with pytest.raises(parser_mod.ParseError, match="dubbele kolomkoppen"):
+        parser_mod.parse_file("etos_sales_wk32.csv", content, etos)
+
+
+def test_import_unreadable_file_is_recorded_not_crashed(conn):
+    insert_profile(conn, load_profile("etos.json", status="live"))
+    result = importer.run_import(conn, "etos_sales_wk32.csv", b"\xff\xfe\xff")
+    assert result["status"] == "error"
+
+
+def test_live_profile_excludes_older_test_facts(conn):
+    """Zodra een profiel live is, horen cijfers uit de testfase niet meer
+    in de analyses thuis."""
+    insert_profile(conn, load_profile("etos.json", status="test"))
+    assert importer.run_import(conn, "etos_sales_wk32.csv", csv_bytes(
+        ETOS_HEADER, "2026-W32;4049469072773;Slant;Tweezerman;1;900.00;N;S1"))["status"] == "test"
+
+    live = Profile(id=None, retailer_id="etos", version=3, status="live",
+                   definition=load_profile("etos.json").definition)
+    insert_profile(conn, live)
+    assert importer.run_import(conn, "etos_sales_wk31.csv", csv_bytes(
+        ETOS_HEADER, "2026-W31;4049469072773;Slant;Tweezerman;1;100.00;N;S1"))["status"] == "ingelezen"
+
+    result = analytics.dashboard(conn, "etos")
+    assert result["laatste_periode"] == "2026-W31"
+    assert result["kpi"]["omzet"]["waarde"] == 100.0
+    assert "PROFIEL IN TEST" not in result["labels"]
+
+
+def test_manual_store_estate_is_not_counted_once_per_brand(conn):
+    """Instellingen staan per merk; optellen zou hetzelfde filiaalnet per
+    merk meetellen en de omzet per winkel evenredig te laag maken."""
+    insert_profile(conn, load_profile("etos.json", status="live"))
+    assert importer.run_import(conn, "etos_sales_wk32.csv", csv_bytes(
+        ETOS_HEADER,
+        "2026-W32;4049469072773;Slant;Tweezerman;100;2650.00;N;S1",
+        "2026-W32;4049469083120;File;Alessandro;100;2650.00;N;S1"))["status"] == "ingelezen"
+    conn.executemany(
+        "INSERT INTO retailer_settings (retailer_id, merk, land, banner, aantal_winkels) "
+        "VALUES ('etos', ?, 'NL', NULL, 530)", [("TWEEZERMAN",), ("ALESSANDRO",)])
+    result = analytics.dashboard(conn, "etos")
+    assert result["kpi"]["omzet_per_winkel"]["winkels"] == 530
+    assert result["kpi"]["omzet_per_winkel"]["waarde"] == 10.0
+    assert "SCHATTING" in result["labels"]

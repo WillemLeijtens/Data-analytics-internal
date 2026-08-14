@@ -14,6 +14,7 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
   const [rows, setRows] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [detail, setDetail] = useState<any | null>(null);
+  const [uploadResults, setUploadResults] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = () =>
@@ -28,7 +29,8 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
     const fd = new FormData();
     for (const f of Array.from(files)) fd.append("files", f);
     try {
-      await apiSend("/import", "POST", fd);
+      const response = await apiSend<{ results: any[] }>("/import", "POST", fd);
+      setUploadResults(response.results ?? []);
       setError(null);
     } catch (e: any) {
       setError(`Upload mislukt: ${e?.message ?? e}`);
@@ -61,6 +63,23 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
           onChange={(e) => { upload(e.target.files); e.target.value = ""; }} />
       </div>
 
+      {uploadResults.length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="eyebrow">Resultaat van deze upload</div>
+          {uploadResults.map((r, i) => {
+            const [label, accent] = STATUS_LABEL[r.status] ?? [String(r.status).toUpperCase(), true];
+            return (
+              <div key={`${r.filename}-${i}`} style={{ display: "flex", gap: 12, alignItems: "center", paddingTop: 9, flexWrap: "wrap" }}>
+                <span className={`status-label ${accent ? "need" : ""}`}>{label}</span>
+                <span className="mono">{r.filename}</span>
+                <span className="sub">{r.retailer_id ?? "retailer onbekend"} · {r.rows ?? 0} rijen</span>
+                {r.detail && <span className="sub" style={{ marginLeft: "auto" }}>{r.detail}</span>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <table className="data">
         <thead><tr><th>Bestand</th><th>Retailer</th><th>Profiel</th><th>Periode</th><th>Rijen</th><th>Status</th><th></th></tr></thead>
         <tbody>
@@ -76,9 +95,14 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
                 <td><span className={`status-label ${accent ? "need" : ""}`}>{label}</span></td>
                 <td>
                   {r.status === "profiel_nodig"
-                    ? <a style={{ cursor: "pointer" }} onClick={() => ctx.go(ctx.retailer === "alle" ? "douglas" : ctx.retailer, "parser")}>Kolommen mappen</a>
+                    ? ctx.retailer === "alle"
+                      ? <span className="sub">Kies bovenaan eerst de juiste retailer</span>
+                      : <a style={{ cursor: "pointer" }} onClick={() => ctx.go(ctx.retailer, "parser")}>Kolommen mappen</a>
                     : r.error_detail
-                      ? <a style={{ cursor: "pointer" }} onClick={() => setDetail(JSON.parse(r.error_detail))}>Bekijk</a>
+                      ? <a style={{ cursor: "pointer" }} onClick={() => {
+                        try { setDetail(JSON.parse(r.error_detail)); }
+                        catch { setDetail({ message: r.error_detail }); }
+                      }}>Bekijk</a>
                       : null}
                 </td>
               </tr>

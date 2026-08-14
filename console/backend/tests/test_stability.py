@@ -260,3 +260,38 @@ def test_cleanup_demo_keeps_real_imports_and_own_settings(client, tmp_path, monk
     inst = client.get("/api/kruidvat/instellingen").json()
     assert [t["stuks_per_winkel_per_week"] for t in inst["rotatie_targets"]] == [99.0]
     assert inst["winkels_targets"] == []      # demo-winkelaantallen weg
+
+
+# ------------------------------------------------------- audit-fixes
+
+def test_malformed_profile_definition_is_422(client):
+    r = client.post("/api/parser/douglas/profielen",
+                    json={"definition": {"detection": {}}, "status": "live"})
+    assert r.status_code == 422
+
+
+def test_upload_limit_is_enforced_per_file(client, monkeypatch):
+    main = sys.modules["main"]
+    monkeypatch.setattr(main, "MAX_UPLOAD_BYTES", 10)
+    monkeypatch.setattr(main, "MAX_UPLOAD_MB", 1)
+    result = client.post("/api/import", files=[
+        ("files", ("te-groot.csv", b"12345678901")),
+    ]).json()["results"][0]
+    assert result["status"] == "error" and "groter dan" in result["detail"]
+
+
+def test_upload_path_in_filename_is_stripped(client):
+    result = client.post("/api/import", files=[
+        ("files", ("../../etc/passwd.xlsx", b"geen xlsx")),
+    ]).json()["results"][0]
+    assert result["filename"] == "passwd.xlsx"
+
+
+def test_import_status_shows_latest_period_not_whole_history(client):
+    import seed
+    for wk in ("202631", "202632"):
+        assert upload(client, f"DWH__Sales_volume_TWEEZERMAN_KVNL_wk{wk[-2:]}.xlsx",
+                      seed.make_dwh_xlsx(seed._kv_demo_rows([wk])))["status"] == "ingelezen"
+    retailer = client.get("/api/import-status?retailer_id=kruidvat").json()[0]
+    feed = next(f for f in retailer["feeds"] if f["feed"] == "TWEEZERMAN")
+    assert feed["periode"] == "2026-W32" and feed["rijen"] == 2

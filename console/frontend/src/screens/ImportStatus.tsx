@@ -18,12 +18,12 @@ export default function ImportStatus({ ctx }: { ctx: ShellCtx }) {
               {r.periode_type?.toUpperCase() ?? "—"} / {r.profiel ? `PROFIEL V${r.profiel.versie}` : "GEEN PROFIEL"}
             </span>
             <span className="sub" style={{ marginLeft: "auto" }}>
-              {r.feeds.length ? `${r.feeds.length} feed(s) actueel` : "nog geen feeds"}
+              {r.feeds.length ? `${r.feeds.length} feed(s)` : "nog geen feeds"}
             </span>
           </div>
           {r.feeds.map((f: any) => (
             <div key={f.feed + f.scope} style={{ display: "grid", gridTemplateColumns: "10px 1fr 1fr 160px 80px", gap: 12, alignItems: "center", padding: "8px 0", borderTop: "1px solid var(--quiet)", marginTop: 8 }}>
-              <span className="brand-dot dot-green" style={{ margin: 0 }} />
+              <span className={`brand-dot dot-${r.signaal}`} style={{ margin: 0 }} />
               <span>{f.feed}</span>
               <span className="sub">{f.scope}</span>
               <span className="mono" style={{ whiteSpace: "nowrap" }}>{f.periode} · {f.ts?.slice(0, 16)}</span>

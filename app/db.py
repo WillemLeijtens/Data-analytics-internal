@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS items (
     package_content TEXT,
     consumer_price REAL,
     gtin TEXT,
-    PRIMARY KEY (retailer, sku)
+    PRIMARY KEY (retailer, brand, sku)
 );
 """,
     "fact_sales": """
@@ -168,6 +168,13 @@ def _columns(conn, table: str) -> set[str]:
     return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
 
 
+def _pk_columns(conn, table: str) -> list[str]:
+    """Primaire-sleutelkolommen in sleutelvolgorde, voor migraties die de
+    vorm van een tabel wijzigen."""
+    rows = [r for r in conn.execute(f"PRAGMA table_info({table})") if r["pk"]]
+    return [r["name"] for r in sorted(rows, key=lambda r: r["pk"])]
+
+
 def _rebuild(conn, table: str, copy_sql: str):
     """Rebuild `table` into the new DDL shape (SQLite cannot alter a primary
     key in place): rename aside, create fresh, copy via `copy_sql` (which
@@ -201,6 +208,18 @@ def _migrate(conn):
             SELECT '{LEGACY_RETAILER}', sku, brand, article_description,
                    headgroup, size, colour, type, package_content,
                    consumer_price, gtin FROM {{old}}
+        """)
+    elif _pk_columns(conn, "items") != ["retailer", "brand", "sku"]:
+        # Een SKU-nummer is niet uniek over merken heen. Met de oude sleutel
+        # (retailer, sku) overschreef het ene merk de artikelgegevens van het
+        # andere, terwijl de feiten beide merken wél correct bewaarden.
+        _rebuild(conn, "items", """
+            INSERT INTO items (retailer, sku, brand, article_description,
+                               headgroup, size, colour, type,
+                               package_content, consumer_price, gtin)
+            SELECT retailer, sku, brand, article_description, headgroup,
+                   size, colour, type, package_content, consumer_price, gtin
+            FROM {old}
         """)
     if "retailer" not in _columns(conn, "store_counts"):
         # target_rev_per_store was itself added by an earlier migration, so
@@ -279,8 +298,7 @@ def upsert_items(conn, retailer: str, items: list[dict]):
                                 size, colour, type, package_content, consumer_price, gtin)
             VALUES (:retailer, :sku, :brand, :article_description, :headgroup, :size,
                     :colour, :type, :package_content, :consumer_price, :gtin)
-            ON CONFLICT(retailer, sku) DO UPDATE SET
-                brand=excluded.brand,
+            ON CONFLICT(retailer, brand, sku) DO UPDATE SET
                 article_description=excluded.article_description,
                 headgroup=excluded.headgroup,
                 size=excluded.size,

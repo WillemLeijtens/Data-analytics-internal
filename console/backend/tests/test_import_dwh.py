@@ -89,3 +89,20 @@ def test_real_file_with_mangled_name_still_recognised(client):
     inhoudsherkenning moet het bestand dan alsnog bij kruidvat brengen."""
     r = upload(client, "aa516215-hernoemd en (1) gek gemaakt.xlsx", REAL_SAMPLE.read_bytes())
     assert r["status"] == "ingelezen" and r["retailer_id"] == "kruidvat"
+
+
+def test_dwh_total_mismatch_fails_closed(client):
+    """Een niet-kloppend Total-getal mag niet stil worden ingelezen."""
+    import io
+    import seed
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(seed.make_dwh_xlsx(seed._kv_demo_rows(["202632"]))))
+    ws = wb.active
+    ws.cell(row=ws.max_row, column=5, value=999999)     # Total-rij verminken
+    out = io.BytesIO()
+    wb.save(out)
+
+    r = upload(client, "DWH__Sales_volume_TWEEZERMAN_KVNL_kapot-totaal.xlsx", out.getvalue())
+    assert r["status"] == "error" and "Total-rij" in r["detail"]
+    assert client.get("/api/kruidvat/dashboard").json()["empty"] is True

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { fmtEur, fmtNum, BRAND_COLORS } from "../api";
 import { ShellCtx } from "../App";
 import { DeltaTag, EmptyProfileCard, LevelStrip, LoadState, TrendChart, useApi } from "../components/shared";
@@ -43,6 +43,10 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
   const [land, setLand] = useState<string[]>([]);
   const [banner, setBanner] = useState<string[]>([]);
   const [metric, setMetric] = useState<"omzet" | "volume" | "per_winkel">("omzet");
+
+  // Filters horen bij één retailer: bij het wisselen van tab zou een merk
+  // dat de nieuwe retailer niet voert anders een leeg dashboard opleveren.
+  useEffect(() => { setMerk([]); setLand([]); setBanner([]); }, [ctx.retailer]);
 
   const q = new URLSearchParams();
   if (merk.length) q.set("merk", merk.join(","));

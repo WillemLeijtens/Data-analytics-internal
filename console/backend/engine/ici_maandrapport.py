@@ -19,6 +19,7 @@ groeipercentages worden overgeslagen; alleen YYYYMM-kolommen tellen.
 from __future__ import annotations
 
 import io
+import math
 import re
 
 from openpyxl import load_workbook
@@ -61,12 +62,22 @@ def _find_brand_above(rows, header_idx: int) -> str | None:
 
 
 def _to_number(raw):
-    if raw is None or raw == "":
+    if raw is None or raw == "" or isinstance(raw, bool):
         return None
     if isinstance(raw, (int, float)):
-        return float(raw)
+        number = float(raw)
+        return number if math.isfinite(number) else None
+    s = (str(raw).strip().replace("€", "").replace(" ", "")
+         .replace(" ", "").replace(" ", "").replace("'", ""))
+    if "," in s and "." in s:
+        decimal = "," if s.rfind(",") > s.rfind(".") else "."
+        thousands = "." if decimal == "," else ","
+        s = s.replace(thousands, "").replace(decimal, ".")
+    elif "," in s:
+        s = s.replace(",", ".")
     try:
-        return float(str(raw).strip().replace(",", "."))
+        number = float(s)
+        return number if math.isfinite(number) else None
     except ValueError:
         return None
 
@@ -154,19 +165,36 @@ def parse_workbook(content: bytes) -> dict:
         raise ValueError("Geen winkelblokken met maandkolommen gevonden — is dit "
                          "wel een ICI Paris XL-maandrapport?")
 
+    # Eén canonieke rij per winkel/merk/maand. Twee tabs of blokken met
+    # dezelfde sleutel zouden anders zonder databaseconstraint dubbel tellen.
+    keys = [(f["merk"], f["winkel_id"], f["periode"]) for f in facts]
+    duplicate_keys = len(keys) - len(set(keys))
+    if duplicate_keys:
+        raise ValueError(
+            f"{duplicate_keys} dubbele winkel/merk/maand-rij(en) gevonden; "
+            "import afgebroken om dubbeltelling te voorkomen."
+        )
+
     # Reconciliatie tegen de merk-tab, zoals Kruidvat tegen de Total-rij.
-    if brand_totals:
-        computed: dict[tuple[str, str], float] = {}
-        for f in facts:
-            k = (f["merk"], f["periode"])
-            computed[k] = computed.get(k, 0.0) + f["omzet"]
-        mismatches = sum(
-            1 for k, expected in brand_totals.items()
-            if k in computed and abs(computed[k] - expected) > max(1.0, 0.005 * abs(expected)))
-        if mismatches:
-            warnings.append(
-                f"{mismatches} merk/maand-combinatie(s) sluiten niet aan op de "
-                "totalen in de merk-tab — controleer het bestand.")
+    # Ontbrekende en onverwachte combinaties tellen óók als afwijking: alleen
+    # de doorsnede vergelijken zou een volledig overgeslagen merk stil
+    # goedkeuren.
+    if not brand_totals:
+        raise ValueError("Merk-tab met Year/Category-totalen ontbreekt; "
+                         "reconciliatie niet mogelijk.")
+    computed: dict[tuple[str, str], float] = {}
+    for f in facts:
+        k = (f["merk"], f["periode"])
+        computed[k] = computed.get(k, 0.0) + f["omzet"]
+    mismatches = sum(
+        1 for k in set(brand_totals) | set(computed)
+        if k not in brand_totals or k not in computed
+        or abs(computed[k] - brand_totals[k]) > max(1.0, 0.005 * abs(brand_totals[k])))
+    if mismatches:
+        raise ValueError(
+            f"{mismatches} merk/maand-combinatie(s) sluiten niet aan op de "
+            "totalen in de merk-tab; import afgebroken."
+        )
 
     return {"facts": facts, "periode_type": "maand",
             "periodes": sorted({f["periode"] for f in facts}),

@@ -15,6 +15,7 @@ from __future__ import annotations
 import csv
 import fnmatch
 import io
+import math
 import re
 
 from .periods import PeriodError, parse_period
@@ -251,16 +252,39 @@ def _headers_match(content: bytes, profile: Profile) -> bool:
 
 def parse_number(value, decimal: str) -> float:
     """Parse with the profile's decimal sign; both '1.234,56' and '1234.56'."""
+    if isinstance(value, bool):
+        raise ValueError("boolean is geen getal")
     if isinstance(value, (int, float)):
-        return float(value)
-    s = str(value).strip().replace("€", "").replace(" ", "")
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("getal is niet eindig")
+        return number
+    s = (str(value).strip().replace("€", "").replace(" ", "")
+         .replace(" ", "").replace(" ", "").replace("'", ""))
     if not s:
         raise ValueError("leeg")
-    if decimal == ",":
-        s = s.replace(".", "").replace(",", ".")
+
+    # Staan beide scheidingstekens erin, dan is de laatste het decimaalteken.
+    # Bij één scheidingsteken volgen we het profiel, tenzij het patroon
+    # onmiskenbaar duizendtallen zijn — dat vangt de veelvoorkomende
+    # spreadsheet-uitschieter op (punt-decimaal in een komma-export).
+    if "," in s and "." in s:
+        decimal_seen = "," if s.rfind(",") > s.rfind(".") else "."
+        thousands = "." if decimal_seen == "," else ","
+        s = s.replace(thousands, "").replace(decimal_seen, ".")
     else:
-        s = s.replace(",", "")
-    return float(s)
+        separator = "," if "," in s else "." if "." in s else None
+        if separator:
+            grouped = re.fullmatch(
+                rf"[+-]?\d{{1,3}}(?:{re.escape(separator)}\d{{3}})+", s)
+            if separator != decimal and grouped:
+                s = s.replace(separator, "")
+            else:
+                s = s.replace(separator, ".")
+    number = float(s)
+    if not math.isfinite(number):
+        raise ValueError("getal is niet eindig")
+    return number
 
 
 # ---------------------------------------------------------------- parsing
@@ -275,6 +299,8 @@ def _parse_builtin_kruidvat(filename: str, content: bytes) -> dict:
         parsed = kruidvat_dwh.parse_workbook(io.BytesIO(content), filename)
     except ValueError as e:
         raise ParseError(str(e))
+    except Exception as e:  # noqa: BLE001 - onleesbaar bestand is geen crash
+        raise ParseError(f"bestand kon niet worden gelezen: {e}") from e
     iteminfo = {(i["brand"], i["sku"]): i for i in parsed.items}
     facts = []
     for f in parsed.facts:
@@ -312,10 +338,24 @@ def parse_file(filename: str, content: bytes, profile: Profile) -> dict:
             return ici_maandrapport.parse_workbook(content)
         except ValueError as e:
             raise ParseError(str(e))
+        except Exception as e:  # noqa: BLE001 - onleesbaar bestand is geen crash
+            raise ParseError(f"bestand kon niet worden gelezen: {e}") from e
     if builtin:
         raise ParseError(f"onbekende ingebouwde parser {builtin!r}")
     det = d["detection"]
-    headers, data = read_table(content, det)
+    try:
+        headers, data = read_table(content, det)
+    except ParseError:
+        raise
+    except Exception as e:  # noqa: BLE001 - onleesbaar bestand is geen crash
+        raise ParseError(f"bestand kon niet worden gelezen: {e}") from e
+
+    # Twee kolommen met dezelfde kop maken de mapping dubbelzinnig: welke
+    # van de twee bedoelt het profiel? Weigeren in plaats van gokken.
+    folded = [h.casefold() for h in headers if h]
+    dupes = sorted({h for h in folded if folded.count(h) > 1})
+    if dupes:
+        raise ParseError("dubbele kolomkoppen: " + ", ".join(dupes))
     hindex = {h.lower(): i for i, h in enumerate(headers)}
 
     missing_headers = [req for req in det.get("required_headers", [])

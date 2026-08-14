@@ -58,6 +58,7 @@ services:
       - CONSOLE_BIND=${CONSOLE_BIND:-127.0.0.1}
       - CONSOLE_PASSWORD=${CONSOLE_PASSWORD:-}
       - CONSOLE_USER=${CONSOLE_USER:-console}
+      - CONSOLE_MAX_UPLOAD_MB=${CONSOLE_MAX_UPLOAD_MB:-200}
     volumes:
       - ./console/data:/srv/data
     ports:

@@ -33,7 +33,7 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
   const refresh = () => apiGet("/parser/profielen").then((ps) => {
     setProfiles(ps);
     const mine = ps.filter((p: any) => p.retailer_id === ctx.retailer);
-    if (mine.length && (selId == null || !ps.some((p: any) => p.id === selId))) setSelId(mine[0].id);
+    setSelId(mine.length ? mine[0].id : null);
   }).catch((e) => setMsg(`Profielen laden mislukt: ${e?.message ?? e}`));
   useEffect(() => {
     refresh(); setDraft(null); setTestResult(null);
