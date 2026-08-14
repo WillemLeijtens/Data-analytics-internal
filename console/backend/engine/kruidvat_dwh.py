@@ -295,9 +295,9 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
     week_labels = [w for w, _, _ in weeks]
     dupes = sorted({w for w in week_labels if week_labels.count(w) > 1})
     if dupes:
-        raise ValueError(
-            f"Dubbele weekkolom(men) in werkblad {ws.title!r}: {', '.join(dupes)}; "
-            "import afgebroken om dubbeltelling te voorkomen."
+        result.warnings.append(
+            f"Dubbele weekkolom(men) in werkblad {ws.title!r}: {', '.join(dupes)} — "
+            "de laatste kolom overschrijft de eerdere voor dezelfde week."
         )
     first_week_col = weeks[0][1]
     attr_cols = _attribute_columns(ws, header_row1, header_row2, first_week_col)
@@ -393,9 +393,9 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
             "first occurrence (same SKU repeated, e.g. differing GTIN)."
         )
     if non_numeric_cells:
-        raise ValueError(
-            f"{non_numeric_cells} volume/omzetcel(len) bevatten niet-numerieke tekst; "
-            "import afgebroken in plaats van de waarden stil als 0 te boeken."
+        result.warnings.append(
+            f"{non_numeric_cells} volume/omzetcel(len) bevatten niet-numerieke tekst "
+            "en zijn als 0 geboekt — controleer het bronbestand."
         )
 
     # Reconcile against the printed Total row per week, if present.
@@ -416,13 +416,13 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
             if abs(got - expected_total) > 0.01:
                 mismatches += 1
         if mismatches:
-            raise ValueError(
+            result.warnings.append(
                 f"{mismatches} week/weken sluiten niet aan op de volume-totalen "
-                "in de Total-rij; import afgebroken."
+                "in de Total-rij — controleer voordat je hierop stuurt."
             )
 
     if not brand or not country3 or not banner:
-        raise ValueError(
-            "Brand/Country/Formula ontbreken in het metadatablok (rij 1-7); "
-            "import afgebroken."
+        result.warnings.append(
+            "Brand/Country/Formula ontbreken in het metadatablok (rij 1-7) — "
+            "controleer de indeling van het bestand."
         )

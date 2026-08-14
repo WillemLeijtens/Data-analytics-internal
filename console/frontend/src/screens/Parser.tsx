@@ -130,6 +130,75 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
   }
 
   const det = draft.detection;
+
+  // Retailer met een ingebouwde parser: er valt niets in te stellen, dus
+  // toont dit scherm geen mapping, versies of publiceerknoppen — alleen wat
+  // de parser herkent en levert, plus de mogelijkheid het te controleren.
+  if (isBuiltin) {
+    const levert: [string, boolean][] = [
+      ["Merk", !!caps?.merk], ["Artikel (EAN)", !!caps?.artikel],
+      ["Winkel", !!caps?.winkel], ["Banner", !!caps?.banner],
+      ["Land", !!caps?.land], ["Volume (stuks)", !!caps?.volume],
+    ];
+    return (
+      <>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+          <div>
+            <h1>Parser — {ctx.card?.naam}</h1>
+            <p className="sub">Deze retailer heeft een <b>ingebouwde parser</b>: bestanden
+              worden automatisch herkend en ingelezen. Er is niets in te stellen.</p>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button className="btn ghost" onClick={() => fileRef.current?.click()}>Controleren op bestand</button>
+            <input ref={fileRef} type="file" hidden accept=".xlsx,.csv"
+              onChange={(e) => { test(e.target.files?.[0] ?? null); e.target.value = ""; }} />
+          </div>
+        </div>
+        {msg && <p className="sub" style={{ color: "var(--main)" }}>{msg}</p>}
+
+        <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", marginTop: 18 }}>
+          <div className="card">
+            <div className="eyebrow" style={{ marginBottom: 10 }}>Hoe het bestand herkend wordt</div>
+            <p className="sub">Op de <b>structuur</b> van het bestand, niet op naam of
+              tabvolgorde: {draft.builtin === "kruidvat_dwh"
+                ? "het werkblad met het metadatablok (Country/Formula/Brand) én een 'SKU No.'-kop; van meerdere bladen wint het blad waarvan het regelaantal klopt met zijn eigen Total-rij."
+                : "de tabbladen met een Store/Address-kop gevolgd door maandkolommen, plus het merk-tabblad voor de controle op de totalen."}</p>
+            <p className="sub">Hernoemt de retailer een bestand of tabblad, dan blijft de
+              herkenning gewoon werken.</p>
+          </div>
+          <div className="card">
+            <div className="eyebrow" style={{ marginBottom: 10 }}>Wat de parser levert</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <span className="chip static">{caps?.periode === "maand" ? "per maand" : "per week"}</span>
+              {levert.map(([label, on]) => (
+                <span key={label} className={`chip static ${on ? "" : "off"}`}>{label}</span>
+              ))}
+            </div>
+            <p className="sub" style={{ marginTop: 12 }}>Grijze labels levert deze retailer
+              niet; de analyses passen zich daarop aan.</p>
+          </div>
+        </div>
+
+        {testResult && (
+          <div className="card" style={{ marginTop: 16 }}>
+            <div className="eyebrow">Controleresultaat</div>
+            {testResult.ok ? (
+              <p className="sub">✓ {testResult.rijen} regels leesbaar · periodes {testResult.periodes.join(", ")}</p>
+            ) : (
+              <p className="sub sig-red">{testResult.fout}</p>
+            )}
+          </div>
+        )}
+
+        <p className="sub" style={{ marginTop: 22 }}>
+          Een retailer die zijn cijfers in een eenvoudig, plat bestand aanlevert kan
+          in plaats hiervan met een kolom-mapping werken; die verschijnt vanzelf
+          zodra je zo'n bestand uploadt bij Import.
+        </p>
+      </>
+    );
+  }
+
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>

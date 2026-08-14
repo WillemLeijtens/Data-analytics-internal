@@ -22,6 +22,41 @@ def file_hash(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+_FACT_KEY = ("merk", "land", "banner", "winkel_id", "artikel_ean", "periode")
+
+
+def _replace_redelivered_facts(conn, retailer_id: str, facts: list[dict]):
+    """Verwijder bestaande feiten die dit bestand opnieuw levert.
+
+    Een retailer stuurt regelmatig een correctie of een bestand dat een
+    eerdere periode overlapt. Zonder deze stap zouden die regels ernaast
+    komen te staan en telt het dashboard ze bij elkaar op — de correctie
+    verdubbelt dan de omzet in plaats van hem te vervangen. Alleen exact de
+    combinaties uit het nieuwe bestand worden vervangen; andere merken,
+    winkels en periodes blijven onaangeroerd, dus de historie blijft staan."""
+    conn.execute("DROP TABLE IF EXISTS temp._nieuwe_sleutels")
+    conn.execute(
+        "CREATE TEMP TABLE _nieuwe_sleutels ("
+        "merk TEXT, land TEXT, banner TEXT, winkel_id TEXT, artikel_ean TEXT, periode TEXT)")
+    conn.executemany(
+        "INSERT INTO temp._nieuwe_sleutels VALUES (?,?,?,?,?,?)",
+        sorted({tuple(f.get(k) for k in _FACT_KEY) for f in facts}))
+    conn.execute(
+        """
+        DELETE FROM sellout_facts
+         WHERE retailer_id = ?
+           AND EXISTS (
+               SELECT 1 FROM temp._nieuwe_sleutels k
+                WHERE k.periode = sellout_facts.periode
+                  AND COALESCE(k.merk, '') = COALESCE(sellout_facts.merk, '')
+                  AND COALESCE(k.land, '') = COALESCE(sellout_facts.land, '')
+                  AND COALESCE(k.banner, '') = COALESCE(sellout_facts.banner, '')
+                  AND COALESCE(k.winkel_id, '') = COALESCE(sellout_facts.winkel_id, '')
+                  AND COALESCE(k.artikel_ean, '') = COALESCE(sellout_facts.artikel_ean, ''))
+        """, (retailer_id,))
+    conn.execute("DROP TABLE temp._nieuwe_sleutels")
+
+
 def run_import(conn, filename: str, content: bytes) -> dict:
     """Import one file inside the caller's transaction. Returns a summary dict
     mirroring an `imports` row.
@@ -81,6 +116,7 @@ def run_import(conn, filename: str, content: bytes) -> dict:
                 "retailer_id": profile.retailer_id, "rows": 0, "detail": str(e)}
 
     replace_existing()
+    _replace_redelivered_facts(conn, profile.retailer_id, result["facts"])
     status = "test" if profile.status == "test" else "ingelezen"
     periodes = result["periodes"]
     periode_txt = periodes[0] if len(periodes) == 1 else \

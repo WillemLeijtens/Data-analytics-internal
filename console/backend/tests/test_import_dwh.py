@@ -91,8 +91,10 @@ def test_real_file_with_mangled_name_still_recognised(client):
     assert r["status"] == "ingelezen" and r["retailer_id"] == "kruidvat"
 
 
-def test_dwh_total_mismatch_fails_closed(client):
-    """Een niet-kloppend Total-getal mag niet stil worden ingelezen."""
+def test_dwh_total_mismatch_imports_with_visible_warning(client):
+    """Gelijk aan de Streamlit-app: een niet-kloppend Total-getal blokkeert de
+    import niet, maar levert wel een waarschuwing die de UI toont — blokkeren
+    zou betekenen dat je bij een bronbestandsfout helemaal geen cijfers hebt."""
     import io
     import seed
     from openpyxl import load_workbook
@@ -104,5 +106,94 @@ def test_dwh_total_mismatch_fails_closed(client):
     wb.save(out)
 
     r = upload(client, "DWH__Sales_volume_TWEEZERMAN_KVNL_kapot-totaal.xlsx", out.getvalue())
-    assert r["status"] == "error" and "Total-rij" in r["detail"]
-    assert client.get("/api/kruidvat/dashboard").json()["empty"] is True
+    assert r["status"] == "ingelezen"
+    assert "Total-rij" in r["detail"]          # waarschuwing, zichtbaar in de UI
+    assert client.get("/api/kruidvat/dashboard").json()["empty"] is False
+
+
+def test_dwh_wrong_sheet_choice_still_fails_closed(client):
+    """De ene uitzondering: sluit GEEN enkel blad aan op zijn Total-rij, dan
+    is niet vast te stellen welk blad gezaghebbend is en zou het verkeerde
+    blad elke SKU per GTIN-variant dubbel tellen."""
+    import io
+    import seed
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(seed.make_dwh_xlsx(seed._kv_demo_rows(["202632"]))))
+    ws = wb.active
+    ws.cell(row=ws.max_row, column=3, value=99)   # SKU-telling in Total-rij verminken
+    out = io.BytesIO()
+    wb.save(out)
+
+    r = upload(client, "DWH__Sales_volume_TWEEZERMAN_KVNL_verkeerd-blad.xlsx", out.getvalue())
+    assert r["status"] == "error" and "SKU-telling" in r["detail"]
+
+
+def test_history_is_preserved_and_analysis_updates_per_import(client):
+    """Het werkmodel: per retailer een vaste parser; elke import werkt de
+    analyse bij, vult de historie aan en overschrijft alleen de periodes die
+    in het nieuwe bestand zitten."""
+    import seed
+
+    def kv(week_values: dict) -> bytes:
+        """week_values: {"202631": (volume, omzet)} voor één artikel."""
+        return seed.make_dwh_xlsx([{
+            "sku": "31210001", "gtin": "4049469072773",
+            "desc": "Tweezerman Slant Tweezer", "brand": "TWEEZERMAN",
+            "weeks": week_values}])
+
+    # 1. Eerste levering: weken 30 en 31.
+    assert upload(client, "DWH__Sales_Tweezerman_KVNL_wk31.xlsx",
+                  kv({"202630": (10, 130.0), "202631": (12, 156.0)}))["status"] == "ingelezen"
+    dash = client.get("/api/kruidvat/dashboard").json()
+    assert dash["laatste_periode"] == "2026-W31"
+    assert dash["kpi"]["omzet"]["waarde"] == pytest.approx(156.0)
+
+    # 2. Volgende levering: week 32. Historie blijft, analyse schuift op.
+    assert upload(client, "DWH__Sales_Tweezerman_KVNL_wk32.xlsx",
+                  kv({"202632": (14, 182.0)}))["status"] == "ingelezen"
+    dash = client.get("/api/kruidvat/dashboard").json()
+    assert dash["laatste_periode"] == "2026-W32"
+    serie = dash["trend"]["series"]["omzet"]["2026"]
+    assert {"30", "31", "32"} <= set(serie), "eerdere weken moeten bewaard blijven"
+    assert serie["30"] == pytest.approx(130.0)
+
+    # 3. Correctie op week 31: alleen die week verandert.
+    assert upload(client, "DWH__Sales_Tweezerman_KVNL_wk31-correctie.xlsx",
+                  kv({"202631": (12, 999.0)}))["status"] == "ingelezen"
+    serie = client.get("/api/kruidvat/dashboard").json()["trend"]["series"]["omzet"]["2026"]
+    assert serie["31"] == pytest.approx(999.0), "week 31 moet bijgewerkt zijn"
+    assert serie["30"] == pytest.approx(130.0), "week 30 mag niet veranderen"
+    assert serie["32"] == pytest.approx(182.0), "week 32 mag niet veranderen"
+
+    # 4. Artikelanalyse volgt dezelfde dataset.
+    art = client.get("/api/kruidvat/artikelen").json()
+    assert art["available"] and len(art["artikelen"]) == 1
+    assert art["artikelen"][0]["totaal_ytd"]["omzet"] == pytest.approx(130.0 + 999.0 + 182.0)
+
+
+def test_correction_for_one_brand_leaves_other_brands_untouched(client):
+    """De gevaarlijkste variant: een losse levering per merk voor dezelfde
+    week mag het andere merk niet wissen én niet dubbel tellen."""
+    import seed
+
+    def kv(brand, gtin, sku, week, vol, omzet):
+        return seed.make_dwh_xlsx([{
+            "sku": sku, "gtin": gtin, "desc": f"{brand} artikel",
+            "brand": brand, "weeks": {week: (vol, omzet)}}])
+
+    assert upload(client, "DWH__Sales_Tweezerman_KVNL_a.xlsx",
+                  kv("TWEEZERMAN", "4049469072773", "31210001", "202632", 10, 100.0))["status"] == "ingelezen"
+    assert upload(client, "DWH__Sales_Alessandro_KVNL_b.xlsx",
+                  kv("ALESSANDRO", "4064089040111", "31210003", "202632", 5, 50.0))["status"] == "ingelezen"
+
+    per_merk = {b["merk"]: b["waarde"] for b in
+                client.get("/api/kruidvat/dashboard").json()["kpi"]["omzet"]["breakdown"]}
+    assert per_merk == pytest.approx({"TWEEZERMAN": 100.0, "ALESSANDRO": 50.0})
+
+    # Correctie op alleen TWEEZERMAN: ALESSANDRO blijft ongewijzigd staan.
+    assert upload(client, "DWH__Sales_Tweezerman_KVNL_a-correctie.xlsx",
+                  kv("TWEEZERMAN", "4049469072773", "31210001", "202632", 10, 300.0))["status"] == "ingelezen"
+    per_merk = {b["merk"]: b["waarde"] for b in
+                client.get("/api/kruidvat/dashboard").json()["kpi"]["omzet"]["breakdown"]}
+    assert per_merk == pytest.approx({"TWEEZERMAN": 300.0, "ALESSANDRO": 50.0})

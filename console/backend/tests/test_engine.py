@@ -394,3 +394,32 @@ def test_manual_store_estate_is_not_counted_once_per_brand(conn):
     assert result["kpi"]["omzet_per_winkel"]["winkels"] == 530
     assert result["kpi"]["omzet_per_winkel"]["waarde"] == 10.0
     assert "SCHATTING" in result["labels"]
+
+
+def test_console_kruidvat_parser_matches_streamlit_app(tmp_path):
+    """De console gebruikt dezelfde Kruidvat-parser als de Streamlit-app.
+    Deze test vergelijkt beide op een echt bestand, zodat de twee kopieën
+    niet ongemerkt uit elkaar kunnen lopen."""
+    import importlib.util
+    import io
+
+    sample = Path("/root/.claude/uploads/54377bab-ac94-5cbf-8750-c3a4d90899e0/"
+                  "aa516215-DWH__Sales_volume__sales_value_per_week_per_article_"
+                  "Alessendro_Depend_KVNL_5696_1175350483788269736.xlsx")
+    if not sample.exists():
+        pytest.skip("echt sample-bestand niet aanwezig")
+
+    app_parsers = BASE.parent / "app" / "parsers"
+    sys.path.insert(0, str(app_parsers.parent))
+    spec = importlib.util.spec_from_file_location("app_kruidvat", app_parsers / "kruidvat.py")
+    app_parser = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(app_parser)
+
+    from engine import kruidvat_dwh
+    content = sample.read_bytes()
+    a = app_parser.parse_workbook(io.BytesIO(content), sample.name)
+    b = kruidvat_dwh.parse_workbook(io.BytesIO(content), sample.name)
+
+    assert a.facts == b.facts
+    assert a.items == b.items
+    assert (a.brand, a.country, a.banner) == (b.brand, b.country, b.banner)

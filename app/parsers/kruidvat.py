@@ -18,6 +18,7 @@ Real export format (confirmed against sample files):
 
 from __future__ import annotations
 
+import math
 import re
 
 import openpyxl
@@ -165,13 +166,22 @@ def _to_number(raw):
     this, a text cell (e.g. 'n/a' or a stray '-') would flow straight into
     the sales_volume/sales_value REAL columns as a string — SQLite stores it
     happily, and pandas aggregations over the column then misbehave."""
-    if raw is None:
+    if raw is None or isinstance(raw, bool):
         return None
     if isinstance(raw, (int, float)):
-        return float(raw)
-    s = str(raw).strip().replace(",", ".")
+        number = float(raw)
+        return number if math.isfinite(number) else None
+    s = (str(raw).strip().replace("\u20ac", "").replace("\u00a0", "")
+         .replace("\u202f", "").replace(" ", "").replace("'", ""))
+    if "," in s and "." in s:
+        decimal = "," if s.rfind(",") > s.rfind(".") else "."
+        thousands = "." if decimal == "," else ","
+        s = s.replace(thousands, "").replace(decimal, ".")
+    elif "," in s:
+        s = s.replace(",", ".")
     try:
-        return float(s)
+        number = float(s)
+        return number if math.isfinite(number) else None
     except ValueError:
         return None
 

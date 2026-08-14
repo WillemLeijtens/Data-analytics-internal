@@ -73,7 +73,11 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
                 <span className={`status-label ${accent ? "need" : ""}`}>{label}</span>
                 <span className="mono">{r.filename}</span>
                 <span className="sub">{r.retailer_id ?? "retailer onbekend"} · {r.rows ?? 0} rijen</span>
-                {r.detail && <span className="sub" style={{ marginLeft: "auto" }}>{r.detail}</span>}
+                {r.detail && (
+                  <span className="sub" style={{ marginLeft: "auto", maxWidth: "48%", textAlign: "right" }}>
+                    {r.status === "error" ? r.detail : `Let op: ${r.detail}`}
+                  </span>
+                )}
               </div>
             );
           })}
@@ -92,7 +96,12 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
                 <td>{r.profiel_versie ? `v${r.profiel_versie}` : "—"}</td>
                 <td>{r.periode ?? "—"}</td>
                 <td>{r.row_count ?? "—"}</td>
-                <td><span className={`status-label ${accent ? "need" : ""}`}>{label}</span></td>
+                <td>
+                  <span className={`status-label ${accent ? "need" : ""}`}>{label}</span>
+                  {r.status !== "error" && r.error_detail && (
+                    <span className="status-label need" style={{ marginLeft: 6 }}>LET OP</span>
+                  )}
+                </td>
                 <td>
                   {r.status === "profiel_nodig"
                     ? ctx.retailer === "alle"
