@@ -113,11 +113,10 @@ def test_full_parser_flow(client):
     r = client.post("/api/parser/douglas/profielen", json={"definition": d, "status": "live"})
     assert r.status_code == 200 and r.json()["status"] == "live"
 
-    # Profile is stored as a new version next to the handoff concept
+    # Douglas heeft geen meegeleverd profiel: dit is het eerste, v1 live.
     profs = [p for p in client.get("/api/parser/profielen").json()
              if p["retailer_id"] == "douglas"]
-    assert [p["status"] for p in profs] == ["live", "concept"]
-    assert profs[0]["version"] == 2
+    assert [(p["version"], p["status"]) for p in profs] == [(1, "live")]
 
     # Publishing live without a period column must be refused
     d_bad = {**d, "period": {"type": "week", "source_column": "", "format": "yyyy-Www"}}

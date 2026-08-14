@@ -68,10 +68,26 @@ zouden breken. `sslip.io` resolvet elk voorvoegsel, dus dit werkt zonder
 DNS-registratie; Caddy haalt automatisch een certificaat op. Andere
 hostnaam? Zet `CONSOLE_ADDRESS` in `.env`.
 
-Bij de **eerste start** laadt de console automatisch de vier parser-profielen,
-standaardinstellingen en contractdocumenten (`bootstrap()`) — nooit
-verkoopcijfers, zodat er geen demodata voor echte cijfers aangezien kan
-worden. Demodata erbij: `make seed` (of `docker compose exec console python seed.py`).
+Bij de **eerste start** laadt de console alleen de parser-profielen voor de
+retailers waarvan het aanleverformaat bekend is (Kruidvat DWH, ICI Paris XL
+maandrapport). Verder is een verse installatie **leeg**: geen winkelaantallen,
+targets, mailregels, SharePoint-koppeling of contractdocumenten. Dat is
+bewust — een verzonnen winkelaantal of rotatietarget voedt echte
+berekeningen (omzet per winkel, delist-advies) en levert dan geloofwaardige
+maar onjuiste cijfers.
+
+Demodata (verzonnen instellingen + drie jaar verkoopcijfers) is een
+expliciete actie: `make seed`, of in de container
+`docker compose exec console python seed.py`.
+
+Staat er nog demodata in een bestaande installatie, dan haalt dit script hem
+eruit — alleen rijen die exact met de demo-waarden overeenkomen, dus eigen
+aanpassingen en echte imports blijven staan:
+
+```bash
+docker compose exec console python cleanup_demo.py          # toon wat er weg zou gaan
+docker compose exec console python cleanup_demo.py --doen   # opruimen
+```
 
 ## Stack & motivatie
 

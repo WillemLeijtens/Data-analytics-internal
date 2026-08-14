@@ -22,6 +22,10 @@ from engine.periods import PeriodError, parse_period, period_number, period_year
 from engine.profile import Profile, capabilities, missing_required
 
 BASE = Path(__file__).resolve().parents[2]
+# Profieldefinities uit het ontwerppakket: fictieve formaten, alleen nog
+# in gebruik als testmateriaal voor de mapping-logica — ze worden bewust
+# niet meer met de app meegeleverd.
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 @pytest.fixture()
@@ -35,7 +39,7 @@ def conn(tmp_path, monkeypatch):
 
 
 def load_profile(name: str, status=None) -> Profile:
-    d = json.loads((BASE / "profiles" / name).read_text())
+    d = json.loads((FIXTURES / name).read_text())
     return Profile(id=1, retailer_id=d["retailer_id"], version=d["version"],
                    status=status or d["status"], definition=d)
 

@@ -205,8 +205,6 @@ def build_seed_files() -> list[tuple[str, bytes]]:
     files.append(("Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__demo.xlsx",
                   make_ici_xlsx(_ici_demo_blocks(["202607"]))))
 
-    files.append(("etos_sales_wk32.csv", (SEED / "etos_sales_wk32.csv").read_bytes()))
-
     h, d = _read_standin(SEED / "douglas_Abverkauf_KW32.csv")
     files.append(("Douglas_Abverkauf_KW32.xlsx",
                   _to_xlsx(h, d, "Sheet1", 1,
@@ -214,7 +212,12 @@ def build_seed_files() -> list[tuple[str, bytes]]:
     return files
 
 
-DEFAULT_SETTINGS = {
+# VERZONNEN demo-instellingen. Bewust NIET onderdeel van bootstrap(): een
+# verzonnen winkelaantal of rotatietarget voedt echte berekeningen (omzet per
+# winkel, delist-advies) en levert dan geloofwaardige maar onjuiste cijfers.
+# Een verse installatie start met lege instellingen die de gebruiker zelf
+# invult; deze waarden komen alleen mee met `make seed` (demo).
+DEMO_SETTINGS = {
     "kruidvat": {
         "winkels_targets": [
             ("TWEEZERMAN", "NL", "KV", 912, 45.0),
@@ -223,12 +226,6 @@ DEFAULT_SETTINGS = {
         ],
         "rotatie": [("TWEEZERMAN", 8.0), ("ALESSANDRO", 6.0)],
         "mail": [("DWH weeklevering", "rapportage@kruidvat.nl", "DWH_sellout_*.xlsx")],
-    },
-    "etos": {
-        "winkels_targets": [("TWEEZERMAN", "NL", None, 530, 35.0),
-                            ("ALESSANDRO", "NL", None, 530, 25.0)],
-        "rotatie": [("TWEEZERMAN", 6.0), ("ALESSANDRO", 5.0)],
-        "mail": [("Etos salesreport", "data@etos.nl", "etos_sales_wk*.csv")],
     },
     "ici-paris-xl": {
         # aantal_winkels NULL: comes from the facts (readonly in the UI)
@@ -265,13 +262,6 @@ def build_history_files() -> list[tuple[str, bytes]]:
         files.append((f"DWH__Sales_volume__sales_Tweezerman_KVNL_{year}_demo.xlsx",
                       make_dwh_xlsx(_kv_demo_rows(week_labels, factor=factor))))
 
-        etos_lines = ["Year/Week;GTIN;Description;Supplier brand;Sales units;Sales value;Region;Supplier code"]
-        for wk in weeks:
-            for ean, naam, prijs in kv_items:
-                vol = max(1, round(wave(400, year, wk, 0.2)))
-                promo = 0.85 if (year == 2026 and wk in (12, 13)) else 1.0
-                etos_lines.append(f"{year}-W{wk:02d};{ean};{naam};Tweezerman;{vol};{vol * prijs * promo:.2f};Noord;SUP-1")
-        files.append((f"etos_sales_wk{year}.csv", "\n".join(etos_lines).encode()))
 
         month_labels = [f"{year}{m:02d}" for m in range(1, 8 if year == 2026 else 13)]
         files.append((f"Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__{year}.xlsx",
@@ -280,14 +270,12 @@ def build_history_files() -> list[tuple[str, bytes]]:
 
 
 def bootstrap():
-    """Everything a fresh install needs to be USABLE: the parser profiles,
-    default settings and the interpreted contract documents — but no sales
-    facts. Idempotent; runs automatically on first container start so the
-    console never boots without profiles. Demo sales data is deliberately
-    separate (see seed()), so nobody mistakes it for real numbers."""
+    """Wat een verse installatie nodig heeft om te WERKEN: alleen de
+    parser-profielen. Geen instellingen, geen contracten, geen cijfers —
+    alles wat verzonnen is, hoort in seed() (demo). Idempotent; draait
+    automatisch bij de eerste containerstart."""
     db.init_db()
     with db.get_conn() as conn:
-        # Profiles verbatim from the handoff (version/status as delivered).
         for path in sorted(PROFILES.glob("*.json")):
             d = json.loads(path.read_text())
             conn.execute(
@@ -296,7 +284,11 @@ def bootstrap():
                 (d["retailer_id"], d["version"], d["status"],
                  json.dumps(d, ensure_ascii=False), d["status"]))
 
-        for retailer, cfg in DEFAULT_SETTINGS.items():
+
+def _load_demo_settings():
+    """Verzonnen instellingen + contractdocumenten — alleen voor de demo."""
+    with db.get_conn() as conn:
+        for retailer, cfg in DEMO_SETTINGS.items():
             conn.executemany(
                 "INSERT OR IGNORE INTO retailer_settings (retailer_id, merk, land, banner, "
                 "aantal_winkels, target_per_winkel) VALUES (?,?,?,?,?,?)",
@@ -322,8 +314,10 @@ def bootstrap():
 
 
 def seed():
-    """bootstrap() + demo sales data through the REAL import pipeline."""
+    """bootstrap() + verzonnen instellingen + demodata door de ECHTE
+    import-pipeline. Uitsluitend voor demonstratie."""
     bootstrap()
+    _load_demo_settings()
     with db.get_conn() as conn:
         results = [importer.run_import(conn, name, content)
                    for name, content in build_seed_files()]
@@ -337,7 +331,6 @@ def seed():
     statuses = {r["filename"]: r["status"] for r in results}
     assert statuses["DWH__Sales_volume__sales_Tweezerman_KVNL_32_demo.xlsx"] == "ingelezen", statuses
     assert statuses["Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__demo.xlsx"] == "ingelezen", statuses
-    assert statuses["etos_sales_wk32.csv"] == "test", statuses
     assert statuses["Douglas_Abverkauf_KW32.xlsx"] == "profiel_nodig", statuses
     print("[seed] klaar — alle verwachte statussen kloppen")
 

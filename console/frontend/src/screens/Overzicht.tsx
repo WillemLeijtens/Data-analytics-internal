@@ -8,12 +8,18 @@ const SIG_BORDER: Record<Signaal, string> = {
 const SIG_TEXT: Record<Signaal, string> = {
   green: "sig-green", orange: "sig-orange", red: "sig-red", grey: "sig-grey",
 };
-// Compass positions inside the 680x680 radar: kruidvat top, etos right,
-// ici bottom, douglas left (README §Signalenradar).
-const POS = [
-  { left: 274, top: 46 }, { left: 500, top: 274 },
-  { left: 274, top: 500 }, { left: 48, top: 274 },
-];
+// Tegels op een cirkel in het 680x680-vlak. Vier retailers landen op de
+// kompaspunten uit het ontwerp (boven, rechts, onder, links); bij meer of
+// minder retailers verdeelt de cirkel zich vanzelf mee.
+const RADAR = { size: 680, tile: 132, radius: 262 };
+function tilePos(i: number, n: number) {
+  const angle = -Math.PI / 2 + (i * 2 * Math.PI) / Math.max(1, n);
+  const c = RADAR.size / 2 - RADAR.tile / 2;
+  return {
+    left: Math.round(c + RADAR.radius * Math.cos(angle)),
+    top: Math.round(c + RADAR.radius * Math.sin(angle)),
+  };
+}
 
 function CapChip({ on, label }: { on: boolean; label: string }) {
   return <span className={`chip static ${on ? "" : "off"}`}>{label}</span>;
@@ -72,11 +78,11 @@ export default function Overzicht({ ctx }: { ctx: ShellCtx }) {
             ))}
           </svg>
           <div className="radar-sweep" />
-          {data.retailers.slice(0, 4).map((c, i) => {
+          {data.retailers.map((c, i) => {
             const s = c.signalen;
             return (
               <div key={c.id} className={`radar-tile ${s.composiet === "red" ? "pulse" : ""}`}
-                style={{ ...POS[i], borderTopColor: SIG_BORDER[s.composiet] }}
+                style={{ ...tilePos(i, data.retailers.length), borderTopColor: SIG_BORDER[s.composiet] }}
                 onClick={() => openRetailer(c)}>
                 <h4>{c.naam}</h4>
                 <div className="meta">

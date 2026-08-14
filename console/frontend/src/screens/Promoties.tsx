@@ -88,7 +88,7 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
           <h2>Omzeteffect per promotie</h2>
           <div className="card">
             <div className="seg" style={{ marginBottom: 12 }}>
-              {["ALLE", "2024", "2025", "2026"].map((j) => (
+              {["ALLE", ...Array.from(new Set((data.uplift as any[]).map((u) => String(u.jaar)))).sort()].map((j) => (
                 <button key={j} className={jaar === j ? "on" : ""} onClick={() => setJaar(j)}>{j}</button>
               ))}
             </div>

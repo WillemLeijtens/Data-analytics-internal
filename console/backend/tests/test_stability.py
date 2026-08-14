@@ -157,8 +157,14 @@ def test_spa_never_escapes_static_dir(client_static):
 # ------------------------------------------------------- malformed payloads
 
 def test_malformed_settings_is_422_and_untouched(client):
+    # Een verse installatie start met LEGE instellingen (geen verzonnen
+    # winkelaantallen); vul er eerst iets echts in om te kunnen bewijzen dat
+    # een foute payload dat niet aantast.
+    client.put("/api/kruidvat/instellingen", json={"winkels_targets": [
+        {"merk": "TWEEZERMAN", "land": "NL", "banner": "KV",
+         "aantal_winkels": 900, "target_per_winkel": 45.0}]})
     before = client.get("/api/kruidvat/instellingen").json()["winkels_targets"]
-    assert before  # bootstrap defaults present
+    assert before
     r = client.put("/api/kruidvat/instellingen",
                    json={"winkels_targets": [{"land": "NL"}]})  # merk ontbreekt
     assert r.status_code == 422
@@ -184,10 +190,9 @@ def test_test_endpoint_uses_supplied_draft(client):
                     files={"file": ("Douglas_Abverkauf_KW32.xlsx", f)},
                     data={"definition": _json.dumps(d)}).json()
     assert r["ok"] and r["rijen"] == 2
-    # Without the draft: the saved profile is the handoff CONCEPT (unmapped)
-    r = client.post("/api/parser/douglas/test",
-                    files={"file": ("Douglas_Abverkauf_KW32.xlsx", f)}).json()
-    assert not r["ok"]
+    # Zonder draft en zonder opgeslagen profiel: nette 404, geen crash.
+    assert client.post("/api/parser/douglas/test",
+                       files={"file": ("Douglas_Abverkauf_KW32.xlsx", f)}).status_code == 404
 
 
 # ------------------------------------------------------- year boundary
@@ -227,3 +232,31 @@ def test_rotation_uses_current_year_only(client):
     # Current year: 20 stuks / 2 weken / 1 winkel = 10 — NOT diluted by 2025.
     assert art["rotatie"] == pytest.approx(10.0)
     assert art["score"] == 125
+
+
+# ------------------------------------------------------- demo-opruiming
+
+def test_cleanup_demo_keeps_real_imports_and_own_settings(client, tmp_path, monkeypatch):
+    """cleanup_demo verwijdert alleen ongewijzigde demo-waarden: echte
+    imports en zelf ingevulde instellingen blijven staan."""
+    import seed as seed_mod
+    import cleanup_demo
+
+    seed_mod._load_demo_settings()                     # verzonnen instellingen
+    upload(client, "DWH__Sales_Tweezerman_KVNL_demo.xlsx",
+           seed_mod.make_dwh_xlsx(seed_mod._kv_demo_rows(["202601"])))   # demo-import
+    echt = upload(client, "DWH__Sales_volume__sales_Tweezerman_KVNL_9999.xlsx",
+                  seed_mod.make_dwh_xlsx(seed_mod._kv_demo_rows(["202602"])))
+    assert echt["status"] == "ingelezen"
+    # eigen instelling die NIET met de demo-waarde overeenkomt
+    client.put("/api/kruidvat/instellingen", json={"rotatie_targets": [
+        {"merk": "TWEEZERMAN", "stuks_per_winkel_per_week": 99.0}]})
+
+    monkeypatch.setattr(sys, "argv", ["cleanup_demo.py", "--doen"])
+    cleanup_demo.main()
+
+    overgebleven = [i["filename"] for i in client.get("/api/imports").json()]
+    assert overgebleven == ["DWH__Sales_volume__sales_Tweezerman_KVNL_9999.xlsx"]
+    inst = client.get("/api/kruidvat/instellingen").json()
+    assert [t["stuks_per_winkel_per_week"] for t in inst["rotatie_targets"]] == [99.0]
+    assert inst["winkels_targets"] == []      # demo-winkelaantallen weg
