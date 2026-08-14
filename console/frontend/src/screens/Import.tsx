@@ -43,8 +43,10 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
   return (
     <>
       <h1>Import{ctx.card ? ` — ${ctx.card.naam}` : ""}</h1>
-      <p className="sub">De import herkent de retailer aan bestandsnaam, werkblad en kolomkoppen
-        en kiest zelf het juiste parser-profiel. Onbekend bestand? Dan vraagt de Parser één keer om een mapping.</p>
+      <p className="sub">De import herkent de retailer aan de inhoud en indeling van het bestand
+        en kiest zelf de juiste parser. Staat er <b>PROFIEL NODIG</b>, dan bestaat er voor dat
+        formaat nog geen parser — die wordt per retailer in het project gebouwd op basis van een
+        echt voorbeeldbestand.</p>
 
       {error && (
         <div className="level-strip" style={{ borderLeft: "3px solid oklch(0.55 0.18 27)" }}>
@@ -106,7 +108,7 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
                   {r.status === "profiel_nodig"
                     ? ctx.retailer === "alle"
                       ? <span className="sub">Kies bovenaan eerst de juiste retailer</span>
-                      : <a style={{ cursor: "pointer" }} onClick={() => ctx.go(ctx.retailer, "parser")}>Kolommen mappen</a>
+                      : <a style={{ cursor: "pointer" }} onClick={() => ctx.go(ctx.retailer, "parser")}>Nog geen parser — bekijken</a>
                     : r.error_detail
                       ? <a style={{ cursor: "pointer" }} onClick={() => {
                         try { setDetail(JSON.parse(r.error_detail)); }

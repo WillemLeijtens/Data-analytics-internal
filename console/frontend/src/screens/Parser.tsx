@@ -108,13 +108,34 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
   if (!sel || !draft) {
     return (<>
       <h1>Parser — {ctx.card?.naam}</h1>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="eyebrow">Nog geen parser voor deze retailer</div>
+        <p className="sub" style={{ marginTop: 10 }}>
+          De retailers die nu werken — Kruidvat en ICI Paris XL — hebben een
+          <b> ingebouwde parser</b>, gebouwd tegen hun echte aanleverbestand.
+          Die worden per retailer in het Claude&nbsp;Code-project gemaakt en
+          herkennen tabbladen, kolommen en totalen automatisch.
+        </p>
+        <p className="sub">
+          <b>Wat jij doet voor een nieuwe retailer:</b> deel een echt
+          voorbeeldbestand. Zodra de parser meekomt met een update, hoef je
+          hier niets in te stellen — je uploadt gewoon bij Import.
+        </p>
+      </div>
+
       <div className="card empty-card">
-        <p className="sub">Nog geen profiel voor deze retailer.</p>
+        <div className="eyebrow">Of: zelf kolommen mappen</div>
+        <p className="sub" style={{ maxWidth: 460, margin: "10px auto" }}>
+          Alleen zinvol bij een <b>eenvoudig, plat bestand</b>: één kopregel met
+          kolommen als week, merk, aantal en omzet. Bestanden met een
+          metadatablok of maanden/weken naast elkaar — zoals die van Kruidvat en
+          ICI — zijn zo niet te beschrijven.
+        </p>
         {voorstel?.beschikbaar && (
           <p className="sub">Laatst onbekende import: <span className="mono">{voorstel.filename}</span> —
             de kolommen daaruit worden alvast ingevuld.</p>
         )}
-        <button className="btn" onClick={async () => {
+        <button className="btn ghost" onClick={async () => {
           await apiSend(`/parser/${ctx.retailer}/profielen`, "POST", {
             status: "concept",
             definition: voorstel?.beschikbaar ? voorstel.definition : {
@@ -124,7 +145,7 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
             },
           });
           refresh();
-        }}>Nieuw profiel</button>
+        }}>Zelf een mapping opzetten</button>
       </div>
     </>);
   }

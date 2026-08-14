@@ -49,20 +49,34 @@ export function LevelStrip({ labels, uitleg, retailer }:
   );
 }
 
+/** Melding voor een retailer waarvoor nog geen parser bestaat. Parsers
+ *  worden per retailer in het project gebouwd op basis van een echt
+ *  voorbeeldbestand — niet in dit scherm samengeklikt. */
 export function EmptyProfileCard({ retailer, go }:
   { retailer: string; go: (r: string, s: string) => void }) {
   return (
     <div className="card empty-card">
-      <div className="eyebrow">Parser profiel ontbreekt</div>
+      <div className="eyebrow">Nog geen parser</div>
       <h2 style={{ marginTop: 10 }}>Deze retailer is nog niet aangesloten</h2>
-      <p className="sub" style={{ maxWidth: 420, margin: "10px auto 22px" }}>
-        Er is nog geen gepubliceerd parser-profiel. Stel de kolom-mapping in en
-        publiceer het profiel; daarna verschijnen alle analyses vanzelf.
+      <p className="sub" style={{ maxWidth: 470, margin: "10px auto 6px" }}>
+        Voor deze retailer is nog geen parser gebouwd. Parsers worden per
+        retailer in het Claude&nbsp;Code-project gemaakt, op basis van een
+        écht aanleverbestand — pas dan is zeker dat tabbladen, kolommen en
+        totalen kloppen.
+      </p>
+      <p className="sub" style={{ maxWidth: 470, margin: "0 auto 22px" }}>
+        <b>Wat jij doet:</b> deel een voorbeeldbestand van deze retailer.
+        Zodra de parser klaar is, importeer je hier gewoon je bestanden en
+        verschijnen alle analyses vanzelf.
       </p>
       <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
-        <button className="btn" onClick={() => go(retailer, "parser")}>Parser instellen</button>
-        <button className="btn ghost" onClick={() => go(retailer, "import")}>Voorbeeldbestand uploaden</button>
+        <button className="btn" onClick={() => go(retailer, "import")}>Bestand uploaden</button>
+        <button className="btn ghost" onClick={() => go(retailer, "parser")}>Kolommen zelf mappen</button>
       </div>
+      <p className="sub" style={{ marginTop: 14, fontSize: 11 }}>
+        Zelf mappen werkt alleen bij een eenvoudig, plat bestand — één kopregel
+        met kolommen zoals week, merk, aantal en omzet.
+      </p>
     </div>
   );
 }
