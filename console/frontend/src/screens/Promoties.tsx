@@ -125,10 +125,21 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
 
         <div className="card">
           <div className="eyebrow">Hoe de suggestie werkt</div>
-          <p className="sub">De stukprijs per {pw.toLowerCase()} is omzet gedeeld door volume, per merk
-            {data.capabilities.banner ? " per banner" : " per land"}.</p>
-          <p className="sub">Ligt de stukprijs {Math.round(data.drempel * 100)}% of meer onder de mediaan van de feed,
-            dan verschijnt een suggestie ("afgeprijsd, -x%"). Er wordt nooit automatisch aangevinkt — jij bevestigt.</p>
+          {data.capabilities.volume === false ? (
+            <>
+              <p className="sub">Deze retailer levert <b>geen volumedata</b>, dus een stukprijs (omzet
+                gedeeld door volume) en daarmee een automatische suggestie zijn niet mogelijk.</p>
+              <p className="sub">Handmatig actieperiodes aanvinken werkt wél: de tabel toont elke
+                {" "}{pw.toLowerCase()} per merk, en jij markeert de actieperiodes.</p>
+            </>
+          ) : (
+            <>
+              <p className="sub">De stukprijs per {pw.toLowerCase()} is omzet gedeeld door volume, per merk
+                {data.capabilities.banner ? " per banner" : " per land"}.</p>
+              <p className="sub">Ligt de stukprijs {Math.round(data.drempel * 100)}% of meer onder de mediaan van de feed,
+                dan verschijnt een suggestie ("afgeprijsd, -x%"). Er wordt nooit automatisch aangevinkt — jij bevestigt.</p>
+            </>
+          )}
           <p className="sub">De uplift vergelijkt de omzet in de actieperiode met het gemiddelde van de periodes
             zónder actie. Bevestigde actieperiodes blijven buiten die basislijn.</p>
         </div>

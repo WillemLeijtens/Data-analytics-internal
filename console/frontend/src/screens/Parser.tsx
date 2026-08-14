@@ -2,8 +2,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiSend } from "../api";
 import { ShellCtx } from "../App";
 
-const CANONICAL = ["periode", "merk", "artikel_ean", "artikel_naam", "winkel_id",
-  "winkel_naam", "land", "banner", "volume", "omzet"];
+const CANONICAL: [string, string][] = [
+  ["merk", "Merk"],
+  ["artikel_ean", "Artikelnummer (EAN)"],
+  ["artikel_naam", "Artikelnaam"],
+  ["winkel_id", "Winkel-ID"],
+  ["winkel_naam", "Winkelnaam"],
+  ["land", "Land"],
+  ["banner", "Banner (formule)"],
+  ["volume", "Volume (stuks)"],
+  ["omzet", "Omzet (€)"],
+];
 
 const ANALYSES: [string, (c: any) => string][] = [
   ["Dashboard", (c) => (c.winkel ? "VOLLEDIG" : "SCHATTING")],
@@ -55,9 +64,10 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
   const isBuiltin = !!draft?.builtin;
   const caps = useMemo(() => {
     if (!draft) return null;
-    if (draft.builtin === "kruidvat_dwh")
-      return { periode: "week", merk: true, artikel: true, winkel: false,
-        banner: true, land: true, volume: true, omzet: true };
+    if (draft.builtin && sel?.capabilities)
+      // Ingebouwde parser: capabilities liggen bij de parser vast en komen
+      // van de server mee — de mapping zegt hier niets.
+      return { ...sel.capabilities, omzet: true };
     const t = new Set([
       ...draft.mapping.filter((m: any) => m.target).map((m: any) => m.target),
       ...Object.keys(draft.constants ?? {}),
@@ -244,8 +254,8 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
                             setDraft({ ...draft, mapping, period });
                           }}>
                           <option value="">{m.note ? "KIES VELD" : "bewust ongebruikt"}</option>
-                          <option value="periode">periode</option>
-                          {CANONICAL.filter((c) => c !== "periode").map((c) => <option key={c} value={c}>{c}</option>)}
+                          <option value="periode">Periode (week/maand)</option>
+                          {CANONICAL.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
                         </select>
                       </td>
                       <td className="mono sub">{m.voorbeeld ?? ""}</td>

@@ -55,7 +55,7 @@ def insert_profile(conn, profile: Profile) -> Profile:
 def test_capability_derivation_kruidvat():
     caps = capabilities(load_profile("kruidvat.json").definition)
     assert caps == {"periode": "week", "merk": True, "artikel": True,
-                    "winkel": True, "banner": True, "land": True}
+                    "winkel": True, "banner": True, "land": True, "volume": True}
 
 
 def test_capability_derivation_ici():

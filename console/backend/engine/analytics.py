@@ -239,17 +239,28 @@ def promotions(conn, retailer_id: str) -> dict:
                      (retailer_id,))}
 
     suggestions = []
-    for scope, prices in unit_prices.items():
-        med = median(prices.values())
-        for periode, price in sorted(prices.items(), key=lambda kv: sort_key(kv[0])):
-            drop = (med - price) / med if med else 0
+    if caps.get("volume", True):
+        for scope, prices in unit_prices.items():
+            med = median(prices.values())
+            for periode, price in sorted(prices.items(), key=lambda kv: sort_key(kv[0])):
+                drop = (med - price) / med if med else 0
+                merk, land, banner = scope
+                is_confirmed = (merk, land, banner, periode) in confirmed
+                if drop >= threshold or is_confirmed:
+                    suggestions.append({
+                        "merk": merk, "land": land, "banner": banner, "periode": periode,
+                        "suggestie": f"afgeprijsd, -{round(drop * 100)}%" if drop >= threshold else None,
+                        "bevestigd": is_confirmed})
+    else:
+        # Zonder volume bestaat er geen stukprijs en dus geen automatische
+        # suggestie — maar handmatig actieperiodes markeren moet blijven
+        # werken, dus elke periode per scope staat in de tabel.
+        for scope, periode in sorted(per_scope_period, key=lambda k: (k[0], sort_key(k[1]))):
             merk, land, banner = scope
-            is_confirmed = (merk, land, banner, periode) in confirmed
-            if drop >= threshold or is_confirmed:
-                suggestions.append({
-                    "merk": merk, "land": land, "banner": banner, "periode": periode,
-                    "suggestie": f"afgeprijsd, -{round(drop * 100)}%" if drop >= threshold else None,
-                    "bevestigd": is_confirmed})
+            suggestions.append({
+                "merk": merk, "land": land, "banner": banner, "periode": periode,
+                "suggestie": None,
+                "bevestigd": (merk, land, banner, periode) in confirmed})
 
     # Uplift per confirmed promo: promo period vs mean of NON-promo periods
     # in the same scope. Confirmed periods stay out of the baseline, so

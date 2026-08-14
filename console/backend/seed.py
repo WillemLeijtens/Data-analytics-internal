@@ -131,16 +131,79 @@ def _kv_demo_rows(weeks: list[str], factor=1.0) -> list[dict]:
     return out
 
 
+def make_ici_xlsx(blocks: dict[str, dict[str, dict[str, float]]]) -> bytes:
+    """Genereer een werkboek in het ECHTE ICI-maandrapportformaat: een
+    'Stores'-tab met merkblokken (Store/Address-kop + YYYYMM-kolommen) en
+    een 'Brands'-tab met maandtotalen per merk voor de reconciliatie.
+
+    blocks: {merk: {winkel_id: {"202501": omzet, ...}}}
+    """
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Stores"
+    months = sorted({m for stores in blocks.values() for w in stores.values() for m in w})
+    r = 1
+    for merk, stores in blocks.items():
+        r += 1
+        ws.cell(row=r, column=2, value=merk)
+        r += 2
+        ws.cell(row=r, column=3, value="Store")
+        ws.cell(row=r, column=4, value="Address")
+        for j, m in enumerate(months):
+            ws.cell(row=r, column=5 + j, value=m)
+        ws.cell(row=r, column=5 + len(months), value="Total")
+        for store, per_month in stores.items():
+            r += 1
+            ws.cell(row=r, column=3, value=int(store))
+            ws.cell(row=r, column=4, value=f"DEMOSTAD - winkel {store}")
+            for j, m in enumerate(months):
+                if m in per_month:
+                    ws.cell(row=r, column=5 + j, value=per_month[m])
+            ws.cell(row=r, column=5 + len(months), value=round(sum(per_month.values()), 2))
+        r += 2
+
+    wsb = wb.create_sheet("Brands")
+    wsb.cell(row=2, column=2, value="Year")
+    wsb.cell(row=2, column=3, value="Category")
+    for m in range(1, 13):
+        wsb.cell(row=2, column=3 + m, value=f"{m:02d}")
+    rr = 3
+    years = sorted({m[:4] for m in months})
+    for year in years:
+        for merk, stores in blocks.items():
+            wsb.cell(row=rr, column=2, value=int(year))
+            wsb.cell(row=rr, column=3, value=merk)
+            for m in range(1, 13):
+                key = f"{year}{m:02d}"
+                total = round(sum(pm.get(key, 0) for pm in stores.values()), 2)
+                if total:
+                    wsb.cell(row=rr, column=3 + m, value=total)
+            rr += 1
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _ici_demo_blocks(months: list[str]) -> dict:
+    blocks: dict = {}
+    for merk, base in (("TWEEZERMAN", 60.0), ("DEPEND", 22.0)):
+        stores: dict = {}
+        for s, store in enumerate(("6051", "6053", "6054")):
+            stores[store] = {m: round(base + (s * 7 + i * 3) % 25, 2)
+                             for i, m in enumerate(months)}
+        blocks[merk] = stores
+    return blocks
+
+
 def build_seed_files() -> list[tuple[str, bytes]]:
     files = []
 
     files.append(("DWH__Sales_volume__sales_Tweezerman_KVNL_32_demo.xlsx",
                   make_dwh_xlsx(_kv_demo_rows(["202632"]))))
 
-    h, d = _read_standin(SEED / "ici_ICIP_ALL_MTH_07_2026.csv")
-    files.append(("ICIP_ALL_MTH_07_2026.xlsx",
-                  _to_xlsx(h, d, "Data by store", 3,
-                           {"Units": "int", "Net sales": "float"})))
+    files.append(("Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__demo.xlsx",
+                  make_ici_xlsx(_ici_demo_blocks(["202607"]))))
 
     files.append(("etos_sales_wk32.csv", (SEED / "etos_sales_wk32.csv").read_bytes()))
 
@@ -174,7 +237,7 @@ DEFAULT_SETTINGS = {
                             ("ALESSANDRO", "NL", None, None, 900.0),
                             ("ALESSANDRO", "BE", None, None, 900.0)],
         "rotatie": [],
-        "mail": [("ICI maandlevering", "reports@iciparisxl.be", "ICIP_*_MTH_*.xlsx")],
+        "mail": [("ICI maandlevering", "reports@iciparisxl.be", "*ICI_Paris*.xlsx")],
     },
 }
 
@@ -210,21 +273,9 @@ def build_history_files() -> list[tuple[str, bytes]]:
                 etos_lines.append(f"{year}-W{wk:02d};{ean};{naam};Tweezerman;{vol};{vol * prijs * promo:.2f};Noord;SUP-1")
         files.append((f"etos_sales_wk{year}.csv", "\n".join(etos_lines).encode()))
 
-        months = range(1, 8 if year == 2026 else 13)
-        ici_rows = []
-        for mnd in months:
-            for store, naam, land in (("BE-0142", "Antwerpen Meir", "BE"),
-                                      ("NL-0203", "Amsterdam Kalverstraat", "NL"),
-                                      ("BE-0166", "Luik Vinave", "BE")):
-                for merk, base in (("TWEEZERMAN", 60000), ("ALESSANDRO", 38000)):
-                    vol = max(1, round(wave(base / 17, year, mnd * 4)))
-                    ici_rows.append([f"{mnd:02d}-{year}", store, naam, land, merk,
-                                     str(vol), f"{vol * 17.5:.2f}".replace(".", ",")])
-        files.append((f"ICIP_ALL_MTH_{year}.xlsx",
-                      _to_xlsx(["Month", "Store code", "Store name", "Country", "Brand",
-                                "Units", "Net sales"],
-                               ici_rows, "Data by store", 3,
-                               {"Units": "int", "Net sales": "float"})))
+        month_labels = [f"{year}{m:02d}" for m in range(1, 8 if year == 2026 else 13)]
+        files.append((f"Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__{year}.xlsx",
+                      make_ici_xlsx(_ici_demo_blocks(month_labels))))
     return files
 
 
@@ -285,7 +336,7 @@ def seed():
     assert all(h["status"] in ("ingelezen", "test") for h in history), history
     statuses = {r["filename"]: r["status"] for r in results}
     assert statuses["DWH__Sales_volume__sales_Tweezerman_KVNL_32_demo.xlsx"] == "ingelezen", statuses
-    assert statuses["ICIP_ALL_MTH_07_2026.xlsx"] == "ingelezen", statuses
+    assert statuses["Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__demo.xlsx"] == "ingelezen", statuses
     assert statuses["etos_sales_wk32.csv"] == "test", statuses
     assert statuses["Douglas_Abverkauf_KW32.xlsx"] == "profiel_nodig", statuses
     print("[seed] klaar — alle verwachte statussen kloppen")

@@ -21,7 +21,11 @@ REQUIRED_ALWAYS = {"volume", "omzet"}
 # mapping; de capabilities liggen dan vast bij de parser.
 BUILTIN_CAPS = {
     "kruidvat_dwh": {"periode": "week", "merk": True, "artikel": True,
-                     "winkel": False, "banner": True, "land": True},
+                     "winkel": False, "banner": True, "land": True,
+                     "volume": True},
+    "ici_maandrapport": {"periode": "maand", "merk": True, "artikel": False,
+                         "winkel": True, "banner": False, "land": True,
+                         "volume": False},
 }
 
 
@@ -59,6 +63,9 @@ def capabilities(definition: dict) -> dict:
         "winkel": "winkel_id" in t,
         "banner": "banner" in t,
         "land": "land" in t,
+        # Volume is verplicht bij mapping-profielen, dus daar altijd True;
+        # de vlag bestaat voor ingebouwde parsers van feeds zonder volume.
+        "volume": "volume" in t,
     }
 
 

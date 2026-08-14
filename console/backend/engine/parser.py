@@ -204,9 +204,13 @@ def detect(filename: str, content: bytes, profiles: list[Profile]) -> Profile | 
 
 
 def _builtin_content_match(content: bytes, profile: Profile) -> bool:
-    """Structure probe for the DWH layout: a sheet with a 'SKU No.' header
-    AND the metadata labels ('Formula:'/'Country:') in its top rows."""
-    if profile.definition.get("builtin") != "kruidvat_dwh":
+    """Structure probes per builtin parser, so renamed files still land at
+    the right retailer."""
+    builtin = profile.definition.get("builtin")
+    if builtin == "ici_maandrapport":
+        from . import ici_maandrapport
+        return ici_maandrapport.content_matches(content)
+    if builtin != "kruidvat_dwh":
         return False
     try:
         from openpyxl import load_workbook
@@ -302,6 +306,12 @@ def parse_file(filename: str, content: bytes, profile: Profile) -> dict:
     builtin = d.get("builtin")
     if builtin == "kruidvat_dwh":
         return _parse_builtin_kruidvat(filename, content)
+    if builtin == "ici_maandrapport":
+        from . import ici_maandrapport
+        try:
+            return ici_maandrapport.parse_workbook(content)
+        except ValueError as e:
+            raise ParseError(str(e))
     if builtin:
         raise ParseError(f"onbekende ingebouwde parser {builtin!r}")
     det = d["detection"]

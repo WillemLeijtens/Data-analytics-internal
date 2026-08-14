@@ -64,6 +64,8 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
 
   const k = data.kpi, y = data.ytd;
   const filters = data.filters;
+  const hasVolume = data.capabilities?.volume !== false;
+  const effMetric = !hasVolume && metric === "volume" ? "omzet" : metric;
   return (
     <>
       <h1>Dashboard — {ctx.card?.naam}</h1>
@@ -83,8 +85,8 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       <div className="grid kpi">
         <KpiCard label="Omzet" tag={pWord.toUpperCase()} isEuro
           value={fmtEur(k.omzet.waarde)} breakdown={k.omzet.breakdown} />
-        <KpiCard label="Volume" tag={pWord.toUpperCase()}
-          value={fmtNum(k.volume.waarde)} breakdown={k.volume.breakdown} />
+        {hasVolume && <KpiCard label="Volume" tag={pWord.toUpperCase()}
+          value={fmtNum(k.volume.waarde)} breakdown={k.volume.breakdown} />}
         <KpiCard label="Omzet per winkel" tag={k.omzet_per_winkel.schatting ? "SCHATTING" : "WINKEL"}
           tagAccent={k.omzet_per_winkel.schatting}
           value={fmtEur(k.omzet_per_winkel.waarde)}
@@ -99,11 +101,11 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           <div className="kpi-value">{fmtEur(y.omzet.nu)}</div>
           <div className="kpi-sub">{y.jaar - 1}: {fmtEur(y.omzet.vorig)}</div>
         </div>
-        <div className="card">
+        {hasVolume && <div className="card">
           <div className="kpi-label">Volume YTD<DeltaTag pct={y.volume.delta_pct} /></div>
           <div className="kpi-value">{fmtNum(y.volume.nu)}</div>
           <div className="kpi-sub">{y.jaar - 1}: {fmtNum(y.volume.vorig)}</div>
-        </div>
+        </div>}
         <div className="card">
           <div className="kpi-label">Omzet / winkel YTD
             <span style={{ display: "inline-flex", gap: 6 }}>
@@ -117,17 +119,19 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       </div>
 
       <h2>
-        {metric === "per_winkel" ? "Omzet per winkel" : metric} per {pWord.toLowerCase()}, jaar op jaar
+        {effMetric === "per_winkel" ? "Omzet per winkel" : effMetric} per {pWord.toLowerCase()}, jaar op jaar
       </h2>
       <div className="seg" style={{ marginBottom: 14 }}>
-        <button className={metric === "omzet" ? "on" : ""} onClick={() => setMetric("omzet")}>Omzet</button>
-        <button className={metric === "volume" ? "on" : ""} onClick={() => setMetric("volume")}>Volume</button>
-        <button className={metric === "per_winkel" ? "on" : ""} disabled={!data.trend.series.per_winkel}
+        <button className={effMetric === "omzet" ? "on" : ""} onClick={() => setMetric("omzet")}>Omzet</button>
+        <button className={effMetric === "volume" ? "on" : ""} disabled={!hasVolume}
+          title={hasVolume ? undefined : "Deze retailer levert geen volumedata"}
+          onClick={() => setMetric("volume")}>Volume</button>
+        <button className={effMetric === "per_winkel" ? "on" : ""} disabled={!data.trend.series.per_winkel}
           onClick={() => setMetric("per_winkel")}>Per winkel</button>
       </div>
       <div className="card">
-        <TrendChart series={data.trend.series[metric] ?? {}} years={data.trend.jaren}
-          isEuro={metric !== "volume"} periodWord={pWord} />
+        <TrendChart series={data.trend.series[effMetric] ?? {}} years={data.trend.jaren}
+          isEuro={effMetric !== "volume"} periodWord={pWord} />
       </div>
     </>
   );

@@ -1,0 +1,25 @@
+{
+  "retailer_id": "ici-paris-xl",
+  "version": 2,
+  "status": "live",
+  "builtin": "ici_maandrapport",
+  "detection": {
+    "filename_glob": "*ICI_Paris*.xlsx",
+    "sheet": null,
+    "header_row": 1,
+    "required_headers": [],
+    "filetype": "xlsx",
+    "csv_delimiter": null,
+    "decimal": "."
+  },
+  "period": {
+    "type": "maand",
+    "source_column": "(ingebouwd: maandkolommen in het bestand)",
+    "format": "yyyymm"
+  },
+  "mapping": [],
+  "constants": {},
+  "thresholds": {
+    "promo_price_drop": 0.03
+  }
+}

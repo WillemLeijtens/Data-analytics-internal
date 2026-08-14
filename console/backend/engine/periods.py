@@ -37,6 +37,13 @@ def parse_period(value, fmt: str) -> str:
         if not m or not 1 <= int(m.group(1)) <= 12:
             raise PeriodError(f"periode {s!r} past niet op formaat mm-yyyy")
         return f"{m.group(2)}-{int(m.group(1)):02d}"
+    if fmt == "yyyymm":
+        if not re.fullmatch(r"\d{6}", s):
+            raise PeriodError(f"periode {s!r} past niet op formaat yyyymm")
+        year, month = int(s[:4]), int(s[4:])
+        if not 1 <= month <= 12:
+            raise PeriodError(f"maandnummer {month} buiten 1-12")
+        return f"{year}-{month:02d}"
     if fmt == "yyyy-mm":
         m = re.fullmatch(r"(\d{4})-(\d{1,2})", s)
         if not m or not 1 <= int(m.group(2)) <= 12:
