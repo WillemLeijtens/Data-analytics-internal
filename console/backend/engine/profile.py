@@ -15,6 +15,15 @@ CANONICAL_FIELDS = {
 }
 REQUIRED_ALWAYS = {"volume", "omzet"}
 
+# Ingebouwde parsers voor formaten die een kolom-mapping niet kán uitdrukken
+# (zoals de echte Kruidvat DWH-export: metadatablok + weekkolommen naast
+# elkaar). Een profiel met "builtin" gebruikt zo'n parser in plaats van de
+# mapping; de capabilities liggen dan vast bij de parser.
+BUILTIN_CAPS = {
+    "kruidvat_dwh": {"periode": "week", "merk": True, "artikel": True,
+                     "winkel": False, "banner": True, "land": True},
+}
+
 
 @dataclass(frozen=True)
 class Profile:
@@ -37,7 +46,11 @@ def mapped_targets(definition: dict) -> set[str]:
 
 
 def capabilities(definition: dict) -> dict:
-    """Derive what a profile can deliver, purely from mapping + constants."""
+    """Derive what a profile can deliver, purely from mapping + constants —
+    or, for a builtin parser, from that parser's fixed capability set."""
+    b = definition.get("builtin")
+    if b in BUILTIN_CAPS:
+        return dict(BUILTIN_CAPS[b])
     t = mapped_targets(definition)
     return {
         "periode": definition.get("period", {}).get("type", "week"),
@@ -52,6 +65,8 @@ def capabilities(definition: dict) -> dict:
 def missing_required(definition: dict) -> set[str]:
     """Canonical fields that must be mapped for the profile to import at all:
     volume + omzet, plus the period source column."""
+    if definition.get("builtin") in BUILTIN_CAPS:
+        return set()
     missing = REQUIRED_ALWAYS - mapped_targets(definition)
     if not definition.get("period", {}).get("source_column"):
         missing.add("periode")

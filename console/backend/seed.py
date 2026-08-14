@@ -54,13 +54,88 @@ def _to_xlsx(headers, data, sheet: str, header_row: int, numeric_cols: dict) -> 
     return buf.getvalue()
 
 
+def make_dwh_xlsx(rows: list[dict], weeks: list[str] | None = None,
+                  country3="NLD", formula="KV", brand_meta=None) -> bytes:
+    """Generate a workbook in the REAL Kruidvat DWH-export layout (metadata
+    block, two-row header with side-by-side week Volume/Value pairs, Total
+    row and trailing Total column), so seed and tests exercise the builtin
+    parser exactly like a production file.
+
+    rows: [{sku, gtin, desc, brand, weeks: {"202632": (vol, val), ...}}]
+    """
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    if weeks is None:
+        weeks = sorted({wk for r in rows for wk in r["weeks"]})
+    brand_meta = brand_meta or ";".join(sorted({r["brand"] for r in rows}))
+    for i, (label, value) in enumerate(
+            [("Country:", country3), ("Formula:", formula), ("Brand:", brand_meta),
+             ("Weeks:", len(weeks)), ("Date:", "2026-08-14")], start=1):
+        ws.cell(row=i, column=1, value=label)
+        ws.cell(row=i, column=2, value=value)
+    h1, h2 = 7, 8
+    for c, name in enumerate(["Brand", "GTIN/PLU", "SKU No.", "Article Description"], start=1):
+        ws.cell(row=h1, column=c, value=name)
+    col = 5
+    week_cols = {}
+    for wk in weeks:
+        ws.cell(row=h1, column=col, value=wk)
+        ws.cell(row=h2, column=col, value="Sales Volume")
+        ws.cell(row=h2, column=col + 1, value="Sales Value")
+        week_cols[wk] = col
+        col += 2
+    ws.cell(row=h1, column=col, value="Total")
+    ws.cell(row=h2, column=col, value="Sales Volume")
+    ws.cell(row=h2, column=col + 1, value="Sales Value")
+
+    week_totals = {wk: 0 for wk in weeks}
+    r = h2 + 1
+    for row in rows:
+        ws.cell(row=r, column=1, value=row["brand"])
+        ws.cell(row=r, column=2, value=row["gtin"])
+        ws.cell(row=r, column=3, value=int(row["sku"]))
+        ws.cell(row=r, column=4, value=row["desc"])
+        tot_vol = tot_val = 0
+        for wk, (vol, val) in row["weeks"].items():
+            ws.cell(row=r, column=week_cols[wk], value=vol)
+            ws.cell(row=r, column=week_cols[wk] + 1, value=val)
+            week_totals[wk] += vol
+            tot_vol += vol
+            tot_val += val
+        ws.cell(row=r, column=col, value=tot_vol)
+        ws.cell(row=r, column=col + 1, value=round(tot_val, 2))
+        r += 1
+    ws.cell(row=r, column=1, value="Total")
+    ws.cell(row=r, column=3, value=len(rows))
+    for wk, c in week_cols.items():
+        ws.cell(row=r, column=c, value=week_totals[wk])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _kv_demo_rows(weeks: list[str], factor=1.0) -> list[dict]:
+    items = [("31210001", "4049469072773", "Tweezerman Slant Tweezer", "TWEEZERMAN", 18.0),
+             ("31210002", "4049469083120", "Tweezerman Nail Clipper", "TWEEZERMAN", 13.0),
+             ("31210003", "4064089040111", "Striplac Rose", "ALESSANDRO", 14.0)]
+    out = []
+    for i, (sku, gtin, desc, brand, prijs) in enumerate(items):
+        wkdata = {}
+        for j, wk in enumerate(weeks):
+            vol = 8 + (i * 3 + j) % 7
+            wkdata[wk] = (vol, round(vol * prijs * factor, 2))
+        out.append({"sku": sku, "gtin": gtin, "desc": desc, "brand": brand, "weeks": wkdata})
+    return out
+
+
 def build_seed_files() -> list[tuple[str, bytes]]:
     files = []
 
-    h, d = _read_standin(SEED / "kruidvat_DWH_sellout_TWEEZERMAN_NL_wk32.csv")
-    files.append(("DWH_sellout_TWEEZERMAN_NL_wk32.xlsx",
-                  _to_xlsx(h, d, "Sellout", 9,
-                           {"Aantal": "int", "Omzet excl BTW": "float"})))
+    files.append(("DWH__Sales_volume__sales_Tweezerman_KVNL_32_demo.xlsx",
+                  make_dwh_xlsx(_kv_demo_rows(["202632"]))))
 
     h, d = _read_standin(SEED / "ici_ICIP_ALL_MTH_07_2026.csv")
     files.append(("ICIP_ALL_MTH_07_2026.xlsx",
@@ -122,20 +197,10 @@ def build_history_files() -> list[tuple[str, bytes]]:
 
     for year in (2024, 2025, 2026):
         weeks = range(1, 33 if year == 2026 else 53)
-        rows = []
-        for wk in weeks:
-            for ean, naam, prijs in kv_items:
-                for land, banner, winkels in (("NL", "KV", (1042, 1043)), ("NL", "TP", (2011,)), ("BE", "KV", (3308,))):
-                    for wnr in winkels:
-                        vol = max(1, round(wave(9, year, wk) * (1 + (wnr % 5) / 10)))
-                        promo = 0.8 if (year == 2026 and wk in (18, 19)) else 1.0
-                        rows.append([f"{year}{wk:02d}", ean, naam, "TWEEZERMAN", land, banner,
-                                     str(wnr), str(vol), f"{vol * prijs * promo:.2f}".replace(".", ",")])
-        headers = ["Weeknummer", "EAN", "Artikelomschrijving", "Merk", "Land", "Banner",
-                   "Winkelnr", "Aantal", "Omzet excl BTW"]
-        files.append((f"DWH_sellout_TWEEZERMAN_NL_wk{year}.xlsx",
-                      _to_xlsx(headers, rows, "Sellout", 9,
-                               {"Aantal": "int", "Omzet excl BTW": "float"})))
+        week_labels = [f"{year}{wk:02d}" for wk in weeks]
+        factor = 1 + (year - 2024) * 0.08
+        files.append((f"DWH__Sales_volume__sales_Tweezerman_KVNL_{year}_demo.xlsx",
+                      make_dwh_xlsx(_kv_demo_rows(week_labels, factor=factor))))
 
         etos_lines = ["Year/Week;GTIN;Description;Supplier brand;Sales units;Sales value;Region;Supplier code"]
         for wk in weeks:
@@ -219,7 +284,7 @@ def seed():
               f"({r['rows']} rijen, retailer={r['retailer_id']})")
     assert all(h["status"] in ("ingelezen", "test") for h in history), history
     statuses = {r["filename"]: r["status"] for r in results}
-    assert statuses["DWH_sellout_TWEEZERMAN_NL_wk32.xlsx"] == "ingelezen", statuses
+    assert statuses["DWH__Sales_volume__sales_Tweezerman_KVNL_32_demo.xlsx"] == "ingelezen", statuses
     assert statuses["ICIP_ALL_MTH_07_2026.xlsx"] == "ingelezen", statuses
     assert statuses["etos_sales_wk32.csv"] == "test", statuses
     assert statuses["Douglas_Abverkauf_KW32.xlsx"] == "profiel_nodig", statuses

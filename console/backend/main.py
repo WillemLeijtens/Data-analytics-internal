@@ -216,7 +216,10 @@ def list_imports(retailer_id: str | None = None, limit: int = 50):
                "LEFT JOIN parser_profiles p ON p.id = im.profile_id ")
         params: tuple = ()
         if retailer_id:
-            sql += "WHERE im.retailer_id = ? "
+            # PROFIEL NODIG-rijen hebben nog geen retailer: die moeten op
+            # elke retailer-tab zichtbaar blijven, anders lijkt een upload
+            # spoorloos te verdwijnen.
+            sql += "WHERE (im.retailer_id = ? OR im.retailer_id IS NULL) "
             params = (retailer_id,)
         sql += "ORDER BY im.created_at DESC, im.id DESC LIMIT ?"
         rows = conn.execute(sql, (*params, limit)).fetchall()

@@ -194,18 +194,53 @@ def detect(filename: str, content: bytes, profiles: list[Profile]) -> Profile | 
         return candidates[0]
     if len(candidates) > 1:
         return None  # ambiguous — user must map/choose once
-    # No filename match: try content-based match as a last resort.
-    confirmed = [p for p in profiles if _headers_match(content, p)]
+    # No filename match: try content-based match as a last resort. Builtin
+    # profiles recognise their format by structure, so a renamed or
+    # prefix-mangled file (mail clients, downloads) still lands correctly.
+    confirmed = [p for p in profiles
+                 if (_builtin_content_match(content, p) if p.definition.get("builtin")
+                     else _headers_match(content, p))]
     return confirmed[0] if len(confirmed) == 1 else None
+
+
+def _builtin_content_match(content: bytes, profile: Profile) -> bool:
+    """Structure probe for the DWH layout: a sheet with a 'SKU No.' header
+    AND the metadata labels ('Formula:'/'Country:') in its top rows."""
+    if profile.definition.get("builtin") != "kruidvat_dwh":
+        return False
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        for ws in wb.worksheets:
+            found_sku = found_formula = found_country = False
+            for i, row in enumerate(ws.iter_rows(min_row=1, max_row=20, values_only=True)):
+                for v in row:
+                    if v == "SKU No.":
+                        found_sku = True
+                    elif v == "Formula:" and i < 10:
+                        found_formula = True
+                    elif v == "Country:" and i < 10:
+                        found_country = True
+            if found_sku and found_formula and found_country:
+                return True
+        return False
+    except Exception:  # noqa: BLE001 - unreadable file simply doesn't match
+        return False
 
 
 def _headers_match(content: bytes, profile: Profile) -> bool:
     det = profile.definition["detection"]
+    req = det.get("required_headers")
+    if not req:
+        # No required headers = nothing to confirm on. Without this guard an
+        # empty list would "match" every readable file (all([]) is True) and
+        # a builtin profile would swallow other retailers' uploads.
+        return False
     headers = probe_headers(content, det)
     if headers is None:
         return False
     hset = {h.lower() for h in headers}
-    return all(req.lower() in hset for req in det.get("required_headers", []))
+    return all(r.lower() in hset for r in req)
 
 
 # ---------------------------------------------------------------- numbers
@@ -226,6 +261,37 @@ def parse_number(value, decimal: str) -> float:
 
 # ---------------------------------------------------------------- parsing
 
+def _parse_builtin_kruidvat(filename: str, content: bytes) -> dict:
+    """Bridge to the vendored, battle-tested Kruidvat DWH parser: the real
+    export (metadata block + side-by-side week columns) cannot be expressed
+    as a column mapping."""
+    from . import kruidvat_dwh
+    from .periods import parse_period
+    try:
+        parsed = kruidvat_dwh.parse_workbook(io.BytesIO(content), filename)
+    except ValueError as e:
+        raise ParseError(str(e))
+    iteminfo = {(i["brand"], i["sku"]): i for i in parsed.items}
+    facts = []
+    for f in parsed.facts:
+        info = iteminfo.get((f["brand"], f["unit"]), {})
+        facts.append({
+            "periode": parse_period(f["period"], "yyyyww"),
+            "land": f["country"], "banner": f["banner"],
+            "winkel_id": None, "winkel_naam": None,
+            "merk": f["brand"],
+            "artikel_ean": info.get("gtin") or f["unit"],
+            "artikel_naam": info.get("article_description"),
+            "volume": int(round(f["sales_volume"] or 0)),
+            "omzet": float(f["sales_value"] or 0),
+        })
+    if not facts:
+        raise ParseError("bestand bevat geen datarijen")
+    return {"facts": facts, "periode_type": "week",
+            "periodes": sorted({x["periode"] for x in facts}),
+            "warnings": parsed.warnings}
+
+
 def parse_file(filename: str, content: bytes, profile: Profile) -> dict:
     """Parse + validate a whole file against a profile.
 
@@ -233,6 +299,11 @@ def parse_file(filename: str, content: bytes, profile: Profile) -> dict:
     ParseError carrying row-level errors (PROMPT §3: never half imports).
     """
     d = profile.definition
+    builtin = d.get("builtin")
+    if builtin == "kruidvat_dwh":
+        return _parse_builtin_kruidvat(filename, content)
+    if builtin:
+        raise ParseError(f"onbekende ingebouwde parser {builtin!r}")
     det = d["detection"]
     headers, data = read_table(content, det)
     hindex = {h.lower(): i for i, h in enumerate(headers)}

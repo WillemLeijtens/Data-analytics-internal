@@ -83,11 +83,15 @@ def run_import(conn, filename: str, content: bytes) -> dict:
     replace_existing()
     status = "test" if profile.status == "test" else "ingelezen"
     periodes = result["periodes"]
+    periode_txt = periodes[0] if len(periodes) == 1 else \
+        f"{periodes[0]} t/m {periodes[-1]} ({len(periodes)})"
+    warnings = result.get("warnings") or []
     cur = conn.execute(
         "INSERT INTO imports (retailer_id, profile_id, filename, file_hash, periode_type, "
-        "periode, row_count, status) VALUES (?,?,?,?,?,?,?,?)",
+        "periode, row_count, status, error_detail) VALUES (?,?,?,?,?,?,?,?,?)",
         (profile.retailer_id, profile.id, filename, h, result["periode_type"],
-         ", ".join(periodes), len(result["facts"]), status))
+         periode_txt, len(result["facts"]), status,
+         json.dumps({"warnings": warnings}, ensure_ascii=False) if warnings else None))
     import_id = cur.lastrowid
     conn.executemany(
         "INSERT INTO sellout_facts (retailer_id, import_id, periode_type, periode, land, "
@@ -98,7 +102,8 @@ def run_import(conn, filename: str, content: bytes) -> dict:
           f["artikel_naam"], f["volume"], f["omzet"]) for f in result["facts"]])
     return {"import_id": import_id, "status": status, "filename": filename,
             "retailer_id": profile.retailer_id, "profile_version": profile.version,
-            "periode": ", ".join(periodes), "rows": len(result["facts"]), "detail": None}
+            "periode": periode_txt, "rows": len(result["facts"]),
+            "detail": "; ".join(warnings) if warnings else None}
 
 
 # Analyses must only see counted facts: live-profile imports.

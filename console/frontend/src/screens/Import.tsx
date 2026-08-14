@@ -91,14 +91,15 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
       {detail && (
         <div className="card" style={{ marginTop: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <div className="eyebrow">Foutdetail</div>
+            <div className="eyebrow">{detail.warnings ? "Waarschuwingen" : "Foutdetail"}</div>
             <a style={{ cursor: "pointer" }} onClick={() => setDetail(null)}>Sluiten</a>
           </div>
-          <p>{detail.message}</p>
+          {detail.message && <p>{detail.message}</p>}
           <ul className="sub">
             {(detail.rijen ?? []).slice(0, 15).map((e: any, i: number) => (
               <li key={i}>rij {e.rij} · {e.veld}: {e.fout}</li>
             ))}
+            {(detail.warnings ?? []).map((w: string, i: number) => <li key={`w${i}`}>{w}</li>)}
           </ul>
         </div>
       )}

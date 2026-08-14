@@ -52,8 +52,12 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
     setTestResult(null); setMsg(null);
   }, [selId, profiles.length]);
 
+  const isBuiltin = !!draft?.builtin;
   const caps = useMemo(() => {
     if (!draft) return null;
+    if (draft.builtin === "kruidvat_dwh")
+      return { periode: "week", merk: true, artikel: true, winkel: false,
+        banner: true, land: true, volume: true, omzet: true };
     const t = new Set([
       ...draft.mapping.filter((m: any) => m.target).map((m: any) => m.target),
       ...Object.keys(draft.constants ?? {}),
@@ -63,11 +67,11 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
       volume: t.has("volume"), omzet: t.has("omzet") };
   }, [draft]);
 
-  const missing = caps ? [
+  const missing = !caps || isBuiltin ? [] : [
     !caps.volume && "volume",
     !caps.omzet && "omzet",
     !draft?.period?.source_column && "periodekolom",
-  ].filter(Boolean) as string[] : [];
+  ].filter(Boolean) as string[];
 
   const publish = async (status: "live" | "test" | "concept") => {
     try {
@@ -204,7 +208,12 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
                 </button>
               )}
             </div>
-            {draft.mapping.length === 0 && (
+            {isBuiltin && (
+              <p className="sub">Dit profiel gebruikt een <b>ingebouwde parser</b> voor het echte
+                DWH-exportformaat (metadatablok + weekkolommen naast elkaar). Kolommen worden
+                automatisch herkend — een mapping is niet nodig.</p>
+            )}
+            {!isBuiltin && draft.mapping.length === 0 && (
               <p className="sub">Nog geen kolommen. Upload het bestand eerst via <b>Import</b> —
                 een onbekend bestand krijgt daar de status PROFIEL NODIG en zijn kolommen
                 verschijnen hier vanzelf.</p>

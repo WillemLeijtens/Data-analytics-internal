@@ -206,21 +206,22 @@ def test_periods_behind_january_month():
 # ------------------------------------------------------- rotation window
 
 def test_rotation_uses_current_year_only(client):
-    publish_douglas(client)
-    # Kruidvat is live in bootstrap; feed item-grain files over two years.
-    headers = ["Weeknummer", "EAN", "Artikelomschrijving", "Merk", "Land",
-               "Banner", "Winkelnr", "Aantal", "Omzet excl BTW"]
+    # Kruidvat is live in bootstrap (builtin DWH-parser); two years of data.
+    import seed
 
-    def kv_rows(year, weeks):
-        return [[f"{year}{wk:02d}", "4049469072773", "Slant", "TWEEZERMAN",
-                 "NL", "KV", "1042", 10, 130.0] for wk in weeks]
+    def one_item(year, weeks, vol):
+        wkdata = {f"{year}{wk:02d}": (vol, vol * 13.0) for wk in weeks}
+        return [{"sku": "31210001", "gtin": "4049469072773",
+                 "desc": "Slant Tweezer", "brand": "TWEEZERMAN", "weeks": wkdata}]
 
-    f_old = make_xlsx(headers, kv_rows(2025, range(1, 27)), sheet="Sellout", meta_rows=8)
-    f_new = make_xlsx(headers, kv_rows(2026, [1, 2]), sheet="Sellout", meta_rows=8)
-    assert upload(client, "DWH_sellout_TWEEZERMAN_NL_wk2025.xlsx", f_old)["status"] == "ingelezen"
-    assert upload(client, "DWH_sellout_TWEEZERMAN_NL_wk02.xlsx", f_new)["status"] == "ingelezen"
+    f_old = seed.make_dwh_xlsx(one_item(2025, range(1, 27), 10))
+    f_new = seed.make_dwh_xlsx(one_item(2026, [1, 2], 10))
+    assert upload(client, "DWH__Sales_Tweezerman_KVNL_2025_demo.xlsx", f_old)["status"] == "ingelezen"
+    assert upload(client, "DWH__Sales_Tweezerman_KVNL_02_demo.xlsx", f_new)["status"] == "ingelezen"
 
     client.put("/api/kruidvat/instellingen", json={
+        "winkels_targets": [{"merk": "TWEEZERMAN", "land": "NL", "banner": "KV",
+                             "aantal_winkels": 1, "target_per_winkel": 45.0}],
         "rotatie_targets": [{"merk": "TWEEZERMAN", "stuks_per_winkel_per_week": 8.0}]})
     art = client.get("/api/kruidvat/assortiment").json()["artikelen"][0]
     # Current year: 20 stuks / 2 weken / 1 winkel = 10 — NOT diluted by 2025.
