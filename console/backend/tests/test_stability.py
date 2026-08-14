@@ -26,7 +26,7 @@ def client(tmp_path, monkeypatch):
     # cleanup_demo hoort er ook bij: die module houdt een verwijzing naar
     # het db-module vast en zou anders naar de database van een vorige test
     # blijven wijzen.
-    for name in ("db", "seed", "main", "cleanup_demo"):
+    for name in ("db", "seed", "main", "cleanup_demo", "cleanup_duplicates"):
         sys.modules.pop(name, None)
     main = importlib.import_module("main")
     return TestClient(main.app)
@@ -330,3 +330,32 @@ def test_cleanup_demo_also_removes_settings_from_older_versions(client, monkeypa
             "SELECT merk, aantal_winkels FROM retailer_settings").fetchall()
         assert [tuple(r) for r in rest] == [("OLIVIA GARDEN", 777)]
         assert conn.execute("SELECT COUNT(*) c FROM mail_rules").fetchone()["c"] == 0
+
+
+def test_cleanup_duplicates_keeps_the_latest_correction(client, monkeypatch):
+    """Databases van vóór de correctie-fix bevatten dubbele feitregels: een
+    herlevering kwam ernaast te staan en werd opgeteld. Het opruimscript
+    houdt per combinatie de regel uit de nieuwste import over."""
+    import cleanup_duplicates
+    import seed
+    from engine import importer as imp
+
+    def kv(omzet):
+        return seed.make_dwh_xlsx([{"sku": "31210001", "gtin": "4049469072773",
+                                    "desc": "Slant", "brand": "TWEEZERMAN",
+                                    "weeks": {"202631": (12, omzet)}}])
+
+    # Bootst de oude situatie na door de vervanging uit te schakelen.
+    monkeypatch.setattr(imp, "_replace_redelivered_facts", lambda *a, **k: None)
+    for omzet in (156.0, 999.0):
+        upload(client, f"DWH__Sales_Tweezerman_KVNL_{omzet}.xlsx", kv(omzet))
+    monkeypatch.undo()
+    assert client.get("/api/kruidvat/dashboard").json()["kpi"]["omzet"]["waarde"] == 1155.0
+
+    monkeypatch.setattr(sys, "argv", ["cleanup_duplicates.py", "--doen"])
+    cleanup_duplicates.main()
+    assert client.get("/api/kruidvat/dashboard").json()["kpi"]["omzet"]["waarde"] == 999.0
+
+    # Idempotent: nog een keer draaien verandert niets meer.
+    cleanup_duplicates.main()
+    assert client.get("/api/kruidvat/dashboard").json()["kpi"]["omzet"]["waarde"] == 999.0

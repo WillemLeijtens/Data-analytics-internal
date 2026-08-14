@@ -89,6 +89,16 @@ docker compose exec console python cleanup_demo.py          # toon wat er weg zo
 docker compose exec console python cleanup_demo.py --doen   # opruimen
 ```
 
+**Dubbele feitregels.** Databases die zijn gevuld vóór de correctie-fix
+kunnen dubbele cijfers bevatten: een herlevering van een al ingelezen
+periode kwam er toen náást te staan en werd opgeteld. Dit script spoort ze
+op en houdt per combinatie de regel uit de nieuwste import over:
+
+```bash
+docker compose exec console python cleanup_duplicates.py          # toon het verschil
+docker compose exec console python cleanup_duplicates.py --doen   # opruimen
+```
+
 ## Stack & motivatie
 
 - **Backend**: FastAPI + SQLite via **plain `sqlite3`** (geen ORM). Bewuste
