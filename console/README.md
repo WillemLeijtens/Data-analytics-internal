@@ -33,7 +33,7 @@ Kerngegevens voor de gateway-registratie:
 |---|---|
 | Interne poort | **8000** (uvicorn in de container; `CONSOLE_PORT` is alleen de host-kant) |
 | Hostbinding | standaard `127.0.0.1`; zet `CONSOLE_BIND` op het privé-adres als de gateway erbij moet — nooit `0.0.0.0` |
-| Healthcheck | `GET /healthz` — zonder auth, geeft 200, of 503 als de database niet antwoordt |
+| Healthcheck | `GET` én `HEAD` op `/healthz` en `/healthz/` — altijd zonder auth, ook als `CONSOLE_PASSWORD` gezet is; 200, of 503 als de database niet antwoordt |
 | Protocol | gewone request/response; **geen** WebSockets of SSE |
 | Padgevoelig | ja: de SPA gebruikt absolute `/assets`- en `/api`-paden, dus eigen host/root, geen subpad |
 | Uploads | `POST /api/import` is multipart (UI noemt 200 MB) — body-limiet van de gateway daarop zetten |

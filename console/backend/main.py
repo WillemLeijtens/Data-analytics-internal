@@ -34,14 +34,18 @@ app = FastAPI(title="Retailer Console")
 CONSOLE_PASSWORD = os.environ.get("CONSOLE_PASSWORD", "")
 CONSOLE_USER = os.environ.get("CONSOLE_USER", "console")
 
+# Kept in one place so the auth exemption and the routes can never drift.
+HEALTH_PATHS = {"/healthz", "/healthz/"}
+
 if CONSOLE_PASSWORD:
     @app.middleware("http")
     async def require_password(request, call_next):
         from starlette.responses import Response
 
-        # /healthz stays open: a gateway/orchestrator health probe must not
-        # need credentials, and it exposes no data.
-        if request.url.path == "/healthz":
+        # The health probe stays open: uptime monitoring must not need
+        # credentials, and the route exposes no data. Both spellings are
+        # exempt — a monitor appending a slash must not read as "down".
+        if request.url.path in HEALTH_PATHS:
             return await call_next(request)
         header = request.headers.get("authorization", "")
         ok = False
@@ -356,7 +360,8 @@ def link_sharepoint(retailer_id: str, body: SharepointBody):
 # its database answers, so a gateway probe fails when the app is truly
 # unusable rather than merely slow to render.
 
-@app.get("/healthz", include_in_schema=False)
+@app.api_route("/healthz", methods=["GET", "HEAD"], include_in_schema=False)
+@app.api_route("/healthz/", methods=["GET", "HEAD"], include_in_schema=False)
 def healthz():
     from starlette.responses import JSONResponse
     try:
