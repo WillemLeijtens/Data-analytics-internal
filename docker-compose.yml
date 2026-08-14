@@ -43,13 +43,18 @@ services:
       context: ./console
     restart: unless-stopped
     environment:
-      # Toegangscontrole is de forward-auth van het portaal, niet een tweede
-      # wachtwoord hier (dat zou alleen een prompt opleveren waarvan niemand
-      # de inloggegevens heeft). Dit mag omdat de container uitsluitend prive
-      # gebonden is: de app weigert te starten bij ALLOW_OPEN + 0.0.0.0.
-      # Wil je toch een eigen wachtwoord? Zet CONSOLE_PASSWORD in .env en
-      # CONSOLE_ALLOW_OPEN=0, en laat de gateway de auth-header injecteren.
-      - CONSOLE_ALLOW_OPEN=${CONSOLE_ALLOW_OPEN:-1}
+      # EEN schakelaar bepaalt de toegang, zodat instellingen elkaar niet
+      # kunnen tegenspreken:
+      #   gateway  (standaard) - geen inlog in de app; de forward-auth van
+      #                          het portaal is de poortwachter. Een gezette
+      #                          CONSOLE_PASSWORD wordt genegeerd (met melding
+      #                          in de log), dus nooit een tweede popup.
+      #   password             - HTTP basic auth in de app; vereist
+      #                          CONSOLE_PASSWORD en een gateway die de
+      #                          Authorization-header injecteert.
+      # Gateway-modus mag alleen bij een prive binding: de app weigert te
+      # starten bij gateway + 0.0.0.0.
+      - CONSOLE_AUTH=${CONSOLE_AUTH:-gateway}
       - CONSOLE_BIND=${CONSOLE_BIND:-127.0.0.1}
       - CONSOLE_PASSWORD=${CONSOLE_PASSWORD:-}
       - CONSOLE_USER=${CONSOLE_USER:-console}

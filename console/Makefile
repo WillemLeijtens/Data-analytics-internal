@@ -6,7 +6,7 @@ dev:
 
 api:
 	cd backend && pip install -q -r requirements.txt && \
-	CONSOLE_ALLOW_OPEN=1 python -m uvicorn main:app --reload --port 8000
+	CONSOLE_AUTH=gateway python -m uvicorn main:app --reload --port 8000
 
 web:
 	cd frontend && npm install --silent && npm run dev

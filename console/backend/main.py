@@ -26,18 +26,56 @@ from engine.profile import (Profile, active_profile, capabilities, get_profiles,
 app = FastAPI(title="Retailer Console")
 
 # ---------------------------------------------------------------- access
-# The console shows sales data, so it is password-protected the same way the
-# Streamlit app is. CONSOLE_PASSWORD comes from the environment (compose
-# defaults it to STREAMLIT_APP_PASSWORD, so the existing password just
-# works). Empty password = open, which is fine for local development but is
-# logged loudly on start so it can never happen unnoticed in production.
+# ONE switch decides how the console is protected, so the settings can never
+# contradict each other (an earlier version let a stray CONSOLE_PASSWORD in
+# .env silently re-enable basic auth behind the portal, producing a browser
+# prompt for a password nobody has):
+#
+#   CONSOLE_AUTH=gateway  (default) — no auth in the app; the portal's
+#       forward-auth is the gatekeeper. Only allowed on a private bind.
+#   CONSOLE_AUTH=password           — HTTP basic auth in the app; needs
+#       CONSOLE_PASSWORD and a gateway that injects the Authorization header.
+#
+# CONSOLE_PASSWORD alone no longer switches modes: it is only *used* in
+# password mode, and ignored (with a warning) in gateway mode.
 CONSOLE_PASSWORD = os.environ.get("CONSOLE_PASSWORD", "")
 CONSOLE_USER = os.environ.get("CONSOLE_USER", "console")
+CONSOLE_BIND = os.environ.get("CONSOLE_BIND", "127.0.0.1")
+
+_PUBLIC_BINDS = ("0.0.0.0", "::", "*", "")
+
+CONSOLE_AUTH = os.environ.get("CONSOLE_AUTH", "").strip().lower()
+if not CONSOLE_AUTH:
+    # Legacy switches, kept working: CONSOLE_ALLOW_OPEN=1 states "the gateway
+    # authenticates", so it wins over a leftover password.
+    if os.environ.get("CONSOLE_ALLOW_OPEN") == "1":
+        CONSOLE_AUTH = "gateway"
+    elif CONSOLE_PASSWORD:
+        CONSOLE_AUTH = "password"
+    else:
+        raise RuntimeError(
+            "Geen toegangsmodus gekozen. Zet CONSOLE_AUTH=gateway (het "
+            "portaal doet de authenticatie; alleen bij een prive binding) of "
+            "CONSOLE_AUTH=password samen met CONSOLE_PASSWORD."
+        )
+if CONSOLE_AUTH not in ("gateway", "password"):
+    raise RuntimeError(
+        f"CONSOLE_AUTH={CONSOLE_AUTH!r} is ongeldig; kies 'gateway' of 'password'."
+    )
+if CONSOLE_AUTH == "password" and not CONSOLE_PASSWORD:
+    raise RuntimeError("CONSOLE_AUTH=password vereist een gevulde CONSOLE_PASSWORD.")
+if CONSOLE_AUTH == "gateway" and CONSOLE_BIND in _PUBLIC_BINDS:
+    # The one combination that would publish sales data unprotected.
+    raise RuntimeError(
+        f"CONSOLE_AUTH=gateway samen met CONSOLE_BIND={CONSOLE_BIND!r} zou de "
+        "console zonder enige toegangscontrole op alle interfaces publiceren. "
+        "Bind op 127.0.0.1 of het prive-adres, of kies CONSOLE_AUTH=password."
+    )
 
 # Kept in one place so the auth exemption and the routes can never drift.
 HEALTH_PATHS = {"/healthz", "/healthz/"}
 
-if CONSOLE_PASSWORD:
+if CONSOLE_AUTH == "password":
     @app.middleware("http")
     async def require_password(request, call_next):
         from starlette.responses import Response
@@ -61,32 +99,15 @@ if CONSOLE_PASSWORD:
             return Response(status_code=401, content="Inloggen vereist",
                             headers={"WWW-Authenticate": 'Basic realm="Retailer Console"'})
         return await call_next(request)
-elif os.environ.get("CONSOLE_ALLOW_OPEN") == "1":
-    # Sanctioned setup: the portal gateway does forward-auth, so a second
-    # password here would only add a prompt nobody has the credentials for.
-    # That only holds while the container is NOT reachable from outside, so
-    # the one combination that would silently publish sales data — open app
-    # plus a bind on every interface — is refused outright.
-    _bind = os.environ.get("CONSOLE_BIND", "127.0.0.1")
-    if _bind in ("0.0.0.0", "::", "*", ""):
-        raise RuntimeError(
-            f"CONSOLE_ALLOW_OPEN=1 samen met CONSOLE_BIND={_bind!r} zou de "
-            "console zonder enige toegangscontrole op alle interfaces "
-            "publiceren. Bind op 127.0.0.1 of het prive-adres (toegang loopt "
-            "via het portaal), of zet CONSOLE_PASSWORD."
-        )
-    print(f"[console] Geen eigen wachtwoord (CONSOLE_ALLOW_OPEN=1); toegang "
-          f"loopt via de forward-auth van het portaal. Gebonden op {_bind}.",
-          flush=True)
 else:
-    # Fail closed: refusing to boot is the only failure mode that cannot
-    # silently publish sales data. Only this container stops — the Streamlit
-    # app is a separate service and keeps running.
-    raise RuntimeError(
-        "CONSOLE_PASSWORD is niet gezet. Zet hem in .env naast "
-        "STREAMLIT_APP_PASSWORD, of start met CONSOLE_ALLOW_OPEN=1 als je "
-        "bewust zonder wachtwoord lokaal wilt draaien."
-    )
+    # Gateway mode: no auth layer at all, so a successful portal login is
+    # enough. Never any WWW-Authenticate response from this app.
+    print(f"[console] CONSOLE_AUTH=gateway — geen eigen inlog; het portaal "
+          f"authenticeert. Gebonden op {CONSOLE_BIND}.", flush=True)
+    if CONSOLE_PASSWORD:
+        print("[console] LET OP: CONSOLE_PASSWORD is gezet maar wordt "
+              "genegeerd in gateway-modus. Haal hem uit .env, of kies "
+              "CONSOLE_AUTH=password als je die laag wél wilt.", flush=True)
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])

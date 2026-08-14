@@ -29,14 +29,14 @@ def build_app(tmp_path, monkeypatch, **env):
 
 @pytest.fixture()
 def client_with_password(tmp_path, monkeypatch):
-    main = build_app(tmp_path, monkeypatch, CONSOLE_PASSWORD="geheim",
-                     CONSOLE_ALLOW_OPEN="0")
+    main = build_app(tmp_path, monkeypatch, CONSOLE_AUTH="password",
+                     CONSOLE_PASSWORD="geheim")
     return TestClient(main.app)
 
 
 @pytest.fixture()
 def client_open(tmp_path, monkeypatch):
-    main = build_app(tmp_path, monkeypatch, CONSOLE_ALLOW_OPEN="1",
+    main = build_app(tmp_path, monkeypatch, CONSOLE_AUTH="gateway",
                      CONSOLE_BIND="127.0.0.1")
     return TestClient(main.app)
 
@@ -71,10 +71,42 @@ def test_correct_credentials_pass(client_with_password):
 def test_open_mode_refuses_to_bind_all_interfaces(tmp_path, monkeypatch):
     """The one combination that would publish sales data unprotected."""
     with pytest.raises(RuntimeError, match="alle interfaces"):
-        build_app(tmp_path, monkeypatch, CONSOLE_ALLOW_OPEN="1",
+        build_app(tmp_path, monkeypatch, CONSOLE_AUTH="gateway",
                   CONSOLE_BIND="0.0.0.0")
 
 
-def test_no_password_and_no_explicit_open_refuses(tmp_path, monkeypatch):
-    with pytest.raises(RuntimeError, match="CONSOLE_PASSWORD"):
-        build_app(tmp_path, monkeypatch, CONSOLE_ALLOW_OPEN="0")
+def test_no_mode_chosen_refuses(tmp_path, monkeypatch):
+    with pytest.raises(RuntimeError, match="toegangsmodus"):
+        build_app(tmp_path, monkeypatch)
+
+
+def test_password_mode_without_password_refuses(tmp_path, monkeypatch):
+    with pytest.raises(RuntimeError, match="vereist een gevulde"):
+        build_app(tmp_path, monkeypatch, CONSOLE_AUTH="password")
+
+
+def test_invalid_mode_refuses(tmp_path, monkeypatch):
+    with pytest.raises(RuntimeError, match="ongeldig"):
+        build_app(tmp_path, monkeypatch, CONSOLE_AUTH="misschien")
+
+
+# --- regression: a stray password must never re-enable the browser prompt ---
+
+@pytest.mark.parametrize("path", ["/api/overview", "/", "/kruidvat/dashboard",
+                                  "/healthz"])
+def test_gateway_mode_never_prompts_even_with_password_set(
+        tmp_path, monkeypatch, path):
+    """Reported from the portal: after a successful forward-auth login the
+    browser still showed a Basic-Auth popup, because a leftover
+    CONSOLE_PASSWORD in .env silently won over the gateway setting."""
+    main = build_app(tmp_path, monkeypatch, CONSOLE_AUTH="gateway",
+                     CONSOLE_BIND="127.0.0.1", CONSOLE_PASSWORD="restje")
+    r = TestClient(main.app).get(path)
+    assert r.status_code != 401
+    assert "www-authenticate" not in {k.lower() for k in r.headers}
+
+
+def test_legacy_allow_open_beats_leftover_password(tmp_path, monkeypatch):
+    main = build_app(tmp_path, monkeypatch, CONSOLE_ALLOW_OPEN="1",
+                     CONSOLE_PASSWORD="restje")
+    assert TestClient(main.app).get("/api/overview").status_code == 200
