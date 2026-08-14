@@ -157,9 +157,15 @@ def test_detection_concept_never_matches():
     assert parser_mod.detect("Douglas_Abverkauf_KW32.xlsx", b"", [douglas]) is None
 
 
+def _other_retailer(profile: Profile, retailer_id: str) -> Profile:
+    d = dict(profile.definition, retailer_id=retailer_id)
+    return Profile(id=99, retailer_id=retailer_id, version=1,
+                   status=profile.status, definition=d)
+
+
 def test_detection_conflict_two_globs_headers_tiebreak():
     etos = load_profile("etos.json")
-    clone = load_profile("etos.json")
+    clone = _other_retailer(load_profile("etos.json"), "etos2")
     clone.definition["detection"] = dict(clone.definition["detection"],
                                          required_headers=["Bestaat", "Niet"])
     content = csv_bytes("Year/Week;GTIN;Description;Supplier brand;Sales units;Sales value",
@@ -167,11 +173,22 @@ def test_detection_conflict_two_globs_headers_tiebreak():
     assert parser_mod.detect("etos_sales_wk32.csv", content, [etos, clone]) is etos
 
 
-def test_detection_ambiguous_returns_none():
-    a, b = load_profile("etos.json"), load_profile("etos.json")
+def test_detection_ambiguous_across_retailers_returns_none():
+    a = load_profile("etos.json")
+    b = _other_retailer(load_profile("etos.json"), "etos2")
     content = csv_bytes("Year/Week;GTIN;Description;Supplier brand;Sales units;Sales value",
                         "2026-W32;4049469072773;X;Tweezerman;1;10.00")
     assert parser_mod.detect("etos_sales_wk32.csv", content, [a, b]) is None
+
+
+def test_detection_own_older_version_never_competes():
+    """Re-publishing a profile must not make detection ambiguous: only the
+    newest live version per retailer takes part."""
+    v2 = load_profile("etos.json", status="live")
+    v3 = Profile(id=2, retailer_id="etos", version=3, status="live",
+                 definition=v2.definition)
+    picked = parser_mod.detect("etos_sales_wk32.csv", b"", [v2, v3])
+    assert picked is v3
 
 
 # ------------------------------------------------------------ parsing + atomic import

@@ -288,10 +288,15 @@ def assortment(conn, retailer_id: str) -> dict:
     labels = base_labels + res.labels
 
     empty_stats = {"op_target": 0, "onder_target": 0, "delist": 0}
-    rows = load_facts(conn, retailer_id)
-    if not rows:
+    all_rows = load_facts(conn, retailer_id)
+    if not all_rows:
         return {"available": True, "artikelen": [], "labels": labels,
                 "resolution": res.as_dict(), "stats": empty_stats}
+    # Rotation runs over the CURRENT year only: averaging over the full
+    # multi-year history would dilute every article's stuks/winkel/week and
+    # push healthy items toward a false 'delist' as history grows.
+    latest_year = max(period_year(r["periode"]) for r in all_rows)
+    rows = [r for r in all_rows if period_year(r["periode"]) == latest_year]
     n_stores, _from_facts = store_count(conn, retailer_id, caps, rows, None)
     periods = {r["periode"] for r in rows}
     weeks = len(periods) or 1

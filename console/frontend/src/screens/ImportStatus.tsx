@@ -1,13 +1,11 @@
-import { useEffect, useState } from "react";
-import { apiGet } from "../api";
 import { ShellCtx } from "../App";
+import { LoadState, useApi } from "../components/shared";
 
 export default function ImportStatus({ ctx }: { ctx: ShellCtx }) {
-  const [data, setData] = useState<any[]>([]);
-  useEffect(() => {
-    apiGet(`/import-status${ctx.retailer !== "alle" ? `?retailer_id=${ctx.retailer}` : ""}`).then(setData);
-  }, [ctx.retailer]);
+  const { data, error, reload } = useApi<any[]>(
+    `/import-status${ctx.retailer !== "alle" ? `?retailer_id=${ctx.retailer}` : ""}`);
 
+  if (!data) return <LoadState error={error} reload={reload} />;
   return (
     <>
       <h1>Import status{ctx.card ? ` — ${ctx.card.naam}` : ""}</h1>

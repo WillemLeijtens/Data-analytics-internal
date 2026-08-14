@@ -164,11 +164,28 @@ def _sniff_xlsx(content: bytes) -> dict | None:
             "voorbeeld": [str(c) for c in sample[:len(headers)]]}
 
 
+def _effective(profiles: list[Profile]) -> list[Profile]:
+    """One candidate per retailer: the newest LIVE version, else the newest
+    TEST one. Without this, every re-publish would make a retailer's own
+    older version compete with the new one and turn detection ambiguous."""
+    best: dict[str, Profile] = {}
+    rank = {"live": 2, "test": 1}
+    for p in profiles:
+        r = rank.get(p.status, 0)
+        if r == 0:
+            continue
+        cur = best.get(p.retailer_id)
+        if cur is None or (rank[cur.status], cur.version) < (r, p.version):
+            best[p.retailer_id] = p
+    return list(best.values())
+
+
 def detect(filename: str, content: bytes, profiles: list[Profile]) -> Profile | None:
     """Pick the profile for a file. None => 'profiel_nodig'."""
-    candidates = [p for p in profiles if p.status in ("live", "test")
-                  and fnmatch.fnmatch(filename.lower(),
-                                      p.definition["detection"]["filename_glob"].lower())]
+    profiles = _effective(profiles)
+    candidates = [p for p in profiles
+                  if fnmatch.fnmatch(filename.lower(),
+                                     p.definition["detection"]["filename_glob"].lower())]
     if len(candidates) > 1:
         # Tiebreak on sheet + required headers actually present.
         confirmed = [p for p in candidates if _headers_match(content, p)]
@@ -178,7 +195,7 @@ def detect(filename: str, content: bytes, profiles: list[Profile]) -> Profile | 
     if len(candidates) > 1:
         return None  # ambiguous — user must map/choose once
     # No filename match: try content-based match as a last resort.
-    confirmed = [p for p in profiles if p.status in ("live", "test") and _headers_match(content, p)]
+    confirmed = [p for p in profiles if _headers_match(content, p)]
     return confirmed[0] if len(confirmed) == 1 else None
 
 

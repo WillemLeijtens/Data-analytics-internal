@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiSend } from "../api";
 import { ShellCtx } from "../App";
-import { EmptyProfileCard } from "../components/shared";
+import { EmptyProfileCard, LoadState } from "../components/shared";
 
 export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   const [data, setData] = useState<any>(null);
@@ -10,13 +10,15 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   const [mail, setMail] = useState<any[]>([]);
   const [spUrl, setSpUrl] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const load = () => apiGet(`/${ctx.retailer}/instellingen`).then((d) => {
-    setData(d); setWt(d.winkels_targets); setRt(d.rotatie_targets); setMail(d.mail_rules);
-  });
-  useEffect(() => { load(); setMsg(null); }, [ctx.retailer]);
+    setData(d); setError(null);
+    setWt(d.winkels_targets); setRt(d.rotatie_targets); setMail(d.mail_rules);
+  }).catch((e) => setError(String(e?.message ?? e)));
+  useEffect(() => { setData(null); load(); setMsg(null); }, [ctx.retailer]);
 
-  if (!data) return <p className="sub">Laden…</p>;
+  if (!data) return <LoadState error={error} reload={load} />;
   if (!ctx.card?.profiel) return <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />;
 
   const caps = data.capabilities;
@@ -24,10 +26,14 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   const pWord = caps?.periode === "maand" ? "maand" : "week";
 
   const saveAll = async () => {
-    await apiSend(`/${ctx.retailer}/instellingen`, "PUT", {
-      winkels_targets: wt, rotatie_targets: rt, mail_rules: mail,
-    });
-    setMsg("Alles opgeslagen."); load();
+    try {
+      await apiSend(`/${ctx.retailer}/instellingen`, "PUT", {
+        winkels_targets: wt, rotatie_targets: rt, mail_rules: mail,
+      });
+      setMsg("Alles opgeslagen."); load();
+    } catch (e: any) {
+      setMsg(`Opslaan mislukt — er is niets gewijzigd. (${e?.message ?? e})`);
+    }
   };
 
   const upd = (arr: any[], set: any, i: number, key: string, v: any) => {

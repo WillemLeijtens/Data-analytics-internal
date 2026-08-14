@@ -24,20 +24,35 @@ def file_hash(content: bytes) -> str:
 
 def run_import(conn, filename: str, content: bytes) -> dict:
     """Import one file inside the caller's transaction. Returns a summary dict
-    mirroring an `imports` row."""
+    mirroring an `imports` row.
+
+    A re-upload of a file whose facts are already loaded must never destroy
+    those facts on a FAILED attempt (e.g. after a profile change): the old
+    import is only replaced once the new parse has fully succeeded."""
     h = file_hash(content)
     profiles = get_profiles(conn)
     profile = parser_mod.detect(filename, content, profiles)
 
-    existing = conn.execute("SELECT id FROM imports WHERE file_hash=?", (h,)).fetchone()
-    if existing:
-        conn.execute("DELETE FROM sellout_facts WHERE import_id=?", (existing["id"],))
-        conn.execute("DELETE FROM imports WHERE id=?", (existing["id"],))
+    existing = conn.execute(
+        "SELECT id, status, row_count FROM imports WHERE file_hash=?", (h,)).fetchone()
+    existing_loaded = existing is not None and existing["status"] in ("ingelezen", "test")
+
+    def replace_existing():
+        if existing:
+            conn.execute("DELETE FROM sellout_facts WHERE import_id=?", (existing["id"],))
+            conn.execute("DELETE FROM imports WHERE id=?", (existing["id"],))
 
     if profile is None:
+        if existing_loaded:
+            return {"import_id": existing["id"], "status": existing["status"],
+                    "filename": filename, "retailer_id": None,
+                    "rows": existing["row_count"] or 0,
+                    "detail": "bestand is al eerder ingelezen; de huidige profielen "
+                              "herkennen het niet meer — bestaande data blijft staan"}
         # Look inside the file anyway: the Parser screen prefills its mapping
         # table with these columns, so the user maps instead of typing.
         sniffed = parser_mod.sniff(filename, content)
+        replace_existing()
         cur = conn.execute(
             "INSERT INTO imports (retailer_id, profile_id, filename, file_hash, status, "
             "error_detail) VALUES (NULL, NULL, ?, ?, 'profiel_nodig', ?)",
@@ -49,6 +64,14 @@ def run_import(conn, filename: str, content: bytes) -> dict:
     try:
         result = parser_mod.parse_file(filename, content, profile)
     except parser_mod.ParseError as e:
+        if existing_loaded:
+            # Not recorded: the successful import keeps the hash slot, and its
+            # facts stay untouched.
+            return {"import_id": existing["id"], "status": "error", "filename": filename,
+                    "retailer_id": profile.retailer_id, "rows": 0,
+                    "detail": f"{e} — de eerder ingelezen versie van dit bestand "
+                              "blijft ongewijzigd staan"}
+        replace_existing()
         cur = conn.execute(
             "INSERT INTO imports (retailer_id, profile_id, filename, file_hash, status, error_detail) "
             "VALUES (?,?,?,?, 'error', ?)",
@@ -57,6 +80,7 @@ def run_import(conn, filename: str, content: bytes) -> dict:
         return {"import_id": cur.lastrowid, "status": "error", "filename": filename,
                 "retailer_id": profile.retailer_id, "rows": 0, "detail": str(e)}
 
+    replace_existing()
     status = "test" if profile.status == "test" else "ingelezen"
     periodes = result["periodes"]
     cur = conn.execute(

@@ -23,5 +23,11 @@ COPY --from=web /web/dist backend/static
 ENV CONSOLE_DB=/srv/data/console.db
 EXPOSE 8000
 
+# Docker/compose zien zelf wanneer de app echt stuk is (database incluis).
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD \
+  python -c "import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8000/healthz', timeout=4); sys.exit(0 if r.status==200 else 1)"
+
 WORKDIR /srv/backend
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers: achter de gateway kloppen scheme/host/client-ip in logs.
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--proxy-headers", "--forwarded-allow-ips", "*"]

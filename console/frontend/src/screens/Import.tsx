@@ -14,9 +14,12 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
   const [rows, setRows] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [detail, setDetail] = useState<any | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = () =>
-    apiGet(`/imports${ctx.retailer !== "alle" ? `?retailer_id=${ctx.retailer}` : ""}`).then(setRows);
+    apiGet(`/imports${ctx.retailer !== "alle" ? `?retailer_id=${ctx.retailer}` : ""}`)
+      .then((r) => { setRows(r); setError(null); })
+      .catch((e) => setError(String(e?.message ?? e)));
   useEffect(() => { refresh(); }, [ctx.retailer]);
 
   const upload = async (files: FileList | null) => {
@@ -24,7 +27,15 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
     setBusy(true);
     const fd = new FormData();
     for (const f of Array.from(files)) fd.append("files", f);
-    try { await apiSend("/import", "POST", fd); } finally { setBusy(false); refresh(); }
+    try {
+      await apiSend("/import", "POST", fd);
+      setError(null);
+    } catch (e: any) {
+      setError(`Upload mislukt: ${e?.message ?? e}`);
+    } finally {
+      setBusy(false);
+      refresh();
+    }
   };
 
   return (
@@ -33,6 +44,12 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
       <p className="sub">De import herkent de retailer aan bestandsnaam, werkblad en kolomkoppen
         en kiest zelf het juiste parser-profiel. Onbekend bestand? Dan vraagt de Parser één keer om een mapping.</p>
 
+      {error && (
+        <div className="level-strip" style={{ borderLeft: "3px solid oklch(0.55 0.18 27)" }}>
+          <span className="sub">{error}</span>
+          <a style={{ cursor: "pointer", marginLeft: "auto" }} onClick={() => refresh()}>Opnieuw proberen</a>
+        </div>
+      )}
       <div className="dropzone" style={{ margin: "20px 0" }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => { e.preventDefault(); upload(e.dataTransfer.files); }}>

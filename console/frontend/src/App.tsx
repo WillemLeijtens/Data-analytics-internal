@@ -102,7 +102,10 @@ function Shell() {
   const { retailer = "alle", screen = "overzicht" } = useParams();
   const nav = useNavigate();
   const [cards, setCards] = useState<RetailerCard[]>([]);
-  const refresh = () => apiGet<{ retailers: RetailerCard[] }>("/overview").then((o) => setCards(o.retailers)).catch(() => {});
+  const [apiDown, setApiDown] = useState(false);
+  const refresh = () => apiGet<{ retailers: RetailerCard[] }>("/overview")
+    .then((o) => { setCards(o.retailers); setApiDown(false); })
+    .catch(() => setApiDown(true));
   useEffect(() => { refresh(); }, [retailer, screen]);
 
   const ctx: ShellCtx = useMemo(() => ({
@@ -155,7 +158,15 @@ function Shell() {
             </button>
           ))}
         </div>
-        <main className="content">{body()}</main>
+        <main className="content">
+          {apiDown && (
+            <div className="level-strip" style={{ borderLeft: "3px solid oklch(0.55 0.18 27)" }}>
+              <span className="sub">De server is op dit moment niet bereikbaar — gegevens kunnen verouderd zijn.</span>
+              <a style={{ cursor: "pointer", marginLeft: "auto" }} onClick={refresh}>Opnieuw proberen</a>
+            </div>
+          )}
+          {body()}
+        </main>
       </div>
     </div>
   );

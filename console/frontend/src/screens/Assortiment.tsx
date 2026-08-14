@@ -1,8 +1,6 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { apiGet } from "../api";
 import { ShellCtx } from "../App";
-import { BrandDot, EmptyProfileCard, LevelStrip } from "../components/shared";
+import { BrandDot, EmptyProfileCard, LevelStrip, LoadState, useApi } from "../components/shared";
 
 function Warn() {
   return (
@@ -15,10 +13,9 @@ function Warn() {
 }
 
 export default function Assortiment({ ctx }: { ctx: ShellCtx }) {
-  const [data, setData] = useState<any>(null);
-  useEffect(() => { apiGet(`/${ctx.retailer}/assortiment`).then(setData); }, [ctx.retailer]);
+  const { data, error, reload } = useApi(`/${ctx.retailer}/assortiment`);
 
-  if (!data) return <p className="sub">Laden…</p>;
+  if (!data) return <LoadState error={error} reload={reload} />;
   if (!data.available && data.reason === "PARSER PROFIEL ONTBREEKT")
     return <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />;
   if (!data.available)

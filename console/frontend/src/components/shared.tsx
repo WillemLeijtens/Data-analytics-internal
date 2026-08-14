@@ -1,6 +1,38 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { BRAND_COLORS, fmtEur, fmtNum } from "../api";
+import { BRAND_COLORS, apiGet, fmtEur, fmtNum } from "../api";
+
+/** Uniform laden/fout-gedrag voor de leesschermen: elke API-fout wordt een
+ * nette kaart met "Opnieuw proberen" in plaats van een eeuwig "Laden…". */
+export function useApi<T = any>(path: string | null) {
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!path) return;
+    let live = true;
+    setData(null);
+    setError(null);
+    apiGet<T>(path)
+      .then((d) => { if (live) setData(d); })
+      .catch((e) => { if (live) setError(String(e?.message ?? e)); });
+    return () => { live = false; };
+  }, [path, tick]);
+  return { data, error, reload: () => setTick((t) => t + 1) };
+}
+
+export function LoadState({ error, reload }: { error: string | null; reload?: () => void }) {
+  if (!error) return <p className="sub">Laden…</p>;
+  return (
+    <div className="card empty-card">
+      <div className="eyebrow">Er ging iets mis</div>
+      <p className="sub" style={{ margin: "10px auto 16px", maxWidth: 480 }}>
+        De gegevens konden niet geladen worden ({error}).
+      </p>
+      {reload && <button className="btn ghost" onClick={reload}>Opnieuw proberen</button>}
+    </div>
+  );
+}
 
 export function LevelStrip({ labels, uitleg, retailer }:
   { labels: string[]; uitleg?: string; retailer: string }) {

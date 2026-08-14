@@ -25,7 +25,7 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
     setProfiles(ps);
     const mine = ps.filter((p: any) => p.retailer_id === ctx.retailer);
     if (mine.length && (selId == null || !ps.some((p: any) => p.id === selId))) setSelId(mine[0].id);
-  });
+  }).catch((e) => setMsg(`Profielen laden mislukt: ${e?.message ?? e}`));
   useEffect(() => {
     refresh(); setDraft(null); setTestResult(null);
     apiGet("/parser/voorstel").then(setVoorstel).catch(() => setVoorstel(null));
@@ -82,7 +82,13 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
     if (!f) return;
     const fd = new FormData();
     fd.append("file", f);
-    setTestResult(await apiSend(`/parser/${sel.retailer_id}/test`, "POST", fd));
+    // Test wat er op het scherm staat, inclusief nog niet opgeslagen mapping.
+    fd.append("definition", JSON.stringify(draft));
+    try {
+      setTestResult(await apiSend(`/parser/${sel.retailer_id}/test`, "POST", fd));
+    } catch (e: any) {
+      setMsg(`Testen mislukt: ${e?.message ?? e}`);
+    }
   };
 
   if (!sel || !draft) {

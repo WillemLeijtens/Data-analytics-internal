@@ -11,8 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fastapi import FastAPI, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -109,8 +108,9 @@ else:
               "genegeerd in gateway-modus. Haal hem uit .env, of kies "
               "CONSOLE_AUTH=password als je die laag wél wilt.", flush=True)
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
-                   allow_headers=["*"])
+# No CORS middleware on purpose: the SPA is served by this same app (and the
+# Vite dev server proxies /api), so every request is same-origin. A wildcard
+# CORS header would only widen the surface behind the gateway for nothing.
 db.init_db()
 
 # A fresh install must not boot without parser profiles — bootstrap loads the
@@ -170,15 +170,18 @@ class PromoConfirmations(BaseModel):
 
 @app.put("/api/{retailer_id}/promoties")
 def save_promoties(retailer_id: str, body: PromoConfirmations):
+    try:
+        rows = [(retailer_id, c["merk"], c["land"], c.get("banner"), c["periode"])
+                for c in body.bevestigd]
+    except (KeyError, TypeError) as e:
+        raise HTTPException(422, f"onvolledige bevestiging: {e}")
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
         conn.execute("DELETE FROM promo_confirmations WHERE retailer_id=?", (retailer_id,))
         conn.executemany(
             "INSERT OR IGNORE INTO promo_confirmations (retailer_id, merk, land, banner, periode) "
-            "VALUES (?,?,?,?,?)",
-            [(retailer_id, c["merk"], c["land"], c.get("banner"), c["periode"])
-             for c in body.bevestigd])
-        return {"ok": True, "aantal": len(body.bevestigd)}
+            "VALUES (?,?,?,?,?)", rows)
+        return {"ok": True, "aantal": len(rows)}
 
 
 @app.get("/api/{retailer_id}/assortiment")
@@ -192,15 +195,17 @@ def assortiment(retailer_id: str):
 
 @app.post("/api/import")
 async def do_import(files: list[UploadFile]):
+    # One transaction PER FILE: a crash halfway through file 3 must not roll
+    # back files 1 and 2 while the response still reports them as loaded.
     results = []
-    with db.get_conn() as conn:
-        for f in files:
-            content = await f.read()
-            try:
+    for f in files:
+        content = await f.read()
+        try:
+            with db.get_conn() as conn:
                 results.append(importer.run_import(conn, f.filename, content))
-            except Exception as e:  # noqa: BLE001 - one bad file must not kill the batch
-                conn.rollback()
-                results.append({"filename": f.filename, "status": "error", "detail": str(e)})
+        except Exception as e:  # noqa: BLE001 - one bad file must not kill the batch
+            results.append({"filename": f.filename, "status": "error",
+                            "rows": 0, "retailer_id": None, "detail": str(e)})
     return {"results": results}
 
 
@@ -334,20 +339,31 @@ def publish_profile(retailer_id: str, body: ProfileBody):
 
 
 @app.post("/api/parser/{retailer_id}/test")
-async def test_profile(retailer_id: str, file: UploadFile):
-    """'Testen op bestand': parse with the newest profile, store nothing."""
-    with db.get_conn() as conn:
-        profs = get_profiles(conn, retailer_id)
+async def test_profile(retailer_id: str, file: UploadFile,
+                       definition: str | None = Form(None)):
+    """'Testen op bestand': parse, store nothing. Tests the definition the
+    user is LOOKING AT (sent along as JSON) — unsaved mapping edits included;
+    without it, the newest saved profile."""
+    if definition:
+        try:
+            profile = Profile(id=None, retailer_id=retailer_id, version=0,
+                              status="concept", definition=json.loads(definition))
+        except ValueError as e:
+            raise HTTPException(422, f"ongeldige definitie: {e}")
+    else:
+        with db.get_conn() as conn:
+            profs = get_profiles(conn, retailer_id)
         if not profs:
             raise HTTPException(404, "geen profiel")
-        content = await file.read()
-        try:
-            result = parser_mod.parse_file(file.filename, content, profs[0])
-            return {"ok": True, "rijen": len(result["facts"]),
-                    "periodes": result["periodes"],
-                    "voorbeeld": result["facts"][:5]}
-        except parser_mod.ParseError as e:
-            return {"ok": False, "fout": str(e), "rijen_fouten": e.row_errors[:20]}
+        profile = profs[0]
+    content = await file.read()
+    try:
+        result = parser_mod.parse_file(file.filename, content, profile)
+        return {"ok": True, "rijen": len(result["facts"]),
+                "periodes": result["periodes"],
+                "voorbeeld": result["facts"][:5]}
+    except parser_mod.ParseError as e:
+        return {"ok": False, "fout": str(e), "rijen_fouten": e.row_errors[:20]}
 
 
 # ---------------------------------------------------------------- settings
@@ -380,9 +396,26 @@ class SettingsBody(BaseModel):
     mail_rules: list[dict] | None = None        # [{naam, afzender, bijlage_glob, actief}]
 
 
+def _validate_settings(body: "SettingsBody"):
+    """Raise KeyError before the transaction starts, so a malformed row can
+    never surface as a 500 halfway through a delete-and-reinsert."""
+    for s in body.winkels_targets or []:
+        s["merk"], s["land"]
+    for t in body.rotatie_targets or []:
+        t["merk"], t["stuks_per_winkel_per_week"]
+    for m in body.mail_rules or []:
+        m["naam"]
+
+
 @app.put("/api/{retailer_id}/instellingen")
 def save_settings(retailer_id: str, body: SettingsBody):
-    """'Alles opslaan' — atomic: one transaction for the whole payload."""
+    """'Alles opslaan' — atomic: one transaction for the whole payload. A
+    malformed row is a 422 before anything is touched; the transaction only
+    commits when every part succeeded."""
+    try:
+        _validate_settings(body)
+    except (KeyError, TypeError) as e:
+        raise HTTPException(422, f"onvolledige instelling: {e}")
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
         if body.winkels_targets is not None:
@@ -454,8 +487,14 @@ if STATIC.is_dir():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa(full_path: str):
-        """Client-side routing: every non-API path renders the SPA."""
-        candidate = STATIC / full_path
-        if full_path and candidate.is_file():
+        """Client-side routing: every non-API path renders the SPA. Only
+        files that really live inside the static dir are served — a path
+        that escapes it (../…) falls through to index.html."""
+        base = STATIC.resolve()
+        try:
+            candidate = (STATIC / full_path).resolve()
+        except (OSError, ValueError):
+            candidate = base
+        if full_path and candidate.is_file() and candidate.is_relative_to(base):
             return FileResponse(candidate)
-        return FileResponse(STATIC / "index.html")
+        return FileResponse(base / "index.html")

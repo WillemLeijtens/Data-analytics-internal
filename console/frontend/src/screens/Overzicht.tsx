@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { RetailerCard, Signaal, apiGet } from "../api";
+import { RetailerCard, Signaal } from "../api";
 import { ShellCtx } from "../App";
+import { LoadState, useApi } from "../components/shared";
 
 const SIG_BORDER: Record<Signaal, string> = {
   green: "var(--pos)", orange: "#E08A2E", red: "oklch(0.55 0.18 27)", grey: "#BAC3C8",
@@ -20,9 +20,8 @@ function CapChip({ on, label }: { on: boolean; label: string }) {
 }
 
 export default function Overzicht({ ctx }: { ctx: ShellCtx }) {
-  const [data, setData] = useState<{ retailers: RetailerCard[]; aandacht: number } | null>(null);
-  useEffect(() => { apiGet("/overview").then(setData); }, []);
-  if (!data) return <p className="sub">Laden…</p>;
+  const { data, error, reload } = useApi<{ retailers: RetailerCard[]; aandacht: number }>("/overview");
+  if (!data) return <LoadState error={error} reload={reload} />;
 
   const openRetailer = (c: RetailerCard) =>
     ctx.go(c.id, c.profiel ? "dashboard" : "parser");

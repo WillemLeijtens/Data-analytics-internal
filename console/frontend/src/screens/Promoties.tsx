@@ -1,21 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiSend, fmtEur, YEAR_COLORS } from "../api";
 import { ShellCtx } from "../App";
-import { BrandDot, EmptyProfileCard, LevelStrip } from "../components/shared";
+import { BrandDot, EmptyProfileCard, LevelStrip, LoadState } from "../components/shared";
 
 export default function Promoties({ ctx }: { ctx: ShellCtx }) {
   const [data, setData] = useState<any>(null);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [jaar, setJaar] = useState<string>("ALLE");
   const [saved, setSaved] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const load = () => apiGet(`/${ctx.retailer}/promoties`).then((d) => {
     setData(d);
+    setError(null);
     const init: Record<string, boolean> = {};
     for (const s of d.suggesties ?? []) init[key(s)] = s.bevestigd;
     setChecked(init);
-  });
-  useEffect(() => { load(); }, [ctx.retailer]);
+  }).catch((e) => setError(String(e?.message ?? e)));
+  useEffect(() => { setData(null); load(); }, [ctx.retailer]);
 
   const key = (s: any) => `${s.merk}|${s.land}|${s.banner ?? ""}|${s.periode}`;
 
@@ -24,7 +26,7 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
     return (data.uplift as any[]).filter((u) => jaar === "ALLE" || String(u.jaar) === jaar);
   }, [data, jaar]);
 
-  if (!data) return <p className="sub">Laden…</p>;
+  if (!data) return <LoadState error={error} reload={load} />;
   if (!data.available) return <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />;
 
   const pw = data.periode_type === "maand" ? "Maand" : "Week";
@@ -36,9 +38,13 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
     const bevestigd = (data.suggesties as any[])
       .filter((s) => checked[key(s)])
       .map((s) => ({ merk: s.merk, land: s.land, banner: s.banner, periode: s.periode }));
-    await apiSend(`/${ctx.retailer}/promoties`, "PUT", { bevestigd });
-    setSaved(`${bevestigd.length} ${pw.toLowerCase()}(en) bevestigd`);
-    load();
+    try {
+      await apiSend(`/${ctx.retailer}/promoties`, "PUT", { bevestigd });
+      setSaved(`${bevestigd.length} ${pw.toLowerCase()}(en) bevestigd`);
+      load();
+    } catch (e: any) {
+      setSaved(`Opslaan mislukt: ${e?.message ?? e}`);
+    }
   };
 
   return (

@@ -1,16 +1,15 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { apiGet, fmtEur, fmtNum } from "../api";
+import { fmtEur, fmtNum } from "../api";
 import { ShellCtx } from "../App";
-import { BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, Sparkline, TrendChart } from "../components/shared";
+import { BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, Sparkline, TrendChart, useApi } from "../components/shared";
 
 export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
-  const [data, setData] = useState<any>(null);
   const [metric, setMetric] = useState<"volume" | "omzet">("omzet");
   const [sel, setSel] = useState<string | null>(null);
-  useEffect(() => { apiGet(`/${ctx.retailer}/artikelen`).then(setData); }, [ctx.retailer]);
+  const { data, error, reload } = useApi(`/${ctx.retailer}/artikelen`);
 
-  if (!data) return <p className="sub">Laden…</p>;
+  if (!data) return <LoadState error={error} reload={reload} />;
   if (!data.available && data.reason === "PARSER PROFIEL ONTBREEKT")
     return <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />;
   if (!data.available)

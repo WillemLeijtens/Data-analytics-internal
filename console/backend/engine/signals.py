@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime as dt
 
 from . import analytics
-from .periods import sort_key
+from .periods import period_number, period_year, sort_key
 from .profile import active_profile, capabilities
 
 ORDER = {"grey": 0, "green": 1, "orange": 2, "red": 3}
@@ -51,9 +51,24 @@ def contract_signal(conn, retailer_id: str, today: dt.date | None = None) -> tup
     return worst, note
 
 
+def periods_behind(latest: str, ptype: str, today: dt.date | None = None) -> int:
+    """How many periods the feed lags the last COMPLETED period. Counts
+    across year boundaries, so a 2025-W52 feed in early January is current
+    instead of falsely red."""
+    today = today or dt.date.today()
+    if ptype == "week":
+        iso = today.isocalendar()
+        current_idx = iso[0] * 53 + iso[1]
+        latest_idx = period_year(latest) * 53 + period_number(latest)
+    else:
+        current_idx = today.year * 12 + today.month
+        latest_idx = period_year(latest) * 12 + period_number(latest)
+    return max(0, (current_idx - 1) - latest_idx)
+
+
 def data_signal(conn, retailer_id: str) -> tuple[str, str]:
-    """Feeds behind the expected cadence: newest period vs today. A weekly
-    feed more than 2 periods behind = orange, more than 4 = red."""
+    """Feeds behind the expected cadence: newest period vs the last completed
+    period. <=1 behind = green, <=4 = orange, more = red."""
     row = conn.execute(
         "SELECT f.periode, f.periode_type FROM sellout_facts f "
         "JOIN imports im ON im.id=f.import_id AND im.status IN ('ingelezen','test') "
@@ -62,14 +77,8 @@ def data_signal(conn, retailer_id: str) -> tuple[str, str]:
         return "grey", "Nog geen data"
     latest = max((r["periode"] for r in row), key=sort_key)
     ptype = row[0]["periode_type"]
-    today = dt.date.today()
-    if ptype == "week":
-        current = int(today.strftime("%V"))
-        expected, unit = current - 1, "week"
-        behind = expected - int(latest.split("-W")[1]) if latest.startswith(str(today.year)) else 5
-    else:
-        expected, unit = today.month - 1, "maand"
-        behind = expected - int(latest[-2:]) if latest.startswith(str(today.year)) else 5
+    unit = "week" if ptype == "week" else "maand"
+    behind = periods_behind(latest, ptype)
     if behind <= 1:
         return "green", f"Actueel t/m {latest}"
     if behind <= 4:

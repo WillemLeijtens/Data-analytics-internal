@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
-import { apiGet, fmtEur, fmtNum, BRAND_COLORS } from "../api";
+import { useState } from "react";
+import { fmtEur, fmtNum, BRAND_COLORS } from "../api";
 import { ShellCtx } from "../App";
-import { DeltaTag, EmptyProfileCard, LevelStrip, TrendChart } from "../components/shared";
+import { DeltaTag, EmptyProfileCard, LevelStrip, LoadState, TrendChart, useApi } from "../components/shared";
 
 function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
   label: string; tag: string; tagAccent?: boolean; value: string; sub?: string;
@@ -39,21 +39,18 @@ function MultiChips({ all, sel, onChange }: { all: string[]; sel: string[]; onCh
 }
 
 export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
-  const [data, setData] = useState<any>(null);
   const [merk, setMerk] = useState<string[]>([]);
   const [land, setLand] = useState<string[]>([]);
   const [banner, setBanner] = useState<string[]>([]);
   const [metric, setMetric] = useState<"omzet" | "volume" | "per_winkel">("omzet");
 
-  useEffect(() => {
-    const q = new URLSearchParams();
-    if (merk.length) q.set("merk", merk.join(","));
-    if (land.length) q.set("land", land.join(","));
-    if (banner.length) q.set("banner", banner.join(","));
-    apiGet(`/${ctx.retailer}/dashboard?${q}`).then(setData);
-  }, [ctx.retailer, merk, land, banner]);
+  const q = new URLSearchParams();
+  if (merk.length) q.set("merk", merk.join(","));
+  if (land.length) q.set("land", land.join(","));
+  if (banner.length) q.set("banner", banner.join(","));
+  const { data, error, reload } = useApi(`/${ctx.retailer}/dashboard?${q}`);
 
-  if (!data) return <p className="sub">Laden…</p>;
+  if (!data) return <LoadState error={error} reload={reload} />;
   if (!data.available) return <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />;
 
   const pWord = data.periode_type === "maand" ? "Maand" : "Week";
