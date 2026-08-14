@@ -23,7 +23,10 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("CONSOLE_DB", str(tmp_path / "console.db"))
     monkeypatch.setenv("CONSOLE_AUTH", "gateway")
     monkeypatch.setenv("CONSOLE_BIND", "127.0.0.1")
-    for name in ("db", "seed", "main"):
+    # cleanup_demo hoort er ook bij: die module houdt een verwijzing naar
+    # het db-module vast en zou anders naar de database van een vorige test
+    # blijven wijzen.
+    for name in ("db", "seed", "main", "cleanup_demo"):
         sys.modules.pop(name, None)
     main = importlib.import_module("main")
     return TestClient(main.app)
@@ -295,3 +298,35 @@ def test_import_status_shows_latest_period_not_whole_history(client):
     retailer = client.get("/api/import-status?retailer_id=kruidvat").json()[0]
     feed = next(f for f in retailer["feeds"] if f["feed"] == "TWEEZERMAN")
     assert feed["periode"] == "2026-W32" and feed["rijen"] == 2
+
+
+def test_cleanup_demo_also_removes_settings_from_older_versions(client, monkeypatch):
+    """Gemeld vanaf de droplet: een console die door een oudere versie was
+    aangemaakt hield Etos-demowaarden (530 winkels) over, omdat die retailer
+    inmiddels uit DEMO_SETTINGS was gehaald en het opruimscript zijn zoeklijst
+    daaruit afleidt."""
+    import cleanup_demo
+    import db as db_mod
+
+    with db_mod.get_conn() as conn:
+        conn.executemany(
+            "INSERT INTO retailer_settings (retailer_id, merk, land, banner, "
+            "aantal_winkels, target_per_winkel) VALUES ('etos',?,?,?,?,?)",
+            [("TWEEZERMAN", "NL", None, 530, 35.0),
+             ("ALESSANDRO", "NL", None, 530, 25.0)])
+        conn.execute(
+            "INSERT INTO mail_rules (retailer_id, naam, afzender, bijlage_glob) "
+            "VALUES ('etos','Etos salesreport','data@etos.nl','etos_sales_wk*.csv')")
+        # eigen waarde die MOET blijven staan
+        conn.execute(
+            "INSERT INTO retailer_settings (retailer_id, merk, land, banner, "
+            "aantal_winkels) VALUES ('etos','OLIVIA GARDEN','NL',NULL,777)")
+
+    monkeypatch.setattr(sys, "argv", ["cleanup_demo.py", "--doen"])
+    cleanup_demo.main()
+
+    with db_mod.get_conn() as conn:
+        rest = conn.execute(
+            "SELECT merk, aantal_winkels FROM retailer_settings").fetchall()
+        assert [tuple(r) for r in rest] == [("OLIVIA GARDEN", 777)]
+        assert conn.execute("SELECT COUNT(*) c FROM mail_rules").fetchone()["c"] == 0

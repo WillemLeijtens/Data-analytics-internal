@@ -22,16 +22,48 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import db
 from seed import DEMO_SETTINGS, SEED
 
+# Demowaarden die eerdere versies hebben aangemaakt maar die niet meer in
+# DEMO_SETTINGS staan (Etos verloor zijn profiel, ICI kreeg een ander
+# bijlage-patroon). Zonder deze lijst wordt het script blind voor precies de
+# rijen die het zou moeten opruimen.
+LEGACY_DEMO_SETTINGS = {
+    "etos": {
+        "winkels_targets": [("TWEEZERMAN", "NL", None, 530, 35.0),
+                            ("ALESSANDRO", "NL", None, 530, 25.0)],
+        "rotatie": [("TWEEZERMAN", 6.0), ("ALESSANDRO", 5.0)],
+        "mail": [("Etos salesreport", "data@etos.nl", "etos_sales_wk*.csv")],
+    },
+    "ici-paris-xl": {
+        "winkels_targets": [],
+        "rotatie": [],
+        "mail": [("ICI maandlevering", "reports@iciparisxl.be", "ICIP_*_MTH_*.xlsx")],
+    },
+}
+
 DEMO_SHAREPOINT_PREFIX = "https://leijtens.sharepoint.com/sites/retail/"
 DEMO_FILE_MARKERS = ("_demo.xlsx", "etos_sales_wk", "Douglas_Abverkauf_KW",
                      "ICIP_ALL_MTH_", "DWH_sellout_TWEEZERMAN_NL_wk",
                      "Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__20")
 
 
+def _all_demo_settings() -> dict:
+    """Huidige + historische demowaarden, samengevoegd per retailer."""
+    merged: dict = {}
+    for source in (DEMO_SETTINGS, LEGACY_DEMO_SETTINGS):
+        for retailer, cfg in source.items():
+            target = merged.setdefault(
+                retailer, {"winkels_targets": [], "rotatie": [], "mail": []})
+            for key in target:
+                for row in cfg.get(key, []):
+                    if row not in target[key]:
+                        target[key].append(row)
+    return merged
+
+
 def _demo_rows():
     """(tabel, waar-clausule, params) per soort demo-rij."""
     out = []
-    for retailer, cfg in DEMO_SETTINGS.items():
+    for retailer, cfg in _all_demo_settings().items():
         for merk, land, banner, winkels, target in cfg["winkels_targets"]:
             out.append((
                 "retailer_settings",
