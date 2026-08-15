@@ -228,6 +228,36 @@ def _safe_filename(upload: UploadFile) -> str:
     return (upload.filename or "upload").replace("\\", "/").rsplit("/", 1)[-1] or "upload"
 
 
+@app.post("/api/import/controle")
+async def import_preview(files: list[UploadFile]):
+    """Kijk in het bestand en meld voor welke retailer het herkend wordt,
+    ZONDER iets op te slaan. De gebruiker bevestigt daarna pas; zo landt een
+    bestand nooit ongemerkt bij de verkeerde retailer."""
+    with db.get_conn() as conn:
+        profiles = get_profiles(conn)
+        namen = {r["id"]: r["naam"] for r in conn.execute("SELECT id, naam FROM retailers")}
+    out = []
+    for f in files:
+        filename = _safe_filename(f)
+        try:
+            content = await _read_upload_limited(f)
+        except ValueError as e:
+            out.append({"filename": filename, "herkend": False, "retailer_id": None,
+                        "retailer_naam": None, "detail": str(e)})
+            continue
+        profile = parser_mod.detect(filename, content, profiles)
+        out.append({
+            "filename": filename,
+            "herkend": profile is not None,
+            "retailer_id": profile.retailer_id if profile else None,
+            "retailer_naam": namen.get(profile.retailer_id) if profile else None,
+            "profiel_versie": profile.version if profile else None,
+            "detail": None if profile else
+                      "Geen parser herkent dit bestandsformaat.",
+        })
+    return {"results": out}
+
+
 @app.post("/api/import")
 async def do_import(files: list[UploadFile]):
     # One transaction PER FILE: a crash halfway through file 3 must not roll

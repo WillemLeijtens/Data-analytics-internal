@@ -121,3 +121,29 @@ def test_ici_missing_scope_is_not_silently_approved(client):
     wb.save(out)
     r = upload(client, "Maandelijkse_resultaten_ICI_Paris_ontbrekend.xlsx", out.getvalue())
     assert r["status"] == "error" and "merk/maand" in r["detail"]
+
+
+def test_controle_meldt_retailer_zonder_te_importeren(client):
+    """De controlestap kijkt in het bestand en meldt de retailer, maar mag
+    nog niets opslaan — pas na bevestiging wordt er geïmporteerd."""
+    import seed
+    content = seed.make_ici_xlsx(seed._ici_demo_blocks(["202607"]))
+
+    r = client.post("/api/import/controle", files=[
+        ("files", ("Maandelijkse resultaten ICI Paris XL (4).xlsx", content))]).json()["results"][0]
+    assert r["herkend"] is True
+    assert r["retailer_id"] == "ici-paris-xl"
+    assert r["retailer_naam"] == "ICI Paris XL"
+    assert client.get("/api/imports").json() == [], "controle mag niets opslaan"
+
+    # Pas na bevestiging landt het bestand in de database.
+    upload(client, "Maandelijkse resultaten ICI Paris XL (4).xlsx", content)
+    assert len(client.get("/api/imports").json()) == 1
+
+
+def test_controle_meldt_onbekend_formaat(client):
+    r = client.post("/api/import/controle", files=[
+        ("files", ("onbekend_rapport.xlsx", b"geen spreadsheet"))]).json()["results"][0]
+    assert r["herkend"] is False and r["retailer_id"] is None
+    assert "geen parser" in r["detail"].lower()
+    assert client.get("/api/imports").json() == []
