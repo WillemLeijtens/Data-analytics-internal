@@ -261,6 +261,44 @@ def test_upload_limit_is_enforced_per_file(client, monkeypatch):
     assert result["status"] == "error" and "groter dan" in result["detail"]
 
 
+# ------------------------------------------------------- dubbele gegevens
+
+def test_identical_file_twice_counts_once(client):
+    """Het meest voorkomende dubbel-scenario: hetzelfde bestand nog een keer
+    uploaden (per ongeluk, of onder een andere naam uit de mailbox). De hash
+    op de inhoud vangt dat af: één importregel, één keer geteld."""
+    import seed
+    f = seed.make_dwh_xlsx([{"sku": "31210001", "gtin": "4049469072773",
+                             "desc": "Slant", "brand": "TWEEZERMAN",
+                             "weeks": {"202632": (10, 100.0)}}])
+    assert upload(client, "DWH__Sales_Tweezerman_KVNL_wk32.xlsx", f)["status"] == "ingelezen"
+    assert upload(client, "DWH__Sales_Tweezerman_KVNL_wk32.xlsx", f)["status"] == "ingelezen"
+    # Zelfde inhoud, andere bestandsnaam — mailclients plakken er van alles voor.
+    assert upload(client, "kopie van DWH__Sales_Tweezerman_KVNL_wk32 (1).xlsx",
+                  f)["status"] == "ingelezen"
+
+    assert len(client.get("/api/imports").json()) == 1
+    assert client.get("/api/kruidvat/dashboard").json()["kpi"]["omzet"]["waarde"] == 100.0
+
+
+def test_duplicate_keys_within_one_flat_file_sum(client):
+    """Twee rijen met dezelfde sleutel BINNEN één plat bestand tellen op —
+    exports splitsen een week soms over meerdere regels (bijv. promo en
+    regulier). Dubbel tellen over bestanden heen kan niet: een herlevering
+    vervangt eerst alle overlappende sleutels."""
+    ship_profile("douglas", douglas_definition())
+    rows = [["2026-W32", "DG-1", "TWEEZERMAN", 10, 100.0],
+            ["2026-W32", "DG-1", "TWEEZERMAN", 5, 50.0]]
+    f = make_xlsx(DG_HEADERS, rows)
+    assert upload(client, "Douglas_Abverkauf_KW32.xlsx", f)["status"] == "ingelezen"
+    assert client.get("/api/douglas/dashboard").json()["kpi"]["omzet"]["waarde"] == 150.0
+
+    # Herlevering van dezelfde week in een ander bestand: vervangt, telt niet op.
+    f2 = make_xlsx(DG_HEADERS, [["2026-W32", "DG-1", "TWEEZERMAN", 12, 120.0]])
+    assert upload(client, "Douglas_Abverkauf_KW32_v2.xlsx", f2)["status"] == "ingelezen"
+    assert client.get("/api/douglas/dashboard").json()["kpi"]["omzet"]["waarde"] == 120.0
+
+
 def test_upload_path_in_filename_is_stripped(client):
     result = client.post("/api/import", files=[
         ("files", ("../../etc/passwd.xlsx", b"geen xlsx")),

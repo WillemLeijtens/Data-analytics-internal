@@ -185,8 +185,13 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
     res = fallback.resolve(caps, week=True, winkel=True, banner=True)
     labels = base_labels + res.labels
 
+    # Eén query; het merk/land/banner-filter is een Python-subset zodat de
+    # filterlijsten (uit all_rows) en de cijfers nooit uiteen kunnen lopen.
     all_rows = load_facts(conn, retailer_id)
-    rows = load_facts(conn, retailer_id, merk, land, banner)
+    rows = [r for r in all_rows
+            if (not merk or r["merk"] in merk)
+            and (not land or r["land"] in land)
+            and (not banner or r["banner"] in banner)]
     if not rows:
         return {"available": True, "empty": True, "resolution": res.as_dict(),
                 "labels": labels, "capabilities": caps}
@@ -275,19 +280,20 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
     # Omzet per winkel per periode met het winkelbestand ván dat jaar:
     # één vast aantal over de hele reeks vertekent groei of krimp, maar per
     # losse periode delen zou een winkel die die maand niets verkocht uit de
-    # noemer laten vallen en de reeks laten stuiteren.
+    # noemer laten vallen en de reeks laten stuiteren. Het aantal is binnen
+    # een jaar dus voor elke periode gelijk — één keer per jaar tellen.
     rows_by_year = defaultdict(list)
     for r in rows:
         rows_by_year[period_year(r["periode"])].append(r)
+    count_by_year = {
+        y: store_count(conn, retailer_id, caps, rows_by_year[y],
+                       max((r["periode"] for r in rows_by_year[y]), key=sort_key),
+                       settings)[0]
+        for y in years}
     per_winkel: dict = {}
     for y, perline in trend["series"]["omzet"].items():
-        per_winkel[y] = {}
-        for p, value in perline.items():
-            canonical = f"{y}-W{p:02d}" if caps["periode"] == "week" else f"{y}-{p:02d}"
-            count, _ = store_count(conn, retailer_id, caps,
-                                   rows_by_year[y], canonical, settings)
-            if count:
-                per_winkel[y][p] = value / count
+        count = count_by_year.get(y)
+        per_winkel[y] = {p: value / count for p, value in perline.items()} if count else {}
     trend["series"]["per_winkel"] = per_winkel
 
     return {

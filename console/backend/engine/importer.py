@@ -84,8 +84,8 @@ def run_import(conn, filename: str, content: bytes) -> dict:
                     "rows": existing["row_count"] or 0,
                     "detail": "bestand is al eerder ingelezen; de huidige profielen "
                               "herkennen het niet meer — bestaande data blijft staan"}
-        # Look inside the file anyway: the Parser screen prefills its mapping
-        # table with these columns, so the user maps instead of typing.
+        # Look inside the file anyway: the sniffed columns are the starting
+        # information for building this retailer's parser in the project.
         sniffed = parser_mod.sniff(filename, content)
         replace_existing()
         cur = conn.execute(
@@ -94,7 +94,8 @@ def run_import(conn, filename: str, content: bytes) -> dict:
             (filename, h, json.dumps({"sniff": sniffed}, ensure_ascii=False)))
         return {"import_id": cur.lastrowid, "status": "profiel_nodig", "filename": filename,
                 "retailer_id": None, "rows": 0, "sniff": sniffed,
-                "detail": "geen (eenduidig) profiel herkend — kolommen mappen in de Parser"}
+                "detail": "geen parser herkent dit bestand — deel het bestand, "
+                          "dan wordt de parser in het project gebouwd"}
 
     try:
         result = parser_mod.parse_file(filename, content, profile)
@@ -140,8 +141,3 @@ def run_import(conn, filename: str, content: bytes) -> dict:
             "retailer_id": profile.retailer_id, "profile_version": profile.version,
             "periode": periode_txt, "rows": len(result["facts"]),
             "detail": "; ".join(warnings) if warnings else None}
-
-
-# Analyses must only see counted facts: live-profile imports.
-COUNTED_FACTS = ("sellout_facts f JOIN imports im ON im.id = f.import_id "
-                 "AND im.status = 'ingelezen'")
