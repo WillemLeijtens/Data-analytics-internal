@@ -123,6 +123,72 @@ def test_ici_missing_scope_is_not_silently_approved(client):
     assert r["status"] == "error" and "merk/maand" in r["detail"]
 
 
+def _blocks_twee_jaar():
+    """202512 = vorig jaar, 202601/202602 = huidig jaar.
+
+    TWEEZERMAN: 6051 draait door, 6052 valt stil in 202602, 6053 is nieuw.
+    DEPEND: alleen 6051 — een kleiner winkelbestand dan TWEEZERMAN.
+    """
+    return {
+        "TWEEZERMAN": {
+            "6051": {"202512": 100.0, "202601": 200.0, "202602": 300.0},
+            "6052": {"202512": 900.0, "202601": 50.0},
+            "6053": {"202601": 40.0, "202602": 60.0},
+        },
+        "DEPEND": {"6051": {"202512": 10.0, "202601": 20.0, "202602": 30.0}},
+    }
+
+
+def test_winkelaantal_telt_alleen_winkels_met_omzet_dit_jaar(client):
+    """Per merk gedeeld door de winkels die dít jaar omzet gaven — niet door
+    de hele winkellijst en niet door alleen de verkopers van die maand."""
+    import seed
+    upload(client, "Maandelijkse_resultaten_ICI_Paris_XL_2j.xlsx",
+           seed.make_ici_xlsx(_blocks_twee_jaar()))
+    k = client.get("/api/ici-paris-xl/dashboard").json()["kpi"]["omzet_per_winkel"]
+    per_merk = {b["merk"]: b for b in k["breakdown"]}
+    # TWEEZERMAN: 6051, 6052 en 6053 hadden in 2026 omzet -> 3 winkels,
+    # ook al verkocht 6052 in februari niets meer.
+    assert per_merk["TWEEZERMAN"]["winkels"] == 3
+    assert per_merk["TWEEZERMAN"]["waarde"] == pytest.approx(360.0 / 3)
+    # DEPEND heeft één winkel; delen door 3 zou het merk vier keer te laag zetten.
+    assert per_merk["DEPEND"]["winkels"] == 1
+    assert per_merk["DEPEND"]["waarde"] == pytest.approx(30.0)
+    assert all(b["schatting"] is False for b in k["breakdown"])
+
+
+def test_winkelanalyse_gestopt_en_toegevoegd(client):
+    import seed
+    upload(client, "Maandelijkse_resultaten_ICI_Paris_XL_2j.xlsx",
+           seed.make_ici_xlsx(_blocks_twee_jaar()))
+    w = client.get("/api/ici-paris-xl/dashboard").json()["winkelanalyse"]
+    assert w["beschikbaar"] is True and w["jaar"] == 2026 and w["laatste_maand"] == 2
+    assert "category manager" in w["actiepunt"]
+
+    gestopt = {(g["winkel_id"], g["merk"]): g for g in w["gestopt"]}
+    assert set(gestopt) == {("6052", "TWEEZERMAN")}
+    g = gestopt[("6052", "TWEEZERMAN")]
+    assert g["laatste_maand"] == 1 and g["maanden_zonder_omzet"] == 1
+    # De omzet van vorig jaar is wat we nu mislopen.
+    assert g["omzet_vorig_jaar"] == pytest.approx(900.0)
+    assert w["gemiste_omzet"] == pytest.approx(900.0)
+
+    toegevoegd = {(a["winkel_id"], a["merk"]) for a in w["toegevoegd"]}
+    assert toegevoegd == {("6053", "TWEEZERMAN")}
+    assert w["toegevoegd"][0]["eerste_maand"] == 1
+    assert w["toegevoegd"][0]["omzet_dit_jaar"] == pytest.approx(100.0)
+
+
+def test_winkelanalyse_ontbreekt_zonder_winkeldata(client):
+    """Kruidvat levert geen winkelniveau — dan hoort er geen winkelanalyse
+    te staan in plaats van een lege of verzonnen lijst."""
+    import seed
+    upload(client, "DWH__Sales_volume__sales_Tweezerman_KVNL_32.xlsx",
+           seed.make_dwh_xlsx(seed._kv_demo_rows(["202632"])))
+    dash = client.get("/api/kruidvat/dashboard").json()
+    assert dash["winkelanalyse"] == {"beschikbaar": False}
+
+
 def test_controle_meldt_retailer_zonder_te_importeren(client):
     """De controlestap kijkt in het bestand en meldt de retailer, maar mag
     nog niets opslaan — pas na bevestiging wordt er geïmporteerd."""

@@ -56,10 +56,26 @@ def manual_store_settings(conn, retailer_id: str) -> list[dict]:
         "WHERE retailer_id=? AND aantal_winkels IS NOT NULL", (retailer_id,))]
 
 
-def store_count(conn, retailer_id: str, caps: dict, rows, latest: str | None,
+def stores_with_revenue(rows, jaar: int | None) -> set:
+    """Winkels die in dat jaar daadwerkelijk omzet gedraaid hebben.
+
+    Een winkellijst bevat ook filialen die het merk (nog) niet voeren of het
+    hele jaar niets verkochten. Die meetellen in de noemer drukt de
+    gemiddelde omzet per winkel kunstmatig omlaag. Het jaartotaal is de
+    maatstaf, niet de losse maand: een winkel die in juli toevallig niets
+    verkocht hoort wél bij het winkelbestand van dat jaar."""
+    return {r["winkel_id"] for r in rows
+            if r["winkel_id"] and r["omzet"]
+            and (jaar is None or period_year(r["periode"]) == jaar)}
+
+
+def store_count(conn, retailer_id: str, caps: dict, rows, peil: str | None,
                 settings: list[dict] | None = None) -> tuple[int | None, bool]:
     """(aantal winkels, uit_de_feiten). Valt terug op de handmatige
     instellingen (SCHATTING).
+
+    `peil` is een periode; het telt mee als jáár, niet als losse periode —
+    zie `stores_with_revenue`. None = alle jaren in `rows`.
 
     Instellingen staan per merk. Hetzelfde fysieke winkelbestand komt dus
     één keer per merk voor; simpelweg optellen zou het aantal winkels
@@ -67,8 +83,7 @@ def store_count(conn, retailer_id: str, caps: dict, rows, latest: str | None,
     vaak te laag maken. Binnen een land/banner-scope telt daarom het
     grootste ingestelde aantal, en scopes worden bij elkaar opgeteld."""
     if caps.get("winkel"):
-        stores = {r["winkel_id"] for r in rows if r["winkel_id"]
-                  and (latest is None or r["periode"] == latest)}
+        stores = stores_with_revenue(rows, period_year(peil) if peil else None)
         if stores:
             return len(stores), True
     if settings is None:
@@ -85,6 +100,70 @@ def store_count(conn, retailer_id: str, caps: dict, rows, latest: str | None,
         scope = (s["land"], s["banner"] if caps.get("banner") else None)
         per_scope[scope] = max(per_scope.get(scope, 0), s["aantal_winkels"])
     return (sum(per_scope.values()) or None), False
+
+
+ACTIEPUNT_GESTOPT = ("Neem contact op met de category manager om na te gaan "
+                     "waarom deze winkel(s) geen omzet meer draaien.")
+
+
+def winkelanalyse(rows, caps: dict, jaar: int) -> dict:
+    """Winkels die dit jaar stilgevallen zijn, en winkels die erbij kwamen.
+
+    Per winkel én merk: een winkel kan het ene merk laten vallen en het
+    andere blijven voeren, en dat is precies het gesprek met de category
+    manager. Stilgevallen = dit jaar ergens omzet (of vorig jaar omzet) maar
+    in de laatste maand(en) niets meer. De omzet van vorig jaar staat erbij
+    als maat voor wat we mislopen."""
+    if not caps.get("winkel"):
+        return {"beschikbaar": False}
+
+    per: dict[tuple, dict] = {}
+    for r in rows:
+        if not r["winkel_id"]:
+            continue
+        j = period_year(r["periode"])
+        if j not in (jaar, jaar - 1):
+            continue
+        k = (r["winkel_id"], r["merk"])
+        w = per.setdefault(k, {"winkel_id": r["winkel_id"], "winkel_naam": r["winkel_naam"],
+                               "merk": r["merk"], "nu": {}, "vorig": 0.0})
+        if j == jaar:
+            m = period_number(r["periode"])
+            w["nu"][m] = w["nu"].get(m, 0.0) + r["omzet"]
+        else:
+            w["vorig"] += r["omzet"]
+
+    maanden = sorted({period_number(r["periode"]) for r in rows
+                      if period_year(r["periode"]) == jaar})
+    if not maanden:
+        return {"beschikbaar": True, "jaar": jaar, "gestopt": [], "toegevoegd": [],
+                "gemiste_omzet": 0.0, "actiepunt": ACTIEPUNT_GESTOPT}
+    laatste = maanden[-1]
+
+    gestopt, toegevoegd = [], []
+    for w in per.values():
+        met_omzet = sorted(m for m, v in w["nu"].items() if v)
+        dit_jaar = sum(w["nu"].values())
+        if not w["nu"].get(laatste) and (met_omzet or w["vorig"]):
+            leeg = [m for m in maanden if m > (met_omzet[-1] if met_omzet else 0)]
+            gestopt.append({
+                "winkel_id": w["winkel_id"], "winkel_naam": w["winkel_naam"],
+                "merk": w["merk"], "laatste_maand": met_omzet[-1] if met_omzet else None,
+                "maanden_zonder_omzet": len(leeg),
+                "omzet_dit_jaar": dit_jaar, "omzet_vorig_jaar": w["vorig"]})
+        elif met_omzet and not w["vorig"]:
+            toegevoegd.append({
+                "winkel_id": w["winkel_id"], "winkel_naam": w["winkel_naam"],
+                "merk": w["merk"], "eerste_maand": met_omzet[0],
+                "omzet_dit_jaar": dit_jaar})
+
+    return {
+        "beschikbaar": True, "jaar": jaar, "laatste_maand": laatste,
+        "actiepunt": ACTIEPUNT_GESTOPT,
+        "gestopt": sorted(gestopt, key=lambda x: -x["omzet_vorig_jaar"]),
+        "toegevoegd": sorted(toegevoegd, key=lambda x: -x["omzet_dit_jaar"]),
+        "gemiste_omzet": sum(g["omzet_vorig_jaar"] for g in gestopt),
+    }
 
 
 # ---------------------------------------------------------------- dashboard
@@ -117,6 +196,27 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
             per[r["merk"] or "ONBEKEND"] += r[key]
         return sorted(({"merk": m, "waarde": v} for m, v in per.items()),
                       key=lambda x: -x["waarde"])
+
+    def store_breakdown(periode):
+        """Omzet van die periode per winkel, PER MERK — gedeeld door de
+        winkels die dat merk dít jaar omzet gaven. Eén gedeeld winkelaantal
+        voor alle merken samen deelt de omzet van het ene merk door het
+        winkelbestand van het andere; bij ICI scheelt dat een factor: DEPEND
+        verkoopt in ~100 winkels, TWEEZERMAN in ~142.
+
+        De noemer komt uit álle rijen van het merk (het jaarfilter zit in
+        store_count): een winkel die deze maand toevallig niets verkocht
+        hoort er nog steeds bij."""
+        per_brand: dict[str, list] = defaultdict(list)
+        for r in rows:
+            per_brand[r["merk"] or "ONBEKEND"].append(r)
+        out = []
+        for merk, brows in per_brand.items():
+            n, uit_feiten = store_count(conn, retailer_id, caps, brows, periode, settings)
+            rev = sum(r["omzet"] for r in brows if r["periode"] == periode)
+            out.append({"merk": merk, "winkels": n, "schatting": not uit_feiten,
+                        "waarde": (rev / n) if n else None})
+        return sorted(out, key=lambda x: -(x["waarde"] or 0))
 
     kpi = agg(latest_rows)
     n_stores, from_facts = store_count(conn, retailer_id, caps, rows, latest, settings)
@@ -162,18 +262,20 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
             if y in per_year:
                 per_year[y][period_number(r["periode"])] += r[metric]
         trend["series"][metric] = {y: dict(per_year[y]) for y in years}
-    # Omzet per winkel per periode met het winkelbestand ván die periode:
-    # één vast aantal over de hele reeks vertekent elke groei of krimp.
-    rows_by_period = defaultdict(list)
+    # Omzet per winkel per periode met het winkelbestand ván dat jaar:
+    # één vast aantal over de hele reeks vertekent groei of krimp, maar per
+    # losse periode delen zou een winkel die die maand niets verkocht uit de
+    # noemer laten vallen en de reeks laten stuiteren.
+    rows_by_year = defaultdict(list)
     for r in rows:
-        rows_by_period[r["periode"]].append(r)
+        rows_by_year[period_year(r["periode"])].append(r)
     per_winkel: dict = {}
     for y, perline in trend["series"]["omzet"].items():
         per_winkel[y] = {}
         for p, value in perline.items():
             canonical = f"{y}-W{p:02d}" if caps["periode"] == "week" else f"{y}-{p:02d}"
             count, _ = store_count(conn, retailer_id, caps,
-                                   rows_by_period[canonical], canonical, settings)
+                                   rows_by_year[y], canonical, settings)
             if count:
                 per_winkel[y][p] = value / count
     trend["series"]["per_winkel"] = per_winkel
@@ -186,7 +288,8 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
             "omzet": {"waarde": kpi["omzet"], "breakdown": brand_breakdown(latest_rows, "omzet")},
             "volume": {"waarde": kpi["volume"], "breakdown": brand_breakdown(latest_rows, "volume")},
             "omzet_per_winkel": {"waarde": per_store, "winkels": n_stores,
-                                 "schatting": not from_facts},
+                                 "schatting": not from_facts,
+                                 "breakdown": store_breakdown(latest)},
         },
         "ytd": {
             "jaar": y_now, "tot_periode": upto,
@@ -201,6 +304,7 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
                 "schatting": not (facts_now and facts_prior)},
         },
         "trend": trend,
+        "winkelanalyse": winkelanalyse(rows, caps, y_now),
         "filters": {
             "merk": sorted({r["merk"] for r in all_rows if r["merk"]}),
             "land": sorted({r["land"] for r in all_rows if r["land"]}),

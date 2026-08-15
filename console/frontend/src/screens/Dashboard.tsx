@@ -5,7 +5,7 @@ import { DeltaTag, EmptyProfileCard, LevelStrip, LoadState, TrendChart, useApi }
 
 function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
   label: string; tag: string; tagAccent?: boolean; value: string; sub?: string;
-  breakdown?: { merk: string; waarde: number }[]; isEuro?: boolean;
+  breakdown?: { merk: string; waarde: number; winkels?: number }[]; isEuro?: boolean;
 }) {
   const max = Math.max(1, ...(breakdown ?? []).map((b) => b.waarde));
   return (
@@ -16,7 +16,8 @@ function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
       {breakdown?.map((b) => (
         <div key={b.merk} style={{ marginTop: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
-            <span>{b.merk}</span><span>{isEuro ? fmtEur(b.waarde) : fmtNum(b.waarde)}</span>
+            <span>{b.merk}{b.winkels ? ` · ${b.winkels} winkels` : ""}</span>
+            <span>{isEuro ? fmtEur(b.waarde) : fmtNum(b.waarde)}</span>
           </div>
           <div className="bar-track">
             <div className="bar-fill" style={{ width: `${(b.waarde / max) * 100}%`, background: BRAND_COLORS[b.merk] ?? "var(--main)" }} />
@@ -24,6 +25,77 @@ function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
         </div>
       ))}
     </div>
+  );
+}
+
+const MAANDEN = ["", "jan", "feb", "mrt", "apr", "mei", "jun",
+  "jul", "aug", "sep", "okt", "nov", "dec"];
+
+/** Winkels die dit jaar stilgevallen zijn, en winkels die erbij kwamen. */
+function Winkelanalyse({ w, pWord }: { w: any; pWord: string }) {
+  const naam = (n: number | null) =>
+    n == null ? "—" : pWord === "Maand" ? MAANDEN[n] ?? String(n) : `wk ${n}`;
+  return (
+    <>
+      <hr className="hairline" />
+      <h2>Winkelanalyse {w.jaar}</h2>
+      <p className="sub" style={{ marginTop: -6 }}>
+        Vergeleken met {w.jaar - 1}, t/m {pWord.toLowerCase()} {naam(w.laatste_maand)}.
+        Een winkel telt per merk: een filiaal kan het ene merk laten vallen en het andere houden.
+      </p>
+
+      <div className="level-strip" style={{ borderLeft: "3px solid var(--neg)", marginTop: 14 }}>
+        <span><b>Actiepunt.</b> {w.actiepunt}</span>
+      </div>
+
+      {/* Geen haakjes in koppen: het displayfont vervangt ze door een ornament. */}
+      <h3 style={{ marginTop: 18 }}>
+        Gestopte winkels · {w.gestopt.length} — gemiste omzet {fmtEur(w.gemiste_omzet)}
+      </h3>
+      <table className="data">
+        <thead><tr>
+          <th>Winkel</th><th>Merk</th><th>Laatste omzet</th><th>Zonder omzet</th>
+          <th style={{ textAlign: "right" }}>Omzet {w.jaar}</th>
+          <th style={{ textAlign: "right" }}>Omzet {w.jaar - 1}</th>
+        </tr></thead>
+        <tbody>
+          {w.gestopt.map((g: any) => (
+            <tr key={`${g.winkel_id}-${g.merk}`}>
+              <td>{g.winkel_naam ?? g.winkel_id}</td>
+              <td>{g.merk}</td>
+              <td>{g.laatste_maand == null ? `niets in ${w.jaar}` : naam(g.laatste_maand)}</td>
+              <td>{g.maanden_zonder_omzet} {pWord.toLowerCase()}{g.maanden_zonder_omzet === 1 ? "" : "en"}</td>
+              <td style={{ textAlign: "right" }}>{fmtEur(g.omzet_dit_jaar)}</td>
+              <td style={{ textAlign: "right" }}>{fmtEur(g.omzet_vorig_jaar)}</td>
+            </tr>
+          ))}
+          {!w.gestopt.length && (
+            <tr><td colSpan={6} className="sub">Geen winkels stilgevallen — elke winkel draait nog omzet.</td></tr>
+          )}
+        </tbody>
+      </table>
+
+      <h3 style={{ marginTop: 22 }}>Nieuwe winkels · {w.toegevoegd.length}</h3>
+      <table className="data">
+        <thead><tr>
+          <th>Winkel</th><th>Merk</th><th>Eerste omzet</th>
+          <th style={{ textAlign: "right" }}>Omzet {w.jaar}</th>
+        </tr></thead>
+        <tbody>
+          {w.toegevoegd.map((a: any) => (
+            <tr key={`${a.winkel_id}-${a.merk}`}>
+              <td>{a.winkel_naam ?? a.winkel_id}</td>
+              <td>{a.merk}</td>
+              <td>{naam(a.eerste_maand)}</td>
+              <td style={{ textAlign: "right" }}>{fmtEur(a.omzet_dit_jaar)}</td>
+            </tr>
+          ))}
+          {!w.toegevoegd.length && (
+            <tr><td colSpan={4} className="sub">Geen winkels erbij dit jaar.</td></tr>
+          )}
+        </tbody>
+      </table>
+    </>
   );
 }
 
@@ -93,8 +165,11 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           value={fmtNum(k.volume.waarde)} breakdown={k.volume.breakdown} />}
         <KpiCard label="Omzet per winkel" tag={k.omzet_per_winkel.schatting ? "SCHATTING" : "WINKEL"}
           tagAccent={k.omzet_per_winkel.schatting}
-          value={fmtEur(k.omzet_per_winkel.waarde)}
-          sub={k.omzet_per_winkel.winkels ? `${k.omzet_per_winkel.winkels} winkels` : "Geen winkelaantal ingesteld"} />
+          value={fmtEur(k.omzet_per_winkel.waarde)} isEuro
+          breakdown={k.omzet_per_winkel.breakdown}
+          sub={k.omzet_per_winkel.winkels
+            ? `${k.omzet_per_winkel.winkels} winkels met omzet in ${y.jaar}`
+            : "Geen winkelaantal ingesteld"} />
       </div>
 
       <hr className="hairline" />
@@ -137,6 +212,8 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
         <TrendChart series={data.trend.series[effMetric] ?? {}} years={data.trend.jaren}
           isEuro={effMetric !== "volume"} periodWord={pWord} />
       </div>
+
+      {data.winkelanalyse?.beschikbaar && <Winkelanalyse w={data.winkelanalyse} pWord={pWord} />}
     </>
   );
 }

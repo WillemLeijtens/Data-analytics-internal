@@ -164,6 +164,29 @@ Schema: zie `profiles/*.json` (PROMPT.md §3). Kernregels:
 Elk analyse-resultaat bevat `{level_used, labels[]}`; de UI toont de
 niveau-strip zodra `labels` niet leeg is.
 
+### Aantal winkels
+
+Levert de retailer winkelniveau, dan is het aantal winkels **het aantal
+winkels dat in het lopende jaar omzet draaide voor dat merk** — per merk
+apart, niet één gedeeld winkelbestand. Een winkellijst bevat ook filialen
+die het merk niet voeren; die meetellen drukt de gemiddelde omzet per
+winkel omlaag. Het jaartotaal is de maatstaf, niet de losse maand: een
+winkel die in juli toevallig niets verkocht hoort nog steeds bij dat jaar.
+Bij ICI Paris XL scheelt het per merk een factor — TWEEZERMAN ~145
+winkels, DEPEND ~139, en per maand nog veel minder.
+
+Zonder winkelniveau valt de teller terug op het handmatige aantal uit
+Instellingen (label `SCHATTING`).
+
+### Winkelanalyse (retailers mét winkelniveau)
+
+Op het dashboard: winkels die dit jaar stilgevallen zijn (wél eerder
+omzet, niets meer in de laatste maand) met de omzet van vorig jaar als maat
+voor de gemiste omzet, plus een actiepunt richting de category manager. En
+omgekeerd de nieuwe winkels: vorig jaar geen omzet, dit jaar wel. Per
+winkel én merk, want een filiaal kan het ene merk laten vallen en het
+andere houden.
+
 ## Nieuwe retailer toevoegen
 
 1. Open **Parser** → "Nieuw profiel" (of upload een bestand: onbekend ⇒
