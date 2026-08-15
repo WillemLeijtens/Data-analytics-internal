@@ -105,6 +105,12 @@ def store_count(conn, retailer_id: str, caps: dict, rows, peil: str | None,
 ACTIEPUNT_GESTOPT = ("Neem contact op met de category manager om na te gaan "
                      "waarom deze winkel(s) geen omzet meer draaien.")
 
+# Eén lege maand is bij een langzaamlopend merk als DEPEND gewoon ruis: veel
+# winkels verkopen dan een enkele maand niets zonder dat er iets aan de hand
+# is. Pas vanaf twee opeenvolgende lege maanden noemen we het gestopt; de
+# winkels met één lege maand blijven wél zichtbaar, als signaal.
+GESTOPT_VANAF = 2
+
 
 def winkelanalyse(rows, caps: dict, jaar: int) -> dict:
     """Winkels die dit jaar stilgevallen zijn, en winkels die erbij kwamen.
@@ -136,21 +142,23 @@ def winkelanalyse(rows, caps: dict, jaar: int) -> dict:
     maanden = sorted({period_number(r["periode"]) for r in rows
                       if period_year(r["periode"]) == jaar})
     if not maanden:
-        return {"beschikbaar": True, "jaar": jaar, "gestopt": [], "toegevoegd": [],
-                "gemiste_omzet": 0.0, "actiepunt": ACTIEPUNT_GESTOPT}
+        return {"beschikbaar": True, "jaar": jaar, "gestopt": [], "signalen": [],
+                "toegevoegd": [], "gemiste_omzet": 0.0,
+                "gestopt_vanaf": GESTOPT_VANAF, "actiepunt": ACTIEPUNT_GESTOPT}
     laatste = maanden[-1]
 
-    gestopt, toegevoegd = [], []
+    gestopt, signalen, toegevoegd = [], [], []
     for w in per.values():
         met_omzet = sorted(m for m, v in w["nu"].items() if v)
         dit_jaar = sum(w["nu"].values())
         if not w["nu"].get(laatste) and (met_omzet or w["vorig"]):
             leeg = [m for m in maanden if m > (met_omzet[-1] if met_omzet else 0)]
-            gestopt.append({
+            regel = {
                 "winkel_id": w["winkel_id"], "winkel_naam": w["winkel_naam"],
                 "merk": w["merk"], "laatste_maand": met_omzet[-1] if met_omzet else None,
                 "maanden_zonder_omzet": len(leeg),
-                "omzet_dit_jaar": dit_jaar, "omzet_vorig_jaar": w["vorig"]})
+                "omzet_dit_jaar": dit_jaar, "omzet_vorig_jaar": w["vorig"]}
+            (gestopt if len(leeg) >= GESTOPT_VANAF else signalen).append(regel)
         elif met_omzet and not w["vorig"]:
             toegevoegd.append({
                 "winkel_id": w["winkel_id"], "winkel_naam": w["winkel_naam"],
@@ -159,8 +167,10 @@ def winkelanalyse(rows, caps: dict, jaar: int) -> dict:
 
     return {
         "beschikbaar": True, "jaar": jaar, "laatste_maand": laatste,
-        "actiepunt": ACTIEPUNT_GESTOPT,
+        "actiepunt": ACTIEPUNT_GESTOPT, "gestopt_vanaf": GESTOPT_VANAF,
         "gestopt": sorted(gestopt, key=lambda x: -x["omzet_vorig_jaar"]),
+        # Nog niet gestopt, wel opvallend: één lege maand na eerdere omzet.
+        "signalen": sorted(signalen, key=lambda x: -x["omzet_vorig_jaar"]),
         "toegevoegd": sorted(toegevoegd, key=lambda x: -x["omzet_dit_jaar"]),
         "gemiste_omzet": sum(g["omzet_vorig_jaar"] for g in gestopt),
     }

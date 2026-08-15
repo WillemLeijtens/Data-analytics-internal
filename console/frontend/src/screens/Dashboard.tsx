@@ -31,6 +31,34 @@ function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
 const MAANDEN = ["", "jan", "feb", "mrt", "apr", "mei", "jun",
   "jul", "aug", "sep", "okt", "nov", "dec"];
 
+/** Winkels zonder omzet in de laatste periode(n) — gestopt of nog signaal. */
+function StilTabel({ rijen, w, pWord, naam, leeg }: {
+  rijen: any[]; w: any; pWord: string; naam: (n: number | null) => string; leeg: string;
+}) {
+  return (
+    <table className="data">
+      <thead><tr>
+        <th>Winkel</th><th>Merk</th><th>Laatste omzet</th><th>Zonder omzet</th>
+        <th style={{ textAlign: "right" }}>Omzet {w.jaar}</th>
+        <th style={{ textAlign: "right" }}>Omzet {w.jaar - 1}</th>
+      </tr></thead>
+      <tbody>
+        {rijen.map((g) => (
+          <tr key={`${g.winkel_id}-${g.merk}`}>
+            <td>{g.winkel_naam ?? g.winkel_id}</td>
+            <td>{g.merk}</td>
+            <td>{g.laatste_maand == null ? `niets in ${w.jaar}` : naam(g.laatste_maand)}</td>
+            <td>{g.maanden_zonder_omzet} {pWord.toLowerCase()}{g.maanden_zonder_omzet === 1 ? "" : "en"}</td>
+            <td style={{ textAlign: "right" }}>{fmtEur(g.omzet_dit_jaar)}</td>
+            <td style={{ textAlign: "right" }}>{fmtEur(g.omzet_vorig_jaar)}</td>
+          </tr>
+        ))}
+        {!rijen.length && <tr><td colSpan={6} className="sub">{leeg}</td></tr>}
+      </tbody>
+    </table>
+  );
+}
+
 /** Winkels die dit jaar stilgevallen zijn, en winkels die erbij kwamen. */
 function Winkelanalyse({ w, pWord }: { w: any; pWord: string }) {
   const naam = (n: number | null) =>
@@ -52,28 +80,20 @@ function Winkelanalyse({ w, pWord }: { w: any; pWord: string }) {
       <h3 style={{ marginTop: 18 }}>
         Gestopte winkels · {w.gestopt.length} — gemiste omzet {fmtEur(w.gemiste_omzet)}
       </h3>
-      <table className="data">
-        <thead><tr>
-          <th>Winkel</th><th>Merk</th><th>Laatste omzet</th><th>Zonder omzet</th>
-          <th style={{ textAlign: "right" }}>Omzet {w.jaar}</th>
-          <th style={{ textAlign: "right" }}>Omzet {w.jaar - 1}</th>
-        </tr></thead>
-        <tbody>
-          {w.gestopt.map((g: any) => (
-            <tr key={`${g.winkel_id}-${g.merk}`}>
-              <td>{g.winkel_naam ?? g.winkel_id}</td>
-              <td>{g.merk}</td>
-              <td>{g.laatste_maand == null ? `niets in ${w.jaar}` : naam(g.laatste_maand)}</td>
-              <td>{g.maanden_zonder_omzet} {pWord.toLowerCase()}{g.maanden_zonder_omzet === 1 ? "" : "en"}</td>
-              <td style={{ textAlign: "right" }}>{fmtEur(g.omzet_dit_jaar)}</td>
-              <td style={{ textAlign: "right" }}>{fmtEur(g.omzet_vorig_jaar)}</td>
-            </tr>
-          ))}
-          {!w.gestopt.length && (
-            <tr><td colSpan={6} className="sub">Geen winkels stilgevallen — elke winkel draait nog omzet.</td></tr>
-          )}
-        </tbody>
-      </table>
+      <p className="sub" style={{ marginTop: -6 }}>
+        Vanaf {w.gestopt_vanaf} {pWord.toLowerCase()}en zonder omzet.
+      </p>
+      <StilTabel rijen={w.gestopt} w={w} pWord={pWord} naam={naam}
+        leeg="Geen winkels stilgevallen — elke winkel draait nog omzet." />
+
+      <h3 style={{ marginTop: 22 }}>Let op · {w.signalen.length}</h3>
+      <p className="sub" style={{ marginTop: -6 }}>
+        Eén {pWord.toLowerCase()} zonder omzet na eerdere verkoop — nog geen
+        actie, wel in de gaten houden. Bij een langzaamlopend merk is één lege
+        {" " + pWord.toLowerCase()} vaak gewoon ruis.
+      </p>
+      <StilTabel rijen={w.signalen} w={w} pWord={pWord} naam={naam}
+        leeg={`Geen winkels met één lege ${pWord.toLowerCase()}.`} />
 
       <h3 style={{ marginTop: 22 }}>Nieuwe winkels · {w.toegevoegd.length}</h3>
       <table className="data">

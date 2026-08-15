@@ -180,9 +180,11 @@ Instellingen (label `SCHATTING`).
 
 ### Winkelanalyse (retailers mét winkelniveau)
 
-Op het dashboard: winkels die dit jaar stilgevallen zijn (wél eerder
-omzet, niets meer in de laatste maand) met de omzet van vorig jaar als maat
-voor de gemiste omzet, plus een actiepunt richting de category manager. En
+Op het dashboard: winkels die dit jaar stilgevallen zijn (wél eerder omzet,
+daarna **twee of meer** maanden niets) met de omzet van vorig jaar als maat
+voor de gemiste omzet, plus een actiepunt richting de category manager. Eén
+lege maand is bij een langzaamlopend merk ruis; die winkels staan apart
+onder "Let op" en tellen niet mee in de gemiste omzet. En
 omgekeerd de nieuwe winkels: vorig jaar geen omzet, dit jaar wel. Per
 winkel én merk, want een filiaal kan het ene merk laten vallen en het
 andere houden.

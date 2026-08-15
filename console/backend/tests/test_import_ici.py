@@ -124,18 +124,21 @@ def test_ici_missing_scope_is_not_silently_approved(client):
 
 
 def _blocks_twee_jaar():
-    """202512 = vorig jaar, 202601/202602 = huidig jaar.
+    """202512 = vorig jaar, 202601 t/m 202603 = huidig jaar.
 
-    TWEEZERMAN: 6051 draait door, 6052 valt stil in 202602, 6053 is nieuw.
+    TWEEZERMAN: 6051 draait door, 6052 ligt twee maanden stil (gestopt),
+    6053 is nieuw, 6054 mist alleen de laatste maand (signaal).
     DEPEND: alleen 6051 — een kleiner winkelbestand dan TWEEZERMAN.
     """
     return {
         "TWEEZERMAN": {
-            "6051": {"202512": 100.0, "202601": 200.0, "202602": 300.0},
+            "6051": {"202512": 100.0, "202601": 200.0, "202602": 250.0, "202603": 300.0},
             "6052": {"202512": 900.0, "202601": 50.0},
-            "6053": {"202601": 40.0, "202602": 60.0},
+            "6053": {"202601": 40.0, "202602": 50.0, "202603": 60.0},
+            "6054": {"202512": 500.0, "202601": 10.0, "202602": 20.0},
         },
-        "DEPEND": {"6051": {"202512": 10.0, "202601": 20.0, "202602": 30.0}},
+        "DEPEND": {"6051": {"202512": 10.0, "202601": 20.0,
+                            "202602": 25.0, "202603": 30.0}},
     }
 
 
@@ -147,11 +150,11 @@ def test_winkelaantal_telt_alleen_winkels_met_omzet_dit_jaar(client):
            seed.make_ici_xlsx(_blocks_twee_jaar()))
     k = client.get("/api/ici-paris-xl/dashboard").json()["kpi"]["omzet_per_winkel"]
     per_merk = {b["merk"]: b for b in k["breakdown"]}
-    # TWEEZERMAN: 6051, 6052 en 6053 hadden in 2026 omzet -> 3 winkels,
-    # ook al verkocht 6052 in februari niets meer.
-    assert per_merk["TWEEZERMAN"]["winkels"] == 3
-    assert per_merk["TWEEZERMAN"]["waarde"] == pytest.approx(360.0 / 3)
-    # DEPEND heeft één winkel; delen door 3 zou het merk vier keer te laag zetten.
+    # TWEEZERMAN: alle vier de winkels hadden in 2026 omzet, ook 6052 en 6054
+    # die de laatste maand(en) niets meer verkochten.
+    assert per_merk["TWEEZERMAN"]["winkels"] == 4
+    assert per_merk["TWEEZERMAN"]["waarde"] == pytest.approx(360.0 / 4)
+    # DEPEND heeft één winkel; delen door 4 zou het merk vier keer te laag zetten.
     assert per_merk["DEPEND"]["winkels"] == 1
     assert per_merk["DEPEND"]["waarde"] == pytest.approx(30.0)
     assert all(b["schatting"] is False for b in k["breakdown"])
@@ -162,21 +165,29 @@ def test_winkelanalyse_gestopt_en_toegevoegd(client):
     upload(client, "Maandelijkse_resultaten_ICI_Paris_XL_2j.xlsx",
            seed.make_ici_xlsx(_blocks_twee_jaar()))
     w = client.get("/api/ici-paris-xl/dashboard").json()["winkelanalyse"]
-    assert w["beschikbaar"] is True and w["jaar"] == 2026 and w["laatste_maand"] == 2
-    assert "category manager" in w["actiepunt"]
+    assert w["beschikbaar"] is True and w["jaar"] == 2026 and w["laatste_maand"] == 3
+    assert "category manager" in w["actiepunt"] and w["gestopt_vanaf"] == 2
 
+    # Gestopt: pas vanaf twee lege maanden.
     gestopt = {(g["winkel_id"], g["merk"]): g for g in w["gestopt"]}
     assert set(gestopt) == {("6052", "TWEEZERMAN")}
     g = gestopt[("6052", "TWEEZERMAN")]
-    assert g["laatste_maand"] == 1 and g["maanden_zonder_omzet"] == 1
+    assert g["laatste_maand"] == 1 and g["maanden_zonder_omzet"] == 2
     # De omzet van vorig jaar is wat we nu mislopen.
     assert g["omzet_vorig_jaar"] == pytest.approx(900.0)
     assert w["gemiste_omzet"] == pytest.approx(900.0)
 
+    # Eén lege maand telt niet als gestopt, maar verdwijnt ook niet: 6054
+    # staat als signaal in de lijst en niet in de gemiste omzet.
+    signalen = {(s["winkel_id"], s["merk"]): s for s in w["signalen"]}
+    assert set(signalen) == {("6054", "TWEEZERMAN")}
+    assert signalen[("6054", "TWEEZERMAN")]["maanden_zonder_omzet"] == 1
+    assert signalen[("6054", "TWEEZERMAN")]["omzet_vorig_jaar"] == pytest.approx(500.0)
+
     toegevoegd = {(a["winkel_id"], a["merk"]) for a in w["toegevoegd"]}
     assert toegevoegd == {("6053", "TWEEZERMAN")}
     assert w["toegevoegd"][0]["eerste_maand"] == 1
-    assert w["toegevoegd"][0]["omzet_dit_jaar"] == pytest.approx(100.0)
+    assert w["toegevoegd"][0]["omzet_dit_jaar"] == pytest.approx(150.0)
 
 
 def test_winkelanalyse_ontbreekt_zonder_winkeldata(client):
