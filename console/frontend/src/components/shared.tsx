@@ -71,12 +71,7 @@ export function EmptyProfileCard({ retailer, go }:
       </p>
       <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
         <button className="btn" onClick={() => go(retailer, "import")}>Bestand uploaden</button>
-        <button className="btn ghost" onClick={() => go(retailer, "parser")}>Kolommen zelf mappen</button>
       </div>
-      <p className="sub" style={{ marginTop: 14, fontSize: 11 }}>
-        Zelf mappen werkt alleen bij een eenvoudig, plat bestand — één kopregel
-        met kolommen zoals week, merk, aantal en omzet.
-      </p>
     </div>
   );
 }

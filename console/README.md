@@ -2,8 +2,9 @@
 
 Multi-retailer herbouw van de interne "Data analyse agent", naar het
 high-fidelity ontwerp uit `design/` (By Leijtens design system). Eén canoniek
-datamodel, N parser-profielen: een retailer toevoegen is één JSON-profiel
-publiceren — er zit geen retailer-specifieke code in analyses of UI.
+datamodel, per retailer een parser die in dít project gebouwd wordt tegen een
+écht aanleverbestand — er zit geen retailer-specifieke code in analyses of UI,
+en er valt in de app niets te mappen of te publiceren.
 
 De bestaande Streamlit-app in `app/` blijft ongewijzigd draaien; deze console
 staat er los naast tot de overstap gemaakt wordt.
@@ -141,11 +142,17 @@ console/
 
 Schema: zie `profiles/*.json` (PROMPT.md §3). Kernregels:
 
-- **Capabilities worden afgeleid** uit mapping + constants, nergens opgeslagen.
-- **Detectie**: filename-glob, met sheet/verplichte-headers als tiebreak.
-  Nul of meerdere matches ⇒ status **PROFIEL NODIG**; de gebruiker mapt
-  éénmalig kolommen in het Parser-scherm. Concept-profielen doen nooit mee.
-- **Versionering**: publiceren = nieuwe versie; oude versies blijven leesbaar;
+- **Profielen komen uit het project**, niet uit de app: ingebouwde parsers
+  (`builtin`, zoals kruidvat_dwh en ici_maandrapport) of een JSON in
+  `profiles/`. De app heeft geen mapping-editor en geen publiceer-endpoint;
+  het Parser-scherm is alleen-lezen plus "controleren op bestand".
+- **Capabilities worden afgeleid** uit mapping + constants (of liggen bij een
+  ingebouwde parser vast), nergens opgeslagen.
+- **Detectie**: filename-glob, met sheet/verplichte-headers als tiebreak, en
+  voor ingebouwde parsers structuurherkenning van de inhoud (hernoemen mag).
+  Nul of meerdere matches ⇒ status **PROFIEL NODIG**. Concept-profielen doen
+  nooit mee.
+- **Versionering**: nieuwe versie naast de oude; oude versies blijven leesbaar;
   elke import logt de gebruikte versie. Een profiel in `test` leest wél in,
   maar de feiten zijn gevlagd: zichtbaar in de schermen van die retailer
   (met label PROFIEL IN TEST), uitgesloten van cross-retailer-rapportage.
@@ -191,13 +198,14 @@ andere houden.
 
 ## Nieuwe retailer toevoegen
 
-1. Open **Parser** → "Nieuw profiel" (of upload een bestand: onbekend ⇒
-   PROFIEL NODIG in de importlog).
-2. Vul detectie (naam-patroon, sheet, header-rij), periodiciteit en de
-   kolom-mapping in; `volume` en `omzet` zijn verplicht om te publiceren.
-3. "Testen op bestand" tegen een echt voorbeeldbestand.
-4. "Profiel publiceren" — alle schermen passen zich automatisch aan de
-   afgeleide capabilities aan. Geen code nodig.
+1. Upload een bestand van de retailer: onbekend ⇒ **PROFIEL NODIG** in de
+   importlog, mét de gesniffte kolommen als startinformatie.
+2. Deel het échte aanleverbestand; de parser wordt in dit Claude
+   Code-project gebouwd (ingebouwde parser voor gepivoteerde formaten, of
+   een JSON-profiel in `profiles/` voor een plat bestand) en getest tegen
+   dat bestand — reconciliatie met de totalen in het bestand incluis.
+3. Na de update: bestand opnieuw uploaden ⇒ herkend en ingelezen; alle
+   schermen passen zich automatisch aan de capabilities aan.
 
 ## Acceptatiecriteria (PROMPT.md §8)
 

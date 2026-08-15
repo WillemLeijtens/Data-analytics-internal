@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import json
 import os
 import secrets
 import sys
@@ -12,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -21,8 +20,7 @@ import db
 from engine import analytics, contracts, importer, signals
 from engine import parser as parser_mod
 from engine.periods import sort_key
-from engine.profile import (Profile, active_profile, capabilities, get_profiles,
-                            missing_required, save_profile, validate_definition)
+from engine.profile import active_profile, capabilities, get_profiles
 
 app = FastAPI(title="Retailer Console")
 
@@ -346,103 +344,20 @@ def list_profiles():
         for p in get_profiles(conn):
             out.append({"id": p.id, "retailer_id": p.retailer_id, "version": p.version,
                         "status": p.status, "definition": p.definition,
-                        "capabilities": capabilities(p.definition),
-                        "ontbreekt": sorted(missing_required(p.definition))})
+                        "capabilities": capabilities(p.definition)})
         return out
 
 
-@app.get("/api/parser/voorstel")
-def profile_proposal():
-    """Draft definition for a new profile, prefilled from the newest
-    unrecognised import ('PROFIEL NODIG'). The mapping lists the file's real
-    columns with empty targets, so the Parser screen starts from the file
-    instead of from nothing."""
-    with db.get_conn() as conn:
-        row = conn.execute(
-            "SELECT filename, error_detail FROM imports WHERE status='profiel_nodig' "
-            "ORDER BY created_at DESC, id DESC LIMIT 1").fetchone()
-    if not row:
-        return {"beschikbaar": False}
-    sniffed = None
-    if row["error_detail"]:
-        try:
-            sniffed = json.loads(row["error_detail"]).get("sniff")
-        except ValueError:
-            sniffed = None
-    if not sniffed:
-        return {"beschikbaar": False, "filename": row["filename"],
-                "reden": "kolommen konden niet gelezen worden"}
-    # Filename glob suggestion: digit runs become wildcards, so
-    # 'Douglas_Abverkauf_KW32.xlsx' matches every week's delivery.
-    import re as _re
-    glob = _re.sub(r"\d+", "*", row["filename"])
-    voorbeeld = sniffed.get("voorbeeld") or []
-    return {
-        "beschikbaar": True,
-        "filename": row["filename"],
-        "definition": {
-            "detection": {
-                "filename_glob": glob,
-                "sheet": sniffed.get("sheet"),
-                "header_row": sniffed.get("header_row", 1),
-                "required_headers": sniffed.get("columns", [])[:3],
-                "filetype": sniffed.get("filetype", "xlsx"),
-                "csv_delimiter": sniffed.get("csv_delimiter"),
-                "decimal": ",",
-            },
-            "period": {"type": "week", "source_column": "", "format": "yyyyww"},
-            "mapping": [
-                {"source": col, "target": None, "note": "KIES VELD",
-                 "voorbeeld": voorbeeld[i] if i < len(voorbeeld) else ""}
-                for i, col in enumerate(sniffed.get("columns", []))
-            ],
-            "constants": {},
-            "thresholds": {"promo_price_drop": 0.05},
-        },
-    }
-
-
-class ProfileBody(BaseModel):
-    definition: dict
-    status: str = "concept"   # concept | test | live
-
-
-@app.post("/api/parser/{retailer_id}/profielen")
-def publish_profile(retailer_id: str, body: ProfileBody):
-    if body.status not in ("concept", "test", "live"):
-        raise HTTPException(422, "status moet concept|test|live zijn")
-    try:
-        validate_definition(body.definition, require_complete=body.status in ("test", "live"))
-    except (TypeError, ValueError) as e:
-        raise HTTPException(422, str(e)) from e
-    with db.get_conn() as conn:
-        _retailer_or_404(conn, retailer_id)
-        p = save_profile(conn, retailer_id, body.definition, body.status)
-        if body.status == "live":
-            conn.execute("UPDATE retailers SET aangesloten=1 WHERE id=?", (retailer_id,))
-        return {"id": p.id, "version": p.version, "status": p.status}
-
-
 @app.post("/api/parser/{retailer_id}/test")
-async def test_profile(retailer_id: str, file: UploadFile,
-                       definition: str | None = Form(None)):
-    """'Testen op bestand': parse, store nothing. Tests the definition the
-    user is LOOKING AT (sent along as JSON) — unsaved mapping edits included;
-    without it, the newest saved profile."""
-    if definition:
-        try:
-            draft = json.loads(definition)
-            validate_definition(draft, require_complete=True)
-            profile = Profile(id=None, retailer_id=retailer_id, version=0,
-                              status="concept", definition=draft)
-        except (TypeError, ValueError) as e:
-            raise HTTPException(422, f"ongeldige definitie: {e}")
-    else:
-        with db.get_conn() as conn:
-            profs = get_profiles(conn, retailer_id)
-        if not profs:
-            raise HTTPException(404, "geen profiel")
-        profile = profs[0]
+async def test_profile(retailer_id: str, file: UploadFile):
+    """'Controleren op bestand': parse met de parser van deze retailer en
+    sla niets op. Alleen lezen — profielen worden in het project gemaakt,
+    niet in de app."""
+    with db.get_conn() as conn:
+        profs = get_profiles(conn, retailer_id)
+    if not profs:
+        raise HTTPException(404, "geen profiel")
+    profile = profs[0]
     try:
         content = await _read_upload_limited(file)
     except ValueError as e:
@@ -580,6 +495,10 @@ if STATIC.is_dir():
         """Client-side routing: every non-API path renders the SPA. Only
         files that really live inside the static dir are served — a path
         that escapes it (../…) falls through to index.html."""
+        # Een niet-bestaand API-pad hoort een echte 404 te zijn; de SPA-pagina
+        # met status 200 teruggeven zou elke frontend-fout maskeren.
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(404)
         base = STATIC.resolve()
         try:
             candidate = (STATIC / full_path).resolve()

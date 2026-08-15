@@ -131,7 +131,9 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
             ) : (
               <p style={{ fontSize: 15, margin: "6px 0 2px" }}>
                 Voor dit bestandsformaat bestaat nog <b>geen parser</b>. Bevestig je,
-                dan wordt het geregistreerd als “profiel nodig” en kun je het formaat laten aansluiten.
+                dan wordt het geregistreerd als “profiel nodig”. Deel het bestand —
+                de parser wordt in het Claude&nbsp;Code-project gebouwd en komt mee
+                met een update.
               </p>
             )}
             <div style={{ display: "flex", gap: 10, marginTop: 14 }}>

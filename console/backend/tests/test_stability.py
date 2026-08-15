@@ -12,7 +12,8 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from test_parser_flow import DG_HEADERS, dg_rows, make_xlsx, upload  # noqa: E402
+from test_parser_flow import (DG_HEADERS, dg_rows, douglas_definition,  # noqa: E402
+                              make_xlsx, ship_profile, upload)
 from engine.signals import periods_behind  # noqa: E402
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -32,27 +33,9 @@ def client(tmp_path, monkeypatch):
     return TestClient(main.app)
 
 
-def douglas_definition(break_period=False) -> dict:
-    return {
-        "detection": {"filename_glob": "Douglas_Abverkauf_KW*.xlsx", "sheet": "Sheet1",
-                      "header_row": 1, "required_headers": DG_HEADERS[:3],
-                      "filetype": "xlsx", "csv_delimiter": None, "decimal": ","},
-        "period": {"type": "week",
-                   "source_column": "BestaatNiet" if break_period else "Kalenderwoche",
-                   "format": "yyyy-Www"},
-        "mapping": [{"source": "Marke", "target": "merk"},
-                    {"source": "Absatz", "target": "volume"},
-                    {"source": "Umsatz", "target": "omzet"}],
-        "constants": {"land": "DE"},
-        "thresholds": {"promo_price_drop": 0.05},
-    }
-
-
 def publish_douglas(client, break_period=False):
     f = make_xlsx(DG_HEADERS, dg_rows(2026, [32]))
-    r = client.post("/api/parser/douglas/profielen",
-                    json={"definition": douglas_definition(break_period), "status": "live"})
-    assert r.status_code == 200
+    ship_profile("douglas", douglas_definition(break_period))
     return f
 
 
@@ -109,11 +92,9 @@ def test_failed_reimport_keeps_existing_facts(client):
 def test_previously_loaded_file_survives_when_detection_turns_ambiguous(client):
     f = publish_douglas(client)
     assert upload(client, "Douglas_Abverkauf_KW32.xlsx", f)["status"] == "ingelezen"
-    # A SECOND retailer publishes a profile with the same glob and headers:
+    # A SECOND retailer ships a profile with the same glob and headers:
     # detection is now ambiguous -> the loaded import must stay untouched.
-    r = client.post("/api/parser/etos/profielen",
-                    json={"definition": douglas_definition(), "status": "live"})
-    assert r.status_code == 200
+    ship_profile("etos", douglas_definition())
     result = upload(client, "Douglas_Abverkauf_KW32.xlsx", f)
     assert result["status"] == "ingelezen"
     assert "blijft staan" in result["detail"]
@@ -179,23 +160,17 @@ def test_malformed_promo_confirmation_is_422(client):
     assert r.status_code == 422
 
 
-# ------------------------------------------------------- test-on-file draft
+# ------------------------------------------------------- controleren op bestand
 
-def test_test_endpoint_uses_supplied_draft(client):
+def test_test_endpoint_uses_shipped_profile(client):
     f = make_xlsx(DG_HEADERS, dg_rows(2026, [32]))
-    upload(client, "Douglas_Abverkauf_KW32.xlsx", f)
-    d = client.get("/api/parser/voorstel").json()["definition"]
-    d["period"] = {"type": "week", "source_column": "Kalenderwoche", "format": "yyyy-Www"}
-    for m in d["mapping"]:
-        m["target"] = {"Marke": "merk", "Absatz": "volume", "Umsatz": "omzet"}.get(m["source"])
-    import json as _json
-    r = client.post("/api/parser/douglas/test",
-                    files={"file": ("Douglas_Abverkauf_KW32.xlsx", f)},
-                    data={"definition": _json.dumps(d)}).json()
-    assert r["ok"] and r["rijen"] == 2
-    # Zonder draft en zonder opgeslagen profiel: nette 404, geen crash.
+    # Zonder profiel: nette 404, geen crash.
     assert client.post("/api/parser/douglas/test",
                        files={"file": ("Douglas_Abverkauf_KW32.xlsx", f)}).status_code == 404
+    ship_profile("douglas", douglas_definition())
+    r = client.post("/api/parser/douglas/test",
+                    files={"file": ("Douglas_Abverkauf_KW32.xlsx", f)}).json()
+    assert r["ok"] and r["rijen"] == 2
 
 
 # ------------------------------------------------------- year boundary
@@ -267,10 +242,13 @@ def test_cleanup_demo_keeps_real_imports_and_own_settings(client, tmp_path, monk
 
 # ------------------------------------------------------- audit-fixes
 
-def test_malformed_profile_definition_is_422(client):
+def test_profile_publishing_is_no_longer_exposed(client):
+    """Zelf mappen is bewust uit de app: profielen komen uit het project.
+    De oude endpoints horen weg te zijn, niet alleen verborgen in de UI."""
     r = client.post("/api/parser/douglas/profielen",
                     json={"definition": {"detection": {}}, "status": "live"})
-    assert r.status_code == 422
+    assert r.status_code in (404, 405)
+    assert client.get("/api/parser/voorstel").status_code in (404, 405)
 
 
 def test_upload_limit_is_enforced_per_file(client, monkeypatch):

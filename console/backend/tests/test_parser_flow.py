@@ -1,11 +1,13 @@
 """End-to-end: van onbekend bestand naar werkende retailer-analyses.
 
-Dit is de keten die een gebruiker doorloopt om zelf een parser te maken:
-  1. onbekend bestand uploaden  -> PROFIEL NODIG, kolommen gesnifft
-  2. /api/parser/voorstel       -> conceptdefinitie met de echte kolommen
-  3. mapping invullen + profiel LIVE publiceren (nieuwe versie, opgeslagen)
-  4. bestand opnieuw uploaden   -> herkend en ingelezen
-  5. meerjarige historie laden  -> dashboard/analyses tonen de juiste cijfers
+Parsers worden in het project gebouwd, niet in de app — zelf mappen is er
+bewust uit. De keten voor een nieuwe retailer:
+  1. onbekend bestand uploaden  -> PROFIEL NODIG, kolommen gesnifft (die
+     informatie is het startpunt voor de parserbouw in het project)
+  2. het project levert een profiel (hier: save_profile, in het echt een
+     JSON in profiles/ of een ingebouwde parser)
+  3. bestand opnieuw uploaden   -> herkend en ingelezen
+  4. meerjarige historie laden  -> dashboard/analyses tonen de juiste cijfers
 """
 
 import importlib
@@ -39,6 +41,34 @@ def make_xlsx(headers, rows, sheet="Sheet1", meta_rows=0) -> bytes:
 
 
 DG_HEADERS = ["Kalenderwoche", "Artikelnummer", "Marke", "Absatz", "Umsatz"]
+
+
+def douglas_definition(break_period=False) -> dict:
+    return {
+        "detection": {"filename_glob": "Douglas_Abverkauf_KW*.xlsx", "sheet": "Sheet1",
+                      "header_row": 1, "required_headers": DG_HEADERS[:3],
+                      "filetype": "xlsx", "csv_delimiter": None, "decimal": ","},
+        "period": {"type": "week",
+                   "source_column": "BestaatNiet" if break_period else "Kalenderwoche",
+                   "format": "yyyy-Www"},
+        "mapping": [{"source": "Marke", "target": "merk"},
+                    {"source": "Absatz", "target": "volume"},
+                    {"source": "Umsatz", "target": "omzet"}],
+        "constants": {"land": "DE"},
+        "thresholds": {"promo_price_drop": 0.05},
+    }
+
+
+def ship_profile(retailer_id: str, definition: dict, status: str = "live"):
+    """Zoals het project een profiel meelevert: rechtstreeks in de database,
+    niet via een endpoint — publiceren kan niet meer vanuit de app."""
+    import db
+    from engine.profile import save_profile
+    with db.get_conn() as conn:
+        p = save_profile(conn, retailer_id, definition, status)
+        if status == "live":
+            conn.execute("UPDATE retailers SET aangesloten=1 WHERE id=?", (retailer_id,))
+        return p
 
 
 def dg_rows(year, weeks, factor=1.0):
@@ -91,45 +121,32 @@ def upload(client, filename, content):
 
 
 def test_full_parser_flow(client):
-    # 1. Unknown file -> PROFIEL NODIG (Douglas profile is concept: never matches)
+    # 1. Unknown file -> PROFIEL NODIG; the sniffed columns are the input
+    #    for building the parser in the project.
     f2026 = make_xlsx(DG_HEADERS, dg_rows(2026, [30, 31, 32]))
     result = upload(client, "Douglas_Abverkauf_KW32.xlsx", f2026)
     assert result["status"] == "profiel_nodig"
     assert result["sniff"]["columns"] == DG_HEADERS
 
-    # 2. Proposal carries the file's real columns and a usable glob
-    v = client.get("/api/parser/voorstel").json()
-    assert v["beschikbaar"] is True
-    assert [m["source"] for m in v["definition"]["mapping"]] == DG_HEADERS
-    assert v["definition"]["detection"]["filename_glob"] == "Douglas_Abverkauf_KW*.xlsx"
-
-    # 3. Fill the mapping like the UI does and publish LIVE
-    d = v["definition"]
-    d["period"] = {"type": "week", "source_column": "Kalenderwoche", "format": "yyyy-Www"}
-    targets = {"Marke": "merk", "Absatz": "volume", "Umsatz": "omzet"}
-    for m in d["mapping"]:
-        m["target"] = targets.get(m["source"])
-    d["constants"] = {"land": "DE"}
-    r = client.post("/api/parser/douglas/profielen", json={"definition": d, "status": "live"})
-    assert r.status_code == 200 and r.json()["status"] == "live"
-
-    # Douglas heeft geen meegeleverd profiel: dit is het eerste, v1 live.
+    # 2. The project ships a profile (v1 live).
+    ship_profile("douglas", douglas_definition())
     profs = [p for p in client.get("/api/parser/profielen").json()
              if p["retailer_id"] == "douglas"]
     assert [(p["version"], p["status"]) for p in profs] == [(1, "live")]
 
-    # Publishing live without a period column must be refused
-    d_bad = {**d, "period": {"type": "week", "source_column": "", "format": "yyyy-Www"}}
-    assert client.post("/api/parser/douglas/profielen",
-                       json={"definition": d_bad, "status": "live"}).status_code == 422
+    # Een onvolledig profiel meeleveren blijft geweigerd worden.
+    bad = douglas_definition()
+    bad["period"] = {"type": "week", "source_column": "", "format": "yyyy-Www"}
+    with pytest.raises(ValueError):
+        ship_profile("douglas", bad)
 
-    # 4. Same file again -> recognised and loaded (replaces the old row)
+    # 3. Same file again -> recognised and loaded (replaces the old row)
     result = upload(client, "Douglas_Abverkauf_KW32.xlsx", f2026)
     assert result["status"] == "ingelezen" and result["rows"] == 6
     imports = client.get("/api/imports").json()
     assert [i["status"] for i in imports] == ["ingelezen"]
 
-    # 5. History: previous year through the same pipeline, cheaper week 31
+    # 4. History: previous year through the same pipeline, cheaper week 31
     f2025 = make_xlsx(DG_HEADERS, dg_rows(2025, [30, 31, 32], factor=0.9))
     result = upload(client, "Douglas_Abverkauf_KW31.xlsx", f2025)
     assert result["status"] == "ingelezen" and result["rows"] == 6
@@ -165,13 +182,7 @@ def test_databases_survive_restart(client, tmp_path, monkeypatch):
     """Profiles and facts live in the mounted database file, not in the
     container: a fresh app process on the same file sees everything."""
     f = make_xlsx(DG_HEADERS, dg_rows(2026, [32]))
-    upload(client, "Douglas_Abverkauf_KW32.xlsx", f)
-    v = client.get("/api/parser/voorstel").json()
-    d = v["definition"]
-    d["period"] = {"type": "week", "source_column": "Kalenderwoche", "format": "yyyy-Www"}
-    for m in d["mapping"]:
-        m["target"] = {"Marke": "merk", "Absatz": "volume", "Umsatz": "omzet"}.get(m["source"])
-    client.post("/api/parser/douglas/profielen", json={"definition": d, "status": "live"})
+    ship_profile("douglas", douglas_definition())
     upload(client, "Douglas_Abverkauf_KW32.xlsx", f)
 
     # Simulate a restart: re-import main against the SAME database file.
