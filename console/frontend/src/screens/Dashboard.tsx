@@ -216,7 +216,7 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
         </span>
       </div>
 
-      <h2>Meest recente {pWord.toLowerCase()} {data.laatste_periode}</h2>
+      <h2>Meest recente {pWord.toLowerCase()} <span className="kop-data">{data.laatste_periode}</span></h2>
       {data.laatste_periode_compleet === false && (
         // Een halve periode als volledige tonen laat de omzet kelderen en
         // maakt de YoY-vergelijking oneerlijk.
@@ -244,7 +244,7 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       </div>
 
       <hr className="hairline" />
-      <h2>YTD {y.jaar} t/m {pWord.toLowerCase()} {y.tot_periode} vs {y.jaar - 1}</h2>
+      <h2>YTD {y.jaar} <span className="kop-data">t/m</span> {pWord.toLowerCase()} {y.tot_periode} vs {y.jaar - 1}</h2>
       <div className="grid kpi">
         <div className="card">
           <div className="kpi-label">Omzet YTD<DeltaTag pct={y.omzet.delta_pct} /></div>
@@ -279,7 +279,9 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
               ).join(", ")}.</>
             : <>Geen Δ%: geen enkel merk heeft data in zowel {y.jaar} als {y.jaar - 1}.</>}
           {y.basis.niet_vergelijkbaar.length > 0 && (
-            <> {y.basis.niet_vergelijkbaar.map((m: string) => m ?? "ONBEKEND").join(" en ")} ontbreek{y.basis.niet_vergelijkbaar.length === 1 ? "t" : "en"} in {y.jaar - 1} en telt daarom niet mee in het percentage — de absolute totalen tellen wél alles.</>
+            y.basis.niet_vergelijkbaar.length === 1
+              ? <> {y.basis.niet_vergelijkbaar[0] ?? "ONBEKEND"} ontbreekt in {y.jaar - 1} en telt daarom niet mee in het percentage — de absolute totalen tellen wél alles.</>
+              : <> {y.basis.niet_vergelijkbaar.map((m: string) => m ?? "ONBEKEND").join(" en ")} ontbreken in {y.jaar - 1} en tellen daarom niet mee in het percentage — de absolute totalen tellen wél alles.</>
           )}
         </p>
       )}

@@ -136,6 +136,10 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
                 met een update.
               </p>
             )}
+            {!p.herkend && p.detail && (
+              // Onderscheid "parser nodig" van "bestand onleesbaar".
+              <p className="sub" style={{ color: "#B4690E" }}>{p.detail}</p>
+            )}
             <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
               <button className="btn" disabled={busy} onClick={() => bevestig(item)}
                 style={{ display: "inline-flex", alignItems: "center", gap: 8,

@@ -194,6 +194,16 @@ def save_promoties(retailer_id: str, body: PromoConfirmations):
         raise HTTPException(422, f"onvolledige bevestiging: {e}")
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
+        # Een bevestiging voor een periode die niet in de feiten voorkomt zou
+        # onzichtbaar opgeslagen worden — en later, zodra die periode alsnog
+        # geladen wordt, ineens als actie meetellen. Weigeren dus.
+        bestaand = {r["periode"] for r in conn.execute(
+            "SELECT DISTINCT periode FROM sellout_facts WHERE retailer_id=?",
+            (retailer_id,))}
+        spook = sorted({p for (_, _, _, _, p) in rows} - bestaand)
+        if spook:
+            raise HTTPException(
+                422, f"periode(s) niet in de data van deze retailer: {', '.join(spook)}")
         conn.execute("DELETE FROM promo_confirmations WHERE retailer_id=?", (retailer_id,))
         conn.executemany(
             "INSERT OR IGNORE INTO promo_confirmations (retailer_id, merk, land, banner, periode) "
@@ -244,14 +254,22 @@ async def import_preview(files: list[UploadFile]):
                         "retailer_naam": None, "detail": str(e)})
             continue
         profile = parser_mod.detect(filename, content, profiles)
+        if profile:
+            detail = None
+        elif parser_mod.sniff(filename, content):
+            detail = "Geen parser herkent dit bestandsformaat."
+        else:
+            # Zelfs geen tabel te vinden: waarschijnlijk corrupt of geen
+            # spreadsheet — dat is een ander gesprek dan "parser nodig".
+            detail = ("Bestand kon niet als tabel gelezen worden — is het een "
+                      "geldig XLSX- of CSV-bestand?")
         out.append({
             "filename": filename,
             "herkend": profile is not None,
             "retailer_id": profile.retailer_id if profile else None,
             "retailer_naam": namen.get(profile.retailer_id) if profile else None,
             "profiel_versie": profile.version if profile else None,
-            "detail": None if profile else
-                      "Geen parser herkent dit bestandsformaat.",
+            "detail": detail,
         })
     return {"results": out}
 
@@ -413,8 +431,16 @@ def _validate_settings(body: "SettingsBody"):
     never surface as a 500 halfway through a delete-and-reinsert."""
     for s in body.winkels_targets or []:
         s["merk"], s["land"]
+        # Nul of negatief werd stroomafwaarts stil genegeerd; beter meteen
+        # weigeren dan een instelling opslaan die nooit iets doet.
+        if s.get("aantal_winkels") is not None and s["aantal_winkels"] <= 0:
+            raise ValueError(f"aantal_winkels moet groter dan nul zijn ({s['merk']})")
+        if s.get("target_per_winkel") is not None and s["target_per_winkel"] < 0:
+            raise ValueError(f"target_per_winkel kan niet negatief zijn ({s['merk']})")
     for t in body.rotatie_targets or []:
         t["merk"], t["stuks_per_winkel_per_week"]
+        if t["stuks_per_winkel_per_week"] is not None and t["stuks_per_winkel_per_week"] <= 0:
+            raise ValueError(f"rotatietarget moet groter dan nul zijn ({t['merk']})")
     for m in body.mail_rules or []:
         m["naam"]
 
@@ -426,8 +452,8 @@ def save_settings(retailer_id: str, body: SettingsBody):
     commits when every part succeeded."""
     try:
         _validate_settings(body)
-    except (KeyError, TypeError) as e:
-        raise HTTPException(422, f"onvolledige instelling: {e}")
+    except (KeyError, TypeError, ValueError) as e:
+        raise HTTPException(422, f"ongeldige instelling: {e}")
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
         if body.winkels_targets is not None:

@@ -74,6 +74,7 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
                   <td style={{ fontWeight: 500 }}>{s.suggestie ?? "—"}</td>
                   <td>
                     <input type="checkbox" className="checkbox" checked={!!checked[key(s)]}
+                      aria-label={`Markeer ${s.merk} ${s.periode} als promotie`}
                       onChange={(e) => setChecked({ ...checked, [key(s)]: e.target.checked })} />
                   </td>
                 </tr>

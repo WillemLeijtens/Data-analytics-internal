@@ -341,6 +341,69 @@ def test_dashboard_markeert_lopende_periode(client, monkeypatch):
     assert dash["ytd"]["omzet"]["nu"] == pytest.approx(100.0)
 
 
+# ------------------------------------------------- P3-validaties
+
+def test_week_53_in_52_weekjaar_wordt_geweigerd(client):
+    """Auditbevinding B10: 202553 werd stil geaccepteerd terwijl 2025 maar
+    52 ISO-weken heeft — een tikfout belandde zo als extra periode in de
+    trend. 2026 hééft wel een week 53, die moet blijven werken."""
+    import seed
+
+    def kv(week):
+        return seed.make_dwh_xlsx([{"sku": "31210001", "gtin": "4049469072773",
+                                    "desc": "S", "brand": "TWEEZERMAN",
+                                    "weeks": {week: (5, 50.0)}}])
+
+    r = upload(client, "DWH__Sales_Tweezerman_KVNL_w53fout.xlsx", kv("202553"))
+    assert r["status"] == "error" and "52 weken" in r["detail"]
+    r = upload(client, "DWH__Sales_Tweezerman_KVNL_w53goed.xlsx", kv("202653"))
+    assert r["status"] == "ingelezen"
+
+
+def test_negatief_winkelaantal_is_422(client):
+    """Auditbevinding B11: nul/negatief werd geaccepteerd en stil genegeerd."""
+    r = client.put("/api/kruidvat/instellingen", json={"winkels_targets": [
+        {"merk": "TWEEZERMAN", "land": "NL", "banner": "KV", "aantal_winkels": -5}]})
+    assert r.status_code == 422
+    r = client.put("/api/kruidvat/instellingen", json={"rotatie_targets": [
+        {"merk": "TWEEZERMAN", "stuks_per_winkel_per_week": 0}]})
+    assert r.status_code == 422
+
+
+def test_promo_bevestiging_voor_onbekende_periode_is_422(client):
+    """Auditbevinding B12: een bevestiging voor een periode die niet in de
+    data zit werd onzichtbaar opgeslagen — en zou later, zodra die periode
+    geladen wordt, ineens als actie meetellen."""
+    import seed
+    upload(client, "DWH__Sales_Tweezerman_KVNL_32.xlsx",
+           seed.make_dwh_xlsx(seed._kv_demo_rows(["202632"])))
+    r = client.put("/api/kruidvat/promoties", json={"bevestigd": [
+        {"merk": "TWEEZERMAN", "land": "NL", "banner": "KV", "periode": "2031-W01"}]})
+    assert r.status_code == 422 and "2031-W01" in r.json()["detail"]
+    # Een bestaande periode blijft gewoon werken.
+    r = client.put("/api/kruidvat/promoties", json={"bevestigd": [
+        {"merk": "TWEEZERMAN", "land": "NL", "banner": "KV", "periode": "2026-W32"}]})
+    assert r.status_code == 200
+
+
+def test_onleesbaar_bestand_krijgt_eigen_melding(client):
+    """Auditbevinding B14: een corrupt bestand kreeg dezelfde melding als een
+    onbekend formaat ("deel het bestand voor een parser")."""
+    r = upload(client, "kapot.xlsx", b"dit is geen spreadsheet")
+    assert r["status"] == "profiel_nodig" and "niet als tabel gelezen" in r["detail"]
+    ctrl = client.post("/api/import/controle", files=[
+        ("files", ("kapot.xlsx", b"dit is geen spreadsheet"))]).json()["results"][0]
+    assert "niet als tabel gelezen" in ctrl["detail"]
+    # Een leesbaar maar onbekend formaat houdt de parser-uitleg.
+    import io
+    from openpyxl import Workbook
+    wb = Workbook(); ws = wb.active
+    ws.append(["Week", "Merk", "Omzet"]); ws.append(["2026-W32", "X", 1.0])
+    buf = io.BytesIO(); wb.save(buf)
+    r = upload(client, "onbekend_formaat.xlsx", buf.getvalue())
+    assert "parser" in r["detail"]
+
+
 # ------------------------------------------------- rotatie
 
 def test_nieuw_artikel_is_geen_delist_kandidaat(client):

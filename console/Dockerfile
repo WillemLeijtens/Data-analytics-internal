@@ -29,5 +29,10 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD \
 
 WORKDIR /srv/backend
 # --proxy-headers: achter de gateway kloppen scheme/host/client-ip in logs.
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", \
-     "--proxy-headers", "--forwarded-allow-ips", "*"]
+# FORWARDED_ALLOW_IPS default "*": de poort is alleen op loopback/privé
+# gepubliceerd, dus alleen de gateway kan er komen. Wil je de proxy-headers
+# tot één adres beperken, zet dan FORWARDED_ALLOW_IPS op het (docker-)adres
+# van de gateway in .env.
+ENV FORWARDED_ALLOW_IPS="*"
+CMD ["sh", "-c", "exec python -m uvicorn main:app --host 0.0.0.0 --port 8000 \
+     --proxy-headers --forwarded-allow-ips \"$FORWARDED_ALLOW_IPS\""]

@@ -94,14 +94,19 @@ def run_import(conn, filename: str, content: bytes) -> dict:
         # information for building this retailer's parser in the project.
         sniffed = parser_mod.sniff(filename, content)
         replace_existing()
+        # Vindt ook de sniff geen tabel, dan is het bestand hoogstwaarschijnlijk
+        # corrupt of geen spreadsheet — "deel het voor een parser" zou dan de
+        # verkeerde kant op sturen.
+        detail = ("geen parser herkent dit bestand — deel het bestand, "
+                  "dan wordt de parser in het project gebouwd") if sniffed else \
+                 ("bestand kon niet als tabel gelezen worden — is het een "
+                  "geldig XLSX- of CSV-bestand?")
         cur = conn.execute(
             "INSERT INTO imports (retailer_id, profile_id, filename, file_hash, status, "
             "error_detail) VALUES (NULL, NULL, ?, ?, 'profiel_nodig', ?)",
             (filename, h, json.dumps({"sniff": sniffed}, ensure_ascii=False)))
         return {"import_id": cur.lastrowid, "status": "profiel_nodig", "filename": filename,
-                "retailer_id": None, "rows": 0, "sniff": sniffed,
-                "detail": "geen parser herkent dit bestand — deel het bestand, "
-                          "dan wordt de parser in het project gebouwd"}
+                "retailer_id": None, "rows": 0, "sniff": sniffed, "detail": detail}
 
     try:
         result = parser_mod.parse_file(filename, content, profile)

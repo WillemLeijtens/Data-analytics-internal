@@ -43,7 +43,7 @@ export default function Overzicht({ ctx }: { ctx: ShellCtx }) {
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <span className="mono" style={{ color: "#7E8D92" }}>{String(i + 1).padStart(2, "0")}</span>
               <span className={`tag ${c.profiel?.status === "live" ? "" : "accent"}`}>
-                {c.profiel ? (c.profiel.status === "live" ? "Live" : "Concept") : "Nieuw"}
+                {c.profiel ? (c.profiel.status === "live" ? "Live" : c.profiel.status === "test" ? "Test" : "Concept") : "Nieuw"}
               </span>
             </div>
             <h3 style={{ fontSize: 21, margin: "10px 0 8px" }}>{c.naam}</h3>
@@ -58,7 +58,7 @@ export default function Overzicht({ ctx }: { ctx: ShellCtx }) {
               <CapChip on={!!c.capabilities?.banner} label="banner" />
             </div>
             <a style={{ cursor: "pointer", fontSize: 12 }} onClick={() => openRetailer(c)}>
-              {c.profiel ? "Open dashboard" : "Parser instellen"}
+              {c.profiel ? "Open dashboard" : "Parser bekijken"}
             </a>
           </div>
         ))}

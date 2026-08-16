@@ -26,7 +26,14 @@ export default function ImportStatus({ ctx }: { ctx: ShellCtx }) {
               <span className={`brand-dot dot-${r.signaal}`} style={{ margin: 0 }} />
               <span>{f.feed}</span>
               <span className="sub">{f.scope}</span>
-              <span className="mono" style={{ whiteSpace: "nowrap" }}>{f.periode} · {f.ts?.slice(0, 16)}</span>
+              <span className="mono" style={{ whiteSpace: "nowrap" }}>
+                {/* De database slaat UTC op; toon Nederlandse tijd. */}
+                {f.periode} · {f.ts
+                  ? new Date(f.ts.replace(" ", "T") + "Z").toLocaleString("nl-NL",
+                      { day: "2-digit", month: "2-digit", year: "numeric",
+                        hour: "2-digit", minute: "2-digit" })
+                  : "—"}
+              </span>
               <span style={{ textAlign: "right" }}>{f.rijen} rijen</span>
             </div>
           ))}

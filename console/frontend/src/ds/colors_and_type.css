@@ -74,7 +74,10 @@
 
   --fg-1:          var(--bl-hoofdkleur);   /* primary on light */
   --fg-2:          var(--bl-hoofdkleur);   /* body on light */
-  --fg-3:          var(--bl-gray-700);     /* secondary / meta */
+  /* Secundaire tekst: een stap donkerder dan --bl-gray-700 (#7E8D92, ~3,9:1
+     op wit) zodat meta-tekst de 4,5:1-contrastnorm haalt. De merkgrijstint
+     blijft bestaan voor decoratieve elementen (lijnen, assen, dots). */
+  --fg-3:          #64777D;                /* secondary / meta, >=4.5:1 */
   --fg-4:          var(--bl-gray-400);     /* disabled / hint */
   --fg-accent:     var(--bl-accent);
 
@@ -176,6 +179,15 @@ h2, .h2 {
   text-transform: uppercase;
   color: var(--fg-1);
   margin: 0 0 var(--space-4);
+}
+
+/* Periodenotaties ("2026-W32", "t/m") in display-koppen: het demo-font van
+   The Seasons vervangt koppel- en schuine strepen door ornamenten (≛).
+   Deze span zet zulke stukjes in de bodyfont, op maat van de kop. */
+.kop-data {
+  font-family: var(--font-body);
+  font-size: 0.82em;
+  letter-spacing: 0.04em;
 }
 
 h3, .h3 {

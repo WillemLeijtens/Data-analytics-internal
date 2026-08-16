@@ -227,8 +227,9 @@ def test_controle_meldt_retailer_zonder_te_importeren(client):
 
 
 def test_controle_meldt_onbekend_formaat(client):
+    # Corrupt bestand: eigen melding, niet "deel het voor een parser" (B14).
     r = client.post("/api/import/controle", files=[
         ("files", ("onbekend_rapport.xlsx", b"geen spreadsheet"))]).json()["results"][0]
     assert r["herkend"] is False and r["retailer_id"] is None
-    assert "geen parser" in r["detail"].lower()
+    assert "niet als tabel gelezen" in r["detail"].lower()
     assert client.get("/api/imports").json() == []

@@ -117,13 +117,16 @@ export function TrendChart({ series, years, isEuro, periodWord }:
   return (
     <div style={{ position: "relative" }}>
       <svg ref={ref} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", cursor: "crosshair" }}
+        role="img"
+        aria-label={`${isEuro ? "Omzet" : "Volume"} per ${periodWord.toLowerCase()}, jaren ${years.join(", ")}`}
         onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        <title>{`${isEuro ? "Omzet" : "Volume"} per ${periodWord.toLowerCase()}, jaar op jaar (${years.join(", ")})`}</title>
         {[0.25, 0.5, 0.75, 1].map((f) => (
           <line key={f} x1={PAD} x2={W - PAD} y1={y(maxY * f)} y2={y(maxY * f)} stroke="#EAEFF1" />
         ))}
         <line x1={PAD} x2={W - PAD} y1={H - PAD} y2={H - PAD} stroke="#BAC3C8" />
         {nums.filter((_, i) => i % Math.ceil(nums.length / 12) === 0).map((p) => (
-          <text key={p} x={x(p)} y={H - PAD + 16} textAnchor="middle" fontSize="9.5" fill="#7E8D92">{p}</text>
+          <text key={p} x={x(p)} y={H - PAD + 16} textAnchor="middle" fontSize="10.5" fill="#7E8D92">{p}</text>
         ))}
         {[maxY, maxY / 2].map((v, i) => (
           <text key={i} x={PAD - 6} y={y(v) + 3} textAnchor="end" fontSize="10.5" fill="#7E8D92">
@@ -184,12 +187,14 @@ export function Sparkline({ ytd, lytd, isEuro, periodWord }:
   return (
     <span style={{ position: "relative", display: "inline-block" }}>
       <svg ref={ref} width={W} height={H}
+        role="img" aria-label={`Verloop per ${periodWord.toLowerCase()}, dit jaar tegen vorig jaar`}
         onMouseMove={(e) => {
           const rect = ref.current!.getBoundingClientRect();
           const px = e.clientX - rect.left;
           setHover(nums.reduce((a, b) => (Math.abs(x(b) - px) < Math.abs(x(a) - px) ? b : a)));
         }}
         onMouseLeave={() => setHover(null)}>
+        <title>{`Verloop per ${periodWord.toLowerCase()}: doorgetrokken lijn dit jaar, stippellijn vorig jaar`}</title>
         <path d={path(lytd)} fill="none" stroke="#BAC3C8" strokeWidth="1.2" strokeDasharray="3 3" />
         <path d={path(ytd)} fill="none" stroke="#0E323B" strokeWidth="1.5" />
         {hover != null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="#7E8D92" strokeDasharray="2 2" />}
