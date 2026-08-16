@@ -278,8 +278,42 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         return [r for r in rows if period_year(r["periode"]) == year
                 and period_number(r["periode"]) <= upto]
 
+    # De absolute totalen tellen álles: dat is feitelijk juist.
     now_rows, prior_rows = ytd_rows(y_now), ytd_rows(y_now - 1)
     ytd_now, ytd_prior = agg(now_rows), agg(prior_rows)
+
+    # Maar het DELTA-percentage alleen op VERGELIJKBARE basis. Merk-feeds
+    # verschillen in historie en actualiteit: in de audit toonde het
+    # dashboard "+42,1% YTD" terwijl 2025 één merk-feed bevatte en 2026 drie
+    # — de "groei" was vooral "twee merken erbij in de feed". Daarom telt
+    # per merk alleen het venster waarin dat merk in BEIDE jaren data heeft,
+    # en vallen merken zonder vorig jaar buiten het percentage (wel gemeld).
+    per_merk_jaar: dict[tuple, list] = defaultdict(list)
+    for r in rows:
+        per_merk_jaar[(r["merk"], period_year(r["periode"]))].append(r)
+    vergelijkbaar, niet_vergelijkbaar = [], []
+    for m in sorted({m for m, _ in per_merk_jaar}, key=lambda x: (x is None, x or "")):
+        nu_r = per_merk_jaar.get((m, y_now), [])
+        vorig_r = per_merk_jaar.get((m, y_now - 1), [])
+        if nu_r and vorig_r:
+            # Stopt de feed van dit merk eerder dan de algemene YTD-grens,
+            # dan telt voor dit merk ook vorig jaar maar tot daar.
+            upto_m = min(upto, max(period_number(r["periode"]) for r in nu_r))
+            vergelijkbaar.append({"merk": m, "tot_periode": upto_m})
+        elif nu_r or any(period_number(r["periode"]) <= upto for r in vorig_r):
+            niet_vergelijkbaar.append(m)
+
+    def comp_rows(year):
+        out = []
+        for v in vergelijkbaar:
+            out.extend(r for r in per_merk_jaar.get((v["merk"], year), [])
+                       if period_number(r["periode"]) <= v["tot_periode"])
+        return out
+
+    comp_now, comp_prior = comp_rows(y_now), comp_rows(y_now - 1)
+    comp_now_agg, comp_prior_agg = agg(comp_now), agg(comp_prior)
+    basis_volledig = (not niet_vergelijkbaar
+                      and all(v["tot_periode"] == upto for v in vergelijkbaar))
 
     def stores_for(year_rows):
         # Per jaar het winkelbestand van de laatste periode in dat jaar:
@@ -290,10 +324,14 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         final = max((r["periode"] for r in year_rows), key=sort_key)
         return store_count(conn, retailer_id, caps, year_rows, final, settings)
 
-    stores_now, facts_now = stores_for(now_rows)
-    stores_prior, facts_prior = stores_for(prior_rows)
-    per_store_now = ytd_now["omzet"] / stores_now if stores_now else None
-    per_store_prior = ytd_prior["omzet"] / stores_prior if stores_prior else None
+    # Omzet per winkel YTD is puur een vergelijkingskaart: reken hem op de
+    # vergelijkbare merken. Zonder vergelijkbare basis toont "nu" alsnog
+    # alles — er valt dan simpelweg niets te vergelijken.
+    basis_now = comp_now if vergelijkbaar else now_rows
+    stores_now, facts_now = stores_for(basis_now)
+    stores_prior, facts_prior = stores_for(comp_prior)
+    per_store_now = agg(basis_now)["omzet"] / stores_now if stores_now else None
+    per_store_prior = comp_prior_agg["omzet"] / stores_prior if stores_prior else None
 
     def delta(now, prev):
         return round((now - prev) / prev * 100, 1) if prev else None
@@ -326,6 +364,18 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         count = count_by_year.get(y)
         per_winkel[y] = {p: value / count for p, value in perline.items()} if count else {}
     trend["series"]["per_winkel"] = per_winkel
+    # Merken waarvan de feed vóór de algemene laatste periode stopt: de som
+    # zakt vanaf dat punt zonder dat er minder verkocht is. De grafiek meldt
+    # dat, anders leest een achterlopende levering als omzetdaling.
+    laatste_per_merk: dict = {}
+    for r in rows:
+        m = r["merk"]
+        if m not in laatste_per_merk or sort_key(r["periode"]) > sort_key(laatste_per_merk[m]):
+            laatste_per_merk[m] = r["periode"]
+    trend["feeds_achter"] = sorted(
+        ({"merk": m, "laatste_periode": p} for m, p in laatste_per_merk.items()
+         if p != latest),
+        key=lambda x: (x["merk"] is None, x["merk"] or ""))
 
     return {
         "available": True, "empty": False, "capabilities": caps,
@@ -341,10 +391,13 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         },
         "ytd": {
             "jaar": y_now, "tot_periode": upto,
+            "basis": {"volledig": basis_volledig,
+                      "vergelijkbaar": vergelijkbaar,
+                      "niet_vergelijkbaar": niet_vergelijkbaar},
             "omzet": {"nu": ytd_now["omzet"], "vorig": ytd_prior["omzet"],
-                      "delta_pct": delta(ytd_now["omzet"], ytd_prior["omzet"])},
+                      "delta_pct": delta(comp_now_agg["omzet"], comp_prior_agg["omzet"])},
             "volume": {"nu": ytd_now["volume"], "vorig": ytd_prior["volume"],
-                       "delta_pct": delta(ytd_now["volume"], ytd_prior["volume"])},
+                       "delta_pct": delta(comp_now_agg["volume"], comp_prior_agg["volume"])},
             "omzet_per_winkel": {
                 "nu": per_store_now, "vorig": per_store_prior,
                 "delta_pct": delta(per_store_now, per_store_prior)

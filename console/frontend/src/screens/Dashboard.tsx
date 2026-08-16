@@ -243,6 +243,22 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           <div className="kpi-sub">{y.jaar - 1}: {fmtEur(y.omzet_per_winkel.vorig)}</div>
         </div>
       </div>
+      {y.basis && !y.basis.volledig && (
+        // Merk-feeds met ongelijke historie of actualiteit: het Δ% hierboven
+        // is bewust alleen op de vergelijkbare merken berekend — anders leest
+        // "twee merken erbij in de feed" als groei.
+        <p className="sub" style={{ marginTop: 8 }}>
+          {y.basis.vergelijkbaar.length
+            ? <>Δ% op vergelijkbare basis: {y.basis.vergelijkbaar.map((v: any) =>
+                v.tot_periode === y.tot_periode ? (v.merk ?? "ONBEKEND")
+                  : `${v.merk ?? "ONBEKEND"} t/m ${pWord.toLowerCase()} ${v.tot_periode}`
+              ).join(", ")}.</>
+            : <>Geen Δ%: geen enkel merk heeft data in zowel {y.jaar} als {y.jaar - 1}.</>}
+          {y.basis.niet_vergelijkbaar.length > 0 && (
+            <> {y.basis.niet_vergelijkbaar.map((m: string) => m ?? "ONBEKEND").join(" en ")} ontbreek{y.basis.niet_vergelijkbaar.length === 1 ? "t" : "en"} in {y.jaar - 1} en telt daarom niet mee in het percentage — de absolute totalen tellen wél alles.</>
+          )}
+        </p>
+      )}
 
       <h2>
         {effMetric === "per_winkel" ? "Omzet per winkel" : effMetric} per {pWord.toLowerCase()}, jaar op jaar
@@ -258,6 +274,15 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       <div className="card">
         <TrendChart series={data.trend.series[effMetric] ?? {}} years={data.trend.jaren}
           isEuro={effMetric !== "volume"} periodWord={pWord} />
+        {data.trend.feeds_achter?.length > 0 && (
+          // De som zakt vanaf het punt waar een merk-feed stopt; zonder deze
+          // melding leest een achterlopende levering als omzetdaling.
+          <p className="sub" style={{ marginTop: 10 }}>
+            Let op: {data.trend.feeds_achter.map((f: any) =>
+              `${f.merk ?? "ONBEKEND"} loopt t/m ${f.laatste_periode}`).join("; ")} —
+            daarná telt de lijn zonder {data.trend.feeds_achter.length === 1 ? "dat merk" : "die merken"}.
+          </p>
+        )}
       </div>
 
       {data.winkelanalyse?.beschikbaar && <Winkelanalyse w={data.winkelanalyse} pWord={pWord} />}

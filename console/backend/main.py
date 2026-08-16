@@ -381,6 +381,13 @@ def get_settings(retailer_id: str):
         caps = capabilities(prof.definition) if prof else None
         return {
             "capabilities": caps,
+            # Welke merk/land/banner-combinaties er daadwerkelijk in de feed
+            # zitten: het instellingenscherm biedt daarvoor kant-en-klare
+            # "rij toevoegen"-knoppen, zodat een verse installatie niet
+            # doodloopt op een lege tabel.
+            "feed_combinaties": [dict(r) for r in conn.execute(
+                "SELECT DISTINCT merk, land, banner FROM sellout_facts "
+                "WHERE retailer_id=? ORDER BY merk, land, banner", (retailer_id,))],
             "winkels_targets": [dict(r) for r in conn.execute(
                 "SELECT * FROM retailer_settings WHERE retailer_id=? ORDER BY merk, land, banner",
                 (retailer_id,))],

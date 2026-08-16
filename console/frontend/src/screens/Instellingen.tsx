@@ -3,6 +3,34 @@ import { apiGet, apiSend } from "../api";
 import { ShellCtx } from "../App";
 import { EmptyProfileCard, LoadState } from "../components/shared";
 
+/** Handmatig een merk/land/banner-rij toevoegen, voor combinaties die (nog)
+ *  niet in de feed zitten. */
+function HandmatigeRij({ onAdd }: { onAdd: (m: string, l: string | null, b: string | null) => void }) {
+  const [open, setOpen] = useState(false);
+  const [merk, setMerk] = useState("");
+  const [land, setLand] = useState("");
+  const [banner, setBanner] = useState("");
+  if (!open) {
+    return <button className="chip off" onClick={() => setOpen(true)}>+ handmatig een rij toevoegen</button>;
+  }
+  return (
+    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+      <input type="text" placeholder="Merk" size={12} aria-label="Merk"
+        value={merk} onChange={(e) => setMerk(e.target.value.toUpperCase())} />
+      <input type="text" placeholder="Land" size={4} aria-label="Land"
+        value={land} onChange={(e) => setLand(e.target.value.toUpperCase())} />
+      <input type="text" placeholder="Banner" size={6} aria-label="Banner (optioneel)"
+        value={banner} onChange={(e) => setBanner(e.target.value.toUpperCase())} />
+      <button className="btn ghost" disabled={!merk.trim()}
+        onClick={() => {
+          onAdd(merk.trim(), land.trim() || null, banner.trim() || null);
+          setMerk(""); setLand(""); setBanner(""); setOpen(false);
+        }}>Toevoegen</button>
+      <button className="chip off" onClick={() => setOpen(false)}>annuleer</button>
+    </span>
+  );
+}
+
 export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   const [data, setData] = useState<any>(null);
   const [wt, setWt] = useState<any[]>([]);
@@ -39,6 +67,18 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   const upd = (arr: any[], set: any, i: number, key: string, v: any) => {
     const copy = [...arr]; copy[i] = { ...copy[i], [key]: v }; set(copy);
   };
+  const weg = (arr: any[], set: any, i: number) => set(arr.filter((_, j) => j !== i));
+
+  // Rijen toevoegen: zonder dit is een verse installatie een doodlopende
+  // straat — de tabellen begonnen leeg en er was niets om te bewerken.
+  const wtKey = (s: any) => `${s.merk}|${s.land}|${s.banner ?? ""}`;
+  const feedCombos = (data.feed_combinaties ?? []).filter(
+    (c: any) => c.merk && !wt.some((s) => wtKey(s) === wtKey(c)));
+  const addWt = (merk: string, land: string | null, banner: string | null) =>
+    setWt([...wt, { merk, land, banner, aantal_winkels: null, target_per_winkel: null }]);
+  const feedMerken = Array.from(new Set((data.feed_combinaties ?? [])
+    .map((c: any) => c.merk).filter(Boolean))) as string[];
+  const rtMerken = feedMerken.filter((m) => !rt.some((t) => t.merk === m));
 
   return (
     <>
@@ -81,38 +121,74 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
 
       <h2>Winkelaantallen en targets</h2>
       <table className="data">
-        <thead><tr><th>Merk</th><th>Land</th><th>Banner</th><th>Aantal winkels</th><th>Target € / winkel / {pWord}</th></tr></thead>
+        <thead><tr><th>Merk</th><th>Land</th><th>Banner</th><th>Aantal winkels</th><th>Target € / winkel / {pWord}</th><th></th></tr></thead>
         <tbody>
           {wt.map((s, i) => (
             <tr key={`${s.merk}${s.land}${s.banner}`}>
               <td>{s.merk}</td><td>{s.land}</td><td>{s.banner ?? "—"}</td>
               <td>{winkelsReadonly
                 ? <span className="sub" title="Komt uit de aanlevering">uit feed</span>
-                : <input type="number" style={{ width: 90 }} value={s.aantal_winkels ?? ""}
+                : <input type="number" min={1} style={{ width: 90 }} value={s.aantal_winkels ?? ""}
+                    aria-label={`Aantal winkels ${s.merk} ${s.land ?? ""} ${s.banner ?? ""}`}
                     onChange={(e) => upd(wt, setWt, i, "aantal_winkels", e.target.value ? +e.target.value : null)} />}
               </td>
-              <td><input type="number" style={{ width: 90 }} value={s.target_per_winkel ?? ""}
+              <td><input type="number" min={0} style={{ width: 90 }} value={s.target_per_winkel ?? ""}
+                aria-label={`Target per winkel ${s.merk} ${s.land ?? ""} ${s.banner ?? ""}`}
                 onChange={(e) => upd(wt, setWt, i, "target_per_winkel", e.target.value ? +e.target.value : null)} /></td>
+              <td><button className="chip off" title="Rij verwijderen (pas definitief na Alles opslaan)"
+                onClick={() => weg(wt, setWt, i)}>✕</button></td>
             </tr>
           ))}
+          {!wt.length && !feedCombos.length && (
+            <tr><td colSpan={6} className="sub">Nog geen rijen — importeer eerst een bestand,
+              of voeg hieronder handmatig een rij toe.</td></tr>
+          )}
         </tbody>
       </table>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 10 }}>
+        {feedCombos.length > 0 && <span className="sub">Uit de feed:</span>}
+        {feedCombos.map((c: any) => (
+          <button key={wtKey(c)} className="chip" onClick={() => addWt(c.merk, c.land, c.banner)}>
+            + {c.merk}{c.land ? ` · ${c.land}` : ""}{c.banner ? ` · ${c.banner}` : ""}
+          </button>
+        ))}
+        <HandmatigeRij onAdd={addWt} />
+      </div>
 
-      <h2>Rotatie-target</h2>
+      <h2>Rotatietarget</h2>
       {caps?.artikel ? (
-        <table className="data" style={{ maxWidth: 640 }}>
-          <thead><tr><th>Merk</th><th>Target stuks / winkel / week</th></tr></thead>
-          <tbody>
-            {rt.map((t, i) => (
-              <tr key={t.merk}>
-                <td>{t.merk}</td>
-                <td><input type="number" step="0.5" style={{ width: 90 }} value={t.stuks_per_winkel_per_week}
-                  onChange={(e) => upd(rt, setRt, i, "stuks_per_winkel_per_week", +e.target.value)} /></td>
-              </tr>
-            ))}
-            {!rt.length && <tr><td colSpan={2} className="sub">Nog geen rotatie-targets.</td></tr>}
-          </tbody>
-        </table>
+        <>
+          <table className="data" style={{ maxWidth: 640 }}>
+            <thead><tr><th>Merk</th><th>Target stuks / winkel / week</th><th></th></tr></thead>
+            <tbody>
+              {rt.map((t, i) => (
+                <tr key={t.merk}>
+                  <td>{t.merk}</td>
+                  <td><input type="number" step="0.5" min={0.5} style={{ width: 90 }}
+                    value={t.stuks_per_winkel_per_week ?? ""}
+                    aria-label={`Rotatietarget ${t.merk}`}
+                    onChange={(e) => upd(rt, setRt, i, "stuks_per_winkel_per_week",
+                      e.target.value ? +e.target.value : null)} /></td>
+                  <td><button className="chip off" title="Rij verwijderen (pas definitief na Alles opslaan)"
+                    onClick={() => weg(rt, setRt, i)}>✕</button></td>
+                </tr>
+              ))}
+              {!rt.length && !rtMerken.length &&
+                <tr><td colSpan={3} className="sub">Nog geen rotatietargets — importeer eerst een bestand.</td></tr>}
+            </tbody>
+          </table>
+          {rtMerken.length > 0 && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 10 }}>
+              <span className="sub">Uit de feed:</span>
+              {rtMerken.map((m) => (
+                <button key={m} className="chip"
+                  onClick={() => setRt([...rt, { merk: m, stuks_per_winkel_per_week: null }])}>
+                  + {m}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       ) : (
         <div className="card" style={{ background: "var(--quiet)", boxShadow: "none" }}>
           <span className="sub">Niet van toepassing: deze retailer levert geen artikelniveau.</span>

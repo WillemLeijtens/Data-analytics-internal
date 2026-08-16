@@ -183,6 +183,83 @@ def test_uplift_basislijn_blijft_binnen_hetzelfde_jaar(client):
     assert u["uplift_pct"] == pytest.approx(100.0)
 
 
+# ------------------------------------------------- vergelijkbare YoY-basis
+
+def test_ytd_delta_alleen_op_vergelijkbare_merken(client):
+    """Auditbevinding B1: 2025 bevatte één merk-feed en 2026 drie; het
+    dashboard toonde "+42,1%" die vooral 'twee merken erbij' was. Het delta-
+    percentage telt nu per merk alleen het venster met data in BEIDE jaren;
+    de rest wordt gemeld in plaats van meegeteld."""
+    import seed
+
+    def kv(brand, gtin, sku, weeks):
+        return seed.make_dwh_xlsx([{"sku": sku, "gtin": gtin, "desc": brand,
+                                    "brand": brand, "weeks": weeks}])
+
+    # TWEEZERMAN: beide jaren, maar de 2026-feed stopt op week 10.
+    upload(client, "DWH__Sales_Tweezerman_KVNL_a.xlsx",
+           kv("TWEEZERMAN", "4049469072773", "31210001",
+              {"202505": (10, 100.0), "202510": (10, 100.0), "202515": (10, 300.0),
+               "202605": (10, 150.0), "202610": (10, 150.0)}))
+    # ALESSANDRO: alleen 2026, t/m week 20.
+    upload(client, "DWH__Sales_Alessandro_KVNL_b.xlsx",
+           kv("ALESSANDRO", "4064089040111", "31210003",
+              {"202605": (5, 500.0), "202620": (5, 500.0)}))
+
+    y = client.get("/api/kruidvat/dashboard").json()["ytd"]
+    # Absolute totalen tellen alles (feitelijk juist): 2026 = 150+150+500+500.
+    assert y["omzet"]["nu"] == pytest.approx(1300.0)
+    # Delta alleen TWEEZERMAN, en dan t/m diens eigen laatste week (10):
+    # 2026 (300) vs 2025 wk<=10 (200) = +50% — niet +160% over alles.
+    assert y["omzet"]["delta_pct"] == pytest.approx(50.0)
+    assert y["basis"]["volledig"] is False
+    assert y["basis"]["vergelijkbaar"] == [{"merk": "TWEEZERMAN", "tot_periode": 10}]
+    assert y["basis"]["niet_vergelijkbaar"] == ["ALESSANDRO"]
+
+    # De trend meldt dat de TWEEZERMAN-feed eerder stopt dan de rest.
+    achter = client.get("/api/kruidvat/dashboard").json()["trend"]["feeds_achter"]
+    assert achter == [{"merk": "TWEEZERMAN", "laatste_periode": "2026-W10"}]
+
+
+def test_ytd_basis_volledig_bij_samenhangende_feed(client):
+    """Eén samenhangende feed (zoals ICI): geen basisregel, gedrag als vanouds."""
+    import seed
+    upload(client, "Maandelijkse_resultaten_ICI_Paris_XL_2j.xlsx",
+           seed.make_ici_xlsx({
+               "TWEEZERMAN": {"6051": {"202506": 100.0, "202507": 110.0,
+                                       "202606": 120.0, "202607": 130.0}},
+               "DEPEND": {"6051": {"202506": 10.0, "202507": 11.0,
+                                   "202606": 12.0, "202607": 13.0}}}))
+    y = client.get("/api/ici-paris-xl/dashboard").json()["ytd"]
+    assert y["basis"]["volledig"] is True
+    assert y["basis"]["niet_vergelijkbaar"] == []
+    assert y["omzet"]["delta_pct"] == pytest.approx(
+        (120 + 130 + 12 + 13 - 100 - 110 - 10 - 11) / (100 + 110 + 10 + 11) * 100, abs=0.1)
+
+
+# ------------------------------------------------- instellingen-rijen
+
+def test_instellingen_feed_combinaties_en_rij_toevoegen(client):
+    """Auditbevinding B2: op een verse installatie waren de instellingen-
+    tabellen leeg en onuitbreidbaar. De API levert nu de combinaties uit de
+    feed, en een toegevoegde rij werkt direct door op het dashboard."""
+    import seed
+    upload(client, "DWH__Sales_Tweezerman_KVNL_32.xlsx",
+           seed.make_dwh_xlsx(seed._kv_demo_rows(["202632"])))
+
+    inst = client.get("/api/kruidvat/instellingen").json()
+    combos = {(c["merk"], c["land"], c["banner"]) for c in inst["feed_combinaties"]}
+    assert ("TWEEZERMAN", "NL", "KV") in combos
+    assert inst["winkels_targets"] == []          # verse installatie: leeg
+
+    r = client.put("/api/kruidvat/instellingen", json={"winkels_targets": [
+        {"merk": "TWEEZERMAN", "land": "NL", "banner": "KV",
+         "aantal_winkels": 900, "target_per_winkel": 45.0}]})
+    assert r.status_code == 200
+    k = client.get("/api/kruidvat/dashboard").json()["kpi"]["omzet_per_winkel"]
+    assert k["winkels"] == 900 and k["schatting"] is True
+
+
 # ------------------------------------------------- lopende periode
 
 def test_is_afgesloten_week_en_maand():
