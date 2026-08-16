@@ -89,25 +89,39 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
         <div className="card">
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="mono">{data.sharepoint.map_url}</span>
-            <span className="tag pos">Gekoppeld</span>
+            <span className={`tag ${data.documenten.length ? "pos" : ""}`}>
+              {data.documenten.length ? "Gekoppeld" : "Geregistreerd"}
+            </span>
           </div>
-          <table className="data" style={{ marginTop: 14 }}>
-            <thead><tr><th>Document</th><th>Type</th><th>Geldig tot</th><th>Signaal</th></tr></thead>
-            <tbody>
-              {data.documenten.map((d: any) => (
-                <tr key={d.id}>
-                  <td>{d.naam}</td><td>{d.type ?? "—"}</td><td className="mono">{d.geldig_tot ?? "—"}</td>
-                  <td><span className={`brand-dot dot-${d.signaal}`} style={{ width: 9, height: 9 }} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="sub" style={{ marginTop: 10 }}>Deze documenten voeden het contractsignaal op de Overzicht-radar.</p>
+          {data.documenten.length ? (
+            <>
+              <table className="data" style={{ marginTop: 14 }}>
+                <thead><tr><th>Document</th><th>Type</th><th>Geldig tot</th><th>Signaal</th></tr></thead>
+                <tbody>
+                  {data.documenten.map((d: any) => (
+                    <tr key={d.id}>
+                      <td>{d.naam}</td><td>{d.type ?? "—"}</td><td className="mono">{d.geldig_tot ?? "—"}</td>
+                      <td><span className={`brand-dot dot-${d.signaal}`} style={{ width: 9, height: 9 }} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="sub" style={{ marginTop: 10 }}>Deze documenten voeden het contractsignaal op de Overzicht-radar.</p>
+            </>
+          ) : (
+            // Eerlijk over wat er (nog niet) gebeurt: de koppeling met
+            // Microsoft Graph bestaat nog niet, dus er wordt niets bewaakt.
+            <p className="sub" style={{ marginTop: 10 }}>
+              De map is geregistreerd. Documentbewaking volgt zodra de Microsoft
+              Graph-koppeling er is — er worden nu nog géén documenten opgehaald
+              en het contractsignaal blijft grijs.
+            </p>
+          )}
         </div>
       ) : (
         <div className="dropzone">
-          <p className="sub">Koppel de SharePoint-map met contracten; de console interpreteert de documenten
-            en bewaakt de vervaldatums.</p>
+          <p className="sub">Registreer hier de SharePoint-map met contracten. Zodra de Microsoft
+            Graph-koppeling er is, worden de documenten opgehaald en de vervaldatums bewaakt.</p>
           <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 10 }}>
             <input type="url" placeholder="https://…sharepoint.com/sites/…" size={44}
               value={spUrl} onChange={(e) => setSpUrl(e.target.value)} />
@@ -196,12 +210,19 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
       )}
 
       <h2>Automatische import uit mail</h2>
+      {/* Er draait nog geen poller voor de console: een klikbare ACTIEF-
+          toggle zou beloven dat er iets gebeurt terwijl er niets gebeurt. */}
+      <div className="level-strip" style={{ borderLeft: "3px solid #B4690E" }}>
+        <span className="sub"><b>Nog niet actief.</b> Importeren gaat op dit moment handmatig
+          via <a style={{ cursor: "pointer" }} onClick={() => ctx.go(ctx.retailer, "import")}>Import</a>.
+          De regels hieronder worden bewaard en gaan werken zodra de mailkoppeling live is.</span>
+      </div>
       {mail.map((m, i) => (
         <div key={m.id ?? i} className="card" style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
           <b>{m.naam}</b>
-          <button className={`chip ${m.actief ? "" : "off"}`}
-            onClick={() => upd(mail, setMail, i, "actief", m.actief ? 0 : 1)}>
-            {m.actief ? "ACTIEF" : "UIT"}
+          <button className="chip off" disabled
+            title="Nog niet actief: de mailkoppeling voor de console bestaat nog niet">
+            {m.actief ? "ACTIEF (WACHT OP KOPPELING)" : "UIT"}
           </button>
           <span className="mono">{m.afzender}</span>
           <span className="mono sub">{m.bijlage_glob}</span>

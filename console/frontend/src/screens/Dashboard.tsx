@@ -5,7 +5,7 @@ import { DeltaTag, EmptyProfileCard, LevelStrip, LoadState, TrendChart, useApi }
 
 function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
   label: string; tag: string; tagAccent?: boolean; value: string; sub?: string;
-  breakdown?: { merk: string; waarde: number; winkels?: number }[]; isEuro?: boolean;
+  breakdown?: { merk: string; waarde: number; winkels?: number; target?: number | null }[]; isEuro?: boolean;
 }) {
   const max = Math.max(1, ...(breakdown ?? []).map((b) => b.waarde));
   return (
@@ -17,7 +17,16 @@ function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
         <div key={b.merk} style={{ marginTop: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
             <span>{b.merk}{b.winkels ? ` · ${b.winkels} winkels` : ""}</span>
-            <span>{isEuro ? fmtEur(b.waarde) : fmtNum(b.waarde)}</span>
+            <span>
+              {isEuro ? fmtEur(b.waarde) : fmtNum(b.waarde)}
+              {b.target != null && (
+                // Het ingestelde target uit Instellingen, met kleur boven/onder.
+                <span className={b.waarde >= b.target ? "sig-green" : "sig-red"}
+                  title={`Target ${fmtEur(b.target)} per winkel`}>
+                  {" "}/ {fmtEur(b.target)}
+                </span>
+              )}
+            </span>
           </div>
           <div className="bar-track">
             <div className="bar-fill" style={{ width: `${(b.waarde / max) * 100}%`, background: BRAND_COLORS[b.merk] ?? "var(--main)" }} />
@@ -166,10 +175,25 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
 
   const pWord = data.periode_type === "maand" ? "Maand" : "Week";
   if (data.empty) {
+    // gefilterd: er is wél data, alleen niet voor deze filterkeuze — dan
+    // moeten de chips bedienbaar blijven, anders zit de gebruiker vast.
+    const f = data.filters;
     return (<>
       <h1>Dashboard — {ctx.card?.naam}</h1>
       <LevelStrip labels={data.labels} retailer={ctx.retailer} />
-      <div className="card empty-card"><p className="sub">Nog geen data geïmporteerd voor deze retailer.</p></div>
+      {data.gefilterd && f ? (<>
+        <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap", margin: "16px 0 4px" }}>
+          {f.merk.length > 0 && (<span><span className="eyebrow">Merk </span><MultiChips all={f.merk} sel={merk} onChange={setMerk} /></span>)}
+          {f.land.length > 0 && (<span><span className="eyebrow">Land </span><MultiChips all={f.land} sel={land} onChange={setLand} /></span>)}
+          {f.banner.length > 0 && (<span><span className="eyebrow">Banner </span><MultiChips all={f.banner} sel={banner} onChange={setBanner} /></span>)}
+        </div>
+        <div className="card empty-card">
+          <p className="sub">Geen data voor deze filterkeuze — deze combinatie van merk, land en banner komt niet voor.</p>
+          <button className="btn ghost" onClick={() => { setMerk([]); setLand([]); setBanner([]); }}>Filters wissen</button>
+        </div>
+      </>) : (
+        <div className="card empty-card"><p className="sub">Nog geen data geïmporteerd voor deze retailer.</p></div>
+      )}
     </>);
   }
 

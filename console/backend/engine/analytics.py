@@ -51,9 +51,11 @@ def load_facts(conn, retailer_id: str, merk=None, land=None, banner=None):
 
 
 def manual_store_settings(conn, retailer_id: str) -> list[dict]:
+    # Ook rijen zonder winkelaantal: die kunnen wél een target dragen (bij
+    # ICI komt het aantal uit de feed en is alleen het target invulbaar).
     return [dict(r) for r in conn.execute(
-        "SELECT merk, land, banner, aantal_winkels FROM retailer_settings "
-        "WHERE retailer_id=? AND aantal_winkels IS NOT NULL", (retailer_id,))]
+        "SELECT merk, land, banner, aantal_winkels, target_per_winkel "
+        "FROM retailer_settings WHERE retailer_id=?", (retailer_id,))]
 
 
 def stores_with_revenue(rows, jaar: int | None) -> set:
@@ -216,8 +218,17 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
             if (not merk or r["merk"] in merk)
             and (not land or r["land"] in land)
             and (not banner or r["banner"] in banner)]
+    filters = {
+        "merk": sorted({r["merk"] for r in all_rows if r["merk"]}),
+        "land": sorted({r["land"] for r in all_rows if r["land"]}),
+        "banner": sorted({r["banner"] for r in all_rows if r["banner"]}),
+    }
     if not rows:
-        return {"available": True, "empty": True, "resolution": res.as_dict(),
+        # gefilterd=True: er ís data, alleen niet voor deze filterkeuze. De
+        # filters gaan mee zodat het scherm de chips kan blijven tonen —
+        # anders zit de gebruiker vast in "Nog geen data geïmporteerd".
+        return {"available": True, "empty": True, "gefilterd": bool(all_rows),
+                "filters": filters, "resolution": res.as_dict(),
                 "labels": labels, "capabilities": caps}
     settings = manual_store_settings(conn, retailer_id)
 
@@ -255,12 +266,20 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         per_brand: dict[str, list] = defaultdict(list)
         for r in rows:
             per_brand[r["merk"] or "ONBEKEND"].append(r)
+        # Ingestelde target per merk (€ per winkel per periode) uit
+        # Instellingen — vóór deze koppeling werd dat veld nergens gebruikt.
+        targets_per_merk: dict = {}
+        for s in settings:
+            t = s.get("target_per_winkel")
+            if t:
+                targets_per_merk[s["merk"]] = max(targets_per_merk.get(s["merk"], 0), t)
         out = []
         for merk, brows in per_brand.items():
             n, uit_feiten = store_count(conn, retailer_id, caps, brows, periode, settings)
             rev = sum(r["omzet"] for r in brows if r["periode"] == periode)
             out.append({"merk": merk, "winkels": n, "schatting": not uit_feiten,
-                        "waarde": (rev / n) if n else None})
+                        "waarde": (rev / n) if n else None,
+                        "target": targets_per_merk.get(merk)})
         return sorted(out, key=lambda x: -(x["waarde"] or 0))
 
     kpi = agg(latest_rows)
@@ -406,11 +425,7 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         },
         "trend": trend,
         "winkelanalyse": winkelanalyse(rows, caps, y_now),
-        "filters": {
-            "merk": sorted({r["merk"] for r in all_rows if r["merk"]}),
-            "land": sorted({r["land"] for r in all_rows if r["land"]}),
-            "banner": sorted({r["banner"] for r in all_rows if r["banner"]}),
-        },
+        "filters": filters,
     }
 
 
@@ -463,6 +478,9 @@ def articles(conn, retailer_id: str) -> dict:
                              if ltot["omzet"] else None})
     out.sort(key=lambda x: -x["totaal_ytd"]["omzet"])
     return {"available": True, "artikelen": out, "laatste_periode": latest,
+            # Het jaar hoort bij de data, niet bij de kalender van vandaag:
+            # de grafieklegenda gebruikt dit in plaats van vaste jaartallen.
+            "jaar": y_now,
             "periode_type": caps["periode"], "labels": base_labels + res.labels,
             "resolution": res.as_dict()}
 

@@ -260,6 +260,48 @@ def test_instellingen_feed_combinaties_en_rij_toevoegen(client):
     assert k["winkels"] == 900 and k["schatting"] is True
 
 
+# ------------------------------------------------- filter-lege staat (B4)
+
+def test_filter_zonder_resultaat_houdt_filters_bedienbaar(client):
+    """Auditbevinding B4: bij nul rijen ná filteren verdwenen de filterchips
+    en zei het scherm "nog geen data geïmporteerd" — een doodlopende staat."""
+    import seed
+    upload(client, "DWH__Sales_Tweezerman_KVNL_32.xlsx",
+           seed.make_dwh_xlsx(seed._kv_demo_rows(["202632"])))
+    r = client.get("/api/kruidvat/dashboard?merk=BESTAATNIET").json()
+    assert r["empty"] is True and r["gefilterd"] is True
+    assert "TWEEZERMAN" in r["filters"]["merk"], "chips moeten bedienbaar blijven"
+    # Écht lege retailer: geen 'gefilterd', wel de gewone lege staat.
+    leeg = client.get("/api/douglas/dashboard").json()
+    assert leeg.get("available") is False or leeg.get("gefilterd") in (False, None)
+
+
+# ------------------------------------------------- target per winkel (B5)
+
+def test_target_per_winkel_zichtbaar_in_breakdown(client):
+    """Auditbevinding B5: het targetveld werd opgeslagen maar nergens
+    gebruikt. Het staat nu per merk in de omzet-per-winkel-uitsplitsing."""
+    import seed
+    upload(client, "Maandelijkse_resultaten_ICI_Paris_XL_t.xlsx",
+           seed.make_ici_xlsx({"TWEEZERMAN": {"6051": {"202607": 100.0},
+                                              "6052": {"202607": 60.0}}}))
+    client.put("/api/ici-paris-xl/instellingen", json={"winkels_targets": [
+        {"merk": "TWEEZERMAN", "land": "NL", "banner": None,
+         "aantal_winkels": None, "target_per_winkel": 75.0}]})
+    b = client.get("/api/ici-paris-xl/dashboard").json()["kpi"]["omzet_per_winkel"]["breakdown"]
+    t = next(x for x in b if x["merk"] == "TWEEZERMAN")
+    # 160 omzet / 2 winkels = 80 per winkel, target 75 zichtbaar ernaast.
+    assert t["waarde"] == pytest.approx(80.0) and t["target"] == pytest.approx(75.0)
+
+
+def test_artikelanalyse_geeft_jaar_mee(client):
+    """Auditbevinding B6: de grafiek hardcodeerde 2025/2026."""
+    import seed
+    upload(client, "DWH__Sales_Tweezerman_KVNL_32.xlsx",
+           seed.make_dwh_xlsx(seed._kv_demo_rows(["202632"])))
+    assert client.get("/api/kruidvat/artikelen").json()["jaar"] == 2026
+
+
 # ------------------------------------------------- lopende periode
 
 def test_is_afgesloten_week_en_maand():

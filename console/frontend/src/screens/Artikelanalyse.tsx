@@ -71,8 +71,9 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
               <div key={m}>
                 <div className="eyebrow" style={{ marginBottom: 8 }}>{m} per {pWord.toLowerCase()}, jaar op jaar</div>
                 <TrendChart
-                  series={{ 2025: toSeries(chosen.sparkline.lytd, m), 2026: toSeries(chosen.sparkline.ytd, m) } as any}
-                  years={[2025, 2026]} isEuro={m === "omzet"} periodWord={pWord} />
+                  series={{ [data.jaar - 1]: toSeries(chosen.sparkline.lytd, m),
+                            [data.jaar]: toSeries(chosen.sparkline.ytd, m) } as any}
+                  years={[data.jaar - 1, data.jaar]} isEuro={m === "omzet"} periodWord={pWord} />
               </div>
             ))}
           </div>

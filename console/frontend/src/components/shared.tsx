@@ -126,8 +126,10 @@ export function TrendChart({ series, years, isEuro, periodWord }:
           <text key={p} x={x(p)} y={H - PAD + 16} textAnchor="middle" fontSize="9.5" fill="#7E8D92">{p}</text>
         ))}
         {[maxY, maxY / 2].map((v, i) => (
-          <text key={i} x={PAD - 6} y={y(v) + 3} textAnchor="end" fontSize="9.5" fill="#7E8D92">
-            {isEuro ? "€" + Math.round(v / 1000) + "k" : fmtNum(Math.round(v))}
+          <text key={i} x={PAD - 6} y={y(v) + 3} textAnchor="end" fontSize="10.5" fill="#7E8D92">
+            {/* Onder de €10k hele euro's: "€0k" op de per-winkel-as zei niets. */}
+            {isEuro ? (v >= 10000 ? "€" + Math.round(v / 1000) + "k" : fmtEur(v))
+                    : fmtNum(Math.round(v))}
           </text>
         ))}
         {years.map((yr, i) => {
