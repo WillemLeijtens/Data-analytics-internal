@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime as dt
 
 from . import analytics
-from .periods import period_number, period_year, sort_key
+from .periods import period_number, period_year
 from .profile import active_profile, capabilities
 
 ORDER = {"grey": 0, "green": 1, "orange": 2, "red": 3}
@@ -71,14 +71,19 @@ def data_signal(conn, retailer_id: str) -> tuple[str, str]:
     period. <=1 behind = green, <=4 = orange, more = red."""
     prof = active_profile(conn, retailer_id)
     statuses = ("ingelezen", "test") if prof and prof.status == "test" else ("ingelezen",)
+    # Alleen de nieuwste periode is nodig; élke feitregel ophalen om er in
+    # Python een max over te doen, laadt de hele historie in voor één string.
+    # Kan als MAX(periode) omdat het periodeformaat ('2026-W07', '2026-07')
+    # met vaste breedte is en dus lexicografisch gelijkloopt met sort_key.
     row = conn.execute(
-        "SELECT f.periode, f.periode_type FROM sellout_facts f "
+        "SELECT MAX(f.periode) AS periode, MAX(f.periode_type) AS periode_type "
+        "FROM sellout_facts f "
         f"JOIN imports im ON im.id=f.import_id AND im.status IN ({','.join('?' * len(statuses))}) "
-        "WHERE f.retailer_id=? ", (*statuses, retailer_id)).fetchall()
-    if not row:
+        "WHERE f.retailer_id=? ", (*statuses, retailer_id)).fetchone()
+    if not row or not row["periode"]:
         return "grey", "Nog geen data"
-    latest = max((r["periode"] for r in row), key=sort_key)
-    ptype = row[0]["periode_type"]
+    latest = row["periode"]
+    ptype = row["periode_type"]
     unit = "week" if ptype == "week" else "maand"
     behind = periods_behind(latest, ptype)
     if behind <= 1:

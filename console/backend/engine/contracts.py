@@ -1,10 +1,19 @@
 """ContractSource: interface for the SharePoint folder that holds contract
 documents. Only the mock is implemented — the real Microsoft Graph
-implementation is a TODO; it must return the same document dicts."""
+implementation is a TODO; it must return the same document dicts.
+
+De mock levert VERZONNEN documenten ("Distributieovereenkomst, verloopt
+31-08-2026") en die kleuren het contractsignaal op het Overzicht. Zolang de
+Graph-koppeling er niet is, mag dat nooit in een echte omgeving belanden:
+de mock doet alleen mee als CONSOLE_CONTRACTS=mock expliciet gezet is
+(seed en tests). Standaard levert een gekoppelde map niets — een leeg
+scherm is eerlijk, een verzonnen contract niet.
+"""
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Protocol
 
@@ -26,9 +35,23 @@ class MockContractSource:
         return data.get(retailer_id, [])
 
 
+class GeenContractBron:
+    """Er is nog geen koppeling met SharePoint. Levert niets — en verzint
+    dus ook niets."""
+
+    def list_documents(self, retailer_id: str) -> list[dict]:
+        return []
+
+
 # TODO: GraphContractSource(site, drive, folder) via Microsoft Graph API.
 def get_source() -> ContractSource:
-    return MockContractSource()
+    if os.environ.get("CONSOLE_CONTRACTS", "").strip().lower() == "mock":
+        return MockContractSource()
+    return GeenContractBron()
+
+
+def bron_naam() -> str:
+    return "mock" if isinstance(get_source(), MockContractSource) else "niet gekoppeld"
 
 
 def sync_documents(conn, retailer_id: str, source: ContractSource | None = None):

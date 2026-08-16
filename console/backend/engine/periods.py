@@ -11,6 +11,7 @@ declare the source format; supported formats:
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 
 
@@ -74,3 +75,23 @@ def in_ytd_window(period: str, upto_number: int) -> bool:
     """True when the period's week/month number falls in 1..upto_number —
     the YTD vs LYTD comparison window."""
     return period_number(period) <= upto_number
+
+
+def is_afgesloten(period: str, vandaag: dt.date | None = None) -> bool:
+    """Is deze periode voorbij, of loopt hij nog?
+
+    Een retailer die halverwege de maand levert, levert een halve maand. Die
+    als volledige periode tonen zakt de trendlijn, verlaagt de KPI en maakt de
+    YTD-vergelijking oneerlijk (halve maand tegen hele maand vorig jaar).
+    Daarom weet elke analyse of de laatste periode al af is."""
+    vandaag = vandaag or dt.date.today()
+    jaar, nummer = period_year(period), period_number(period)
+    if period_type_of(period) == "maand":
+        return (jaar, nummer) < (vandaag.year, vandaag.month)
+    try:
+        # ISO-weken: de week is af zodra de zondag voorbij is.
+        zondag = dt.date.fromisocalendar(jaar, nummer, 7)
+    except ValueError:
+        # Week 53 in een jaar dat er 52 heeft: bestaat niet, dus niet lopend.
+        return True
+    return vandaag > zondag

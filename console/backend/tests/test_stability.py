@@ -198,7 +198,9 @@ def test_rotation_uses_current_year_only(client):
                  "desc": "Slant Tweezer", "brand": "TWEEZERMAN", "weeks": wkdata}]
 
     f_old = seed.make_dwh_xlsx(one_item(2025, range(1, 27), 10))
-    f_new = seed.make_dwh_xlsx(one_item(2026, [1, 2], 10))
+    # Vier weken: genoeg om voorbij de "te kort geleden geïntroduceerd"-drempel
+    # te komen, zodat deze test over het JAARVENSTER blijft gaan.
+    f_new = seed.make_dwh_xlsx(one_item(2026, [1, 2, 3, 4], 10))
     assert upload(client, "DWH__Sales_Tweezerman_KVNL_2025_demo.xlsx", f_old)["status"] == "ingelezen"
     assert upload(client, "DWH__Sales_Tweezerman_KVNL_02_demo.xlsx", f_new)["status"] == "ingelezen"
 
@@ -207,7 +209,7 @@ def test_rotation_uses_current_year_only(client):
                              "aantal_winkels": 1, "target_per_winkel": 45.0}],
         "rotatie_targets": [{"merk": "TWEEZERMAN", "stuks_per_winkel_per_week": 8.0}]})
     art = client.get("/api/kruidvat/assortiment").json()["artikelen"][0]
-    # Current year: 20 stuks / 2 weken / 1 winkel = 10 — NOT diluted by 2025.
+    # Current year: 40 stuks / 4 weken / 1 winkel = 10 — NOT diluted by 2025.
     assert art["rotatie"] == pytest.approx(10.0)
     assert art["score"] == 125
 

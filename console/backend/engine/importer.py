@@ -24,6 +24,18 @@ def file_hash(content: bytes) -> str:
 
 _FACT_KEY = ("merk", "land", "banner", "winkel_id", "artikel_ean", "periode")
 
+# De natuurlijke sleutel als één tekstwaarde. CHAR(31) (unit separator) komt
+# in geen enkel veld voor, dus twee verschillende sleutels kunnen niet op
+# dezelfde tekst uitkomen.
+_SLEUTEL_SQL = ("COALESCE(merk,'')||CHAR(31)||COALESCE(land,'')||CHAR(31)"
+                "||COALESCE(banner,'')||CHAR(31)||COALESCE(winkel_id,'')||CHAR(31)"
+                "||COALESCE(artikel_ean,'')||CHAR(31)||periode")
+
+
+def _sleutel(fact: dict) -> str:
+    return "\x1f".join("" if fact.get(k) is None else str(fact.get(k)) for k in _FACT_KEY[:-1]) \
+        + "\x1f" + str(fact["periode"])
+
 
 def _replace_redelivered_facts(conn, retailer_id: str, facts: list[dict]):
     """Verwijder bestaande feiten die dit bestand opnieuw levert.
@@ -33,27 +45,21 @@ def _replace_redelivered_facts(conn, retailer_id: str, facts: list[dict]):
     komen te staan en telt het dashboard ze bij elkaar op — de correctie
     verdubbelt dan de omzet in plaats van hem te vervangen. Alleen exact de
     combinaties uit het nieuwe bestand worden vervangen; andere merken,
-    winkels en periodes blijven onaangeroerd, dus de historie blijft staan."""
+    winkels en periodes blijven onaangeroerd, dus de historie blijft staan.
+
+    De sleutel gaat als één tekstkolom mét index de temp-tabel in: met zes
+    losse COALESCE-vergelijkingen scant SQLite de sleuteltabel opnieuw voor
+    élke feitregel (EXPLAIN QUERY PLAN: 'SCAN k'), wat bij een ICI-import
+    van 4355 regels neerkomt op miljoenen vergelijkingen. Nu is het één
+    indexopzoeking per regel."""
     conn.execute("DROP TABLE IF EXISTS temp._nieuwe_sleutels")
-    conn.execute(
-        "CREATE TEMP TABLE _nieuwe_sleutels ("
-        "merk TEXT, land TEXT, banner TEXT, winkel_id TEXT, artikel_ean TEXT, periode TEXT)")
+    conn.execute("CREATE TEMP TABLE _nieuwe_sleutels (sleutel TEXT PRIMARY KEY)")
     conn.executemany(
-        "INSERT INTO temp._nieuwe_sleutels VALUES (?,?,?,?,?,?)",
-        sorted({tuple(f.get(k) for k in _FACT_KEY) for f in facts}))
+        "INSERT OR IGNORE INTO temp._nieuwe_sleutels (sleutel) VALUES (?)",
+        [(s,) for s in sorted({_sleutel(f) for f in facts})])
     conn.execute(
-        """
-        DELETE FROM sellout_facts
-         WHERE retailer_id = ?
-           AND EXISTS (
-               SELECT 1 FROM temp._nieuwe_sleutels k
-                WHERE k.periode = sellout_facts.periode
-                  AND COALESCE(k.merk, '') = COALESCE(sellout_facts.merk, '')
-                  AND COALESCE(k.land, '') = COALESCE(sellout_facts.land, '')
-                  AND COALESCE(k.banner, '') = COALESCE(sellout_facts.banner, '')
-                  AND COALESCE(k.winkel_id, '') = COALESCE(sellout_facts.winkel_id, '')
-                  AND COALESCE(k.artikel_ean, '') = COALESCE(sellout_facts.artikel_ean, ''))
-        """, (retailer_id,))
+        f"DELETE FROM sellout_facts WHERE retailer_id = ? AND ({_SLEUTEL_SQL}) "
+        "IN (SELECT sleutel FROM temp._nieuwe_sleutels)", (retailer_id,))
     conn.execute("DROP TABLE temp._nieuwe_sleutels")
 
 

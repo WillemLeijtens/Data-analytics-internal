@@ -124,21 +124,26 @@ def test_ici_missing_scope_is_not_silently_approved(client):
 
 
 def _blocks_twee_jaar():
-    """202512 = vorig jaar, 202601 t/m 202603 = huidig jaar.
+    """2025 = vorig jaar, 202601 t/m 202603 = huidig jaar.
 
     TWEEZERMAN: 6051 draait door, 6052 ligt twee maanden stil (gestopt),
     6053 is nieuw, 6054 mist alleen de laatste maand (signaal).
     DEPEND: alleen 6051 — een kleiner winkelbestand dan TWEEZERMAN.
+
+    6052 heeft in 2025 ook omzet in december: die valt buiten het venster
+    van de stilstand (maand 2-3) en mag dus niet meetellen als gemiste omzet.
     """
     return {
         "TWEEZERMAN": {
-            "6051": {"202512": 100.0, "202601": 200.0, "202602": 250.0, "202603": 300.0},
-            "6052": {"202512": 900.0, "202601": 50.0},
+            "6051": {"202501": 100.0, "202502": 110.0, "202503": 120.0,
+                     "202601": 200.0, "202602": 250.0, "202603": 300.0},
+            "6052": {"202501": 800.0, "202502": 300.0, "202503": 400.0,
+                     "202512": 900.0, "202601": 50.0},
             "6053": {"202601": 40.0, "202602": 50.0, "202603": 60.0},
-            "6054": {"202512": 500.0, "202601": 10.0, "202602": 20.0},
+            "6054": {"202503": 250.0, "202601": 10.0, "202602": 20.0},
         },
-        "DEPEND": {"6051": {"202512": 10.0, "202601": 20.0,
-                            "202602": 25.0, "202603": 30.0}},
+        "DEPEND": {"6051": {"202501": 10.0, "202502": 12.0, "202503": 14.0,
+                            "202601": 20.0, "202602": 25.0, "202603": 30.0}},
     }
 
 
@@ -173,16 +178,19 @@ def test_winkelanalyse_gestopt_en_toegevoegd(client):
     assert set(gestopt) == {("6052", "TWEEZERMAN")}
     g = gestopt[("6052", "TWEEZERMAN")]
     assert g["laatste_maand"] == 1 and g["maanden_zonder_omzet"] == 2
-    # De omzet van vorig jaar is wat we nu mislopen.
-    assert g["omzet_vorig_jaar"] == pytest.approx(900.0)
-    assert w["gemiste_omzet"] == pytest.approx(900.0)
+    # Gemist = wat deze winkel in DEZELFDE maanden vorig jaar verkocht
+    # (feb 300 + mrt 400). Het hele jaar nemen zou er 2400 van maken —
+    # inclusief december, een maand die dit jaar nog moet komen.
+    assert g["gemist_zelfde_venster"] == pytest.approx(700.0)
+    assert g["omzet_vorig_jaar"] == pytest.approx(2400.0)
+    assert w["gemiste_omzet"] == pytest.approx(700.0)
 
     # Eén lege maand telt niet als gestopt, maar verdwijnt ook niet: 6054
     # staat als signaal in de lijst en niet in de gemiste omzet.
     signalen = {(s["winkel_id"], s["merk"]): s for s in w["signalen"]}
     assert set(signalen) == {("6054", "TWEEZERMAN")}
     assert signalen[("6054", "TWEEZERMAN")]["maanden_zonder_omzet"] == 1
-    assert signalen[("6054", "TWEEZERMAN")]["omzet_vorig_jaar"] == pytest.approx(500.0)
+    assert signalen[("6054", "TWEEZERMAN")]["gemist_zelfde_venster"] == pytest.approx(250.0)
 
     toegevoegd = {(a["winkel_id"], a["merk"]) for a in w["toegevoegd"]}
     assert toegevoegd == {("6053", "TWEEZERMAN")}

@@ -40,7 +40,9 @@ function StilTabel({ rijen, w, pWord, naam, leeg }: {
       <thead><tr>
         <th>Winkel</th><th>Merk</th><th>Laatste omzet</th><th>Zonder omzet</th>
         <th style={{ textAlign: "right" }}>Omzet {w.jaar}</th>
-        <th style={{ textAlign: "right" }}>Omzet {w.jaar - 1}</th>
+        <th style={{ textAlign: "right" }} title={`Wat deze winkel in dezelfde ${pWord.toLowerCase()}en van ${w.jaar - 1} verkocht`}>
+          Gemist
+        </th>
       </tr></thead>
       <tbody>
         {rijen.map((g) => (
@@ -50,7 +52,7 @@ function StilTabel({ rijen, w, pWord, naam, leeg }: {
             <td>{g.laatste_maand == null ? `niets in ${w.jaar}` : naam(g.laatste_maand)}</td>
             <td>{g.maanden_zonder_omzet} {pWord.toLowerCase()}{g.maanden_zonder_omzet === 1 ? "" : "en"}</td>
             <td style={{ textAlign: "right" }}>{fmtEur(g.omzet_dit_jaar)}</td>
-            <td style={{ textAlign: "right" }}>{fmtEur(g.omzet_vorig_jaar)}</td>
+            <td style={{ textAlign: "right" }}>{fmtEur(g.gemist_zelfde_venster)}</td>
           </tr>
         ))}
         {!rijen.length && <tr><td colSpan={6} className="sub">{leeg}</td></tr>}
@@ -70,7 +72,20 @@ function Winkelanalyse({ w, pWord }: { w: any; pWord: string }) {
       <p className="sub" style={{ marginTop: -6 }}>
         Vergeleken met {w.jaar - 1}, t/m {pWord.toLowerCase()} {naam(w.laatste_maand)}.
         Een winkel telt per merk: een filiaal kan het ene merk laten vallen en het andere houden.
+        “Gemist” is wat de winkel in dezelfde {pWord.toLowerCase()}en van {w.jaar - 1} verkocht.
       </p>
+
+      {w.historie_ontbreekt?.length > 0 && (
+        // Zonder vorig jaar zou élke winkel als 'nieuw' gelden; dat is een
+        // gat in de data, geen waarneming.
+        <div className="level-strip" style={{ marginTop: 14 }}>
+          <span className="sub">
+            Van {w.historie_ontbreekt.join(" en ")} is {w.jaar - 1} niet geladen —
+            nieuwe winkels zijn voor {w.historie_ontbreekt.length > 1 ? "die merken" : "dat merk"} niet
+            te bepalen. Importeer het bestand van {w.jaar - 1} om de vergelijking compleet te maken.
+          </span>
+        </div>
+      )}
 
       <div className="level-strip" style={{ borderLeft: "3px solid var(--neg)", marginTop: 14 }}>
         <span><b>Actiepunt.</b> {w.actiepunt}</span>
@@ -178,10 +193,22 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       </div>
 
       <h2>Meest recente {pWord.toLowerCase()} {data.laatste_periode}</h2>
+      {data.laatste_periode_compleet === false && (
+        // Een halve periode als volledige tonen laat de omzet kelderen en
+        // maakt de YoY-vergelijking oneerlijk.
+        <p className="sub" style={{ marginTop: -8 }}>
+          Let op: {pWord.toLowerCase()} {data.laatste_periode} loopt nog. De cijfers
+          hieronder zijn een tussenstand; de YTD-vergelijking rekent daarom t/m
+          {" " + pWord.toLowerCase()} {data.ytd.tot_periode}.
+        </p>
+      )}
       <div className="grid kpi">
-        <KpiCard label="Omzet" tag={pWord.toUpperCase()} isEuro
+        <KpiCard label="Omzet" tag={data.laatste_periode_compleet === false ? "LOPEND" : pWord.toUpperCase()}
+          tagAccent={data.laatste_periode_compleet === false} isEuro
           value={fmtEur(k.omzet.waarde)} breakdown={k.omzet.breakdown} />
-        {hasVolume && <KpiCard label="Volume" tag={pWord.toUpperCase()}
+        {hasVolume && <KpiCard label="Volume"
+          tag={data.laatste_periode_compleet === false ? "LOPEND" : pWord.toUpperCase()}
+          tagAccent={data.laatste_periode_compleet === false}
           value={fmtNum(k.volume.waarde)} breakdown={k.volume.breakdown} />}
         <KpiCard label="Omzet per winkel" tag={k.omzet_per_winkel.schatting ? "SCHATTING" : "WINKEL"}
           tagAccent={k.omzet_per_winkel.schatting}

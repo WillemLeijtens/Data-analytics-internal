@@ -462,7 +462,9 @@ def link_sharepoint(retailer_id: str, body: SharepointBody):
             "ON CONFLICT(retailer_id) DO UPDATE SET map_url=excluded.map_url",
             (retailer_id, body.map_url))
         docs = contracts.sync_documents(conn, retailer_id)
-        return {"ok": True, "documenten": docs}
+        # De map wordt wél vastgelegd; documenten komen er pas bij als de
+        # Graph-koppeling er is. Geen verzonnen contracten in de tussentijd.
+        return {"ok": True, "documenten": docs, "bron": contracts.bron_naam()}
 
 
 # ---------------------------------------------------------------- health

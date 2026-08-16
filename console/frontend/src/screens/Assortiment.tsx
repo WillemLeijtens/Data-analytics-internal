@@ -29,6 +29,7 @@ export default function Assortiment({ ctx }: { ctx: ShellCtx }) {
     );
 
   const s = data.stats;
+  const pWord = data.periode_type === "maand" ? "maand" : "week";
   return (
     <>
       <h1>Assortimentsanalyse — {ctx.card?.naam}</h1>
@@ -48,7 +49,17 @@ export default function Assortiment({ ctx }: { ctx: ShellCtx }) {
             <tr key={a.ean}>
               <td>{a.naam}<br /><span className="mono sub">{a.ean}</span></td>
               <td><BrandDot merk={a.merk} />{a.merk}</td>
-              <td>{a.rotatie ?? "—"} st/winkel/week</td>
+              <td>
+                {a.rotatie ?? "—"} st/winkel/week
+                {/* Waar de rotatie op rust: het aantal periodes sinds de
+                    eerste verkoop en de winkels die dit artikel voerden. */}
+                {a.actieve_periodes != null && (
+                  <div className="sub" style={{ fontSize: 10.5 }}>
+                    {a.actieve_periodes} {pWord}{a.actieve_periodes === 1 ? "" : "en"}
+                    {a.winkels ? ` · ${a.winkels} winkels` : ""}
+                  </div>
+                )}
+              </td>
               <td>{a.target ?? "—"}</td>
               <td>{a.score != null
                 ? <span className={`tag ${a.score >= 100 ? "pos" : "neg"}`}>{a.score}%</span>

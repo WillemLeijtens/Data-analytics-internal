@@ -185,6 +185,14 @@ winkels, DEPEND ~139, en per maand nog veel minder.
 Zonder winkelniveau valt de teller terug op het handmatige aantal uit
 Instellingen (label `SCHATTING`).
 
+### Lopende periode
+
+Levert een retailer halverwege de maand, dan is die maand geen hele maand.
+`is_afgesloten()` (in `periods.py`) bepaalt of de laatste periode al voorbij
+is; het dashboard toont hem wél als KPI maar met het label **LOPEND**, en de
+YTD-vergelijking rekent t/m de laatste **afgesloten** periode — anders zet je
+een halve maand naast een hele maand vorig jaar.
+
 ### Winkelanalyse (retailers mét winkelniveau)
 
 Op het dashboard: winkels die dit jaar stilgevallen zijn (wél eerder omzet,
@@ -195,6 +203,54 @@ onder "Let op" en tellen niet mee in de gemiste omzet. En
 omgekeerd de nieuwe winkels: vorig jaar geen omzet, dit jaar wel. Per
 winkel én merk, want een filiaal kan het ene merk laten vallen en het
 andere houden.
+
+"Gemist" is wat die winkel in **dezelfde maanden** van vorig jaar verkocht,
+niet zijn hele vorige jaar: dat laatste telt maanden mee die dit jaar nog
+moeten komen (op de echte ICI-data € 11.865 in plaats van € 6.160). Is vorig
+jaar voor een merk niet geladen, dan blijft de lijst met nieuwe winkels leeg
+met een melding — anders zou elke winkel "nieuw" heten (244 in plaats van 2).
+
+### Promoties: prijsindex, geen gemiddelde stukprijs
+
+De stukprijs van een heel merk (omzet ÷ volume) beweegt net zo hard mee met
+de verkoopmix als met de prijs. Kruidvat-artikelen lopen van € 6,09 tot
+€ 25,22: verkoopt het goedkope artikel een week wat meer, dan "daalt" de
+gemiddelde prijs zonder afprijzing. Daarom volgt `prijsindex()` de prijs
+**per artikel** en telt die met vaste gewichten (het jaarvolume) op, en
+vergelijkt met de mediaan van **hetzelfde jaar** — een prijspeil dat over de
+jaren stijgt zou anders elk ouder jaar als afgeprijsd bestempelen. Op de
+echte feed: 42 gevlagde weken → 34, en wat overblijft is terug te voeren op
+een echte prijsdaling per artikel.
+
+Zonder artikelniveau (ICI) is er geen suggestie, alleen handmatig markeren:
+`methode` in het antwoord zegt welke van de twee geldt.
+
+De uplift meet tegen de **mediaan** van de niet-actieperiodes uit hetzelfde
+jaar. Over jaren heen middelen vergelijkt door omzetregimes heen (Kruidvat
+2024: € 33k/week, 2025: € 47k). Onder drie basisperiodes volgt geen
+percentage maar "te weinig basisperiodes".
+
+### Rotatie
+
+Gedeeld door de periodes **sinds de eerste verkoop** van dat artikel en door
+de winkels die dát artikel voerden — niet door het hele jaar en het hele
+filiaalnet van het merk, want dan wordt een artikel dat in week 20 is
+geïntroduceerd een delist-kandidaat. Onder vier actieve periodes volgt geen
+oordeel maar "Te kort geleden geïntroduceerd".
+
+### Contractdocumenten
+
+De SharePoint-koppeling is nog een mock. Die levert **verzonnen** documenten
+en die zouden het contractsignaal op het Overzicht kleuren, dus hij doet
+alleen mee met `CONSOLE_CONTRACTS=mock` (seed en tests). Standaard levert een
+gekoppelde map niets en blijft het signaal grijs: een leeg scherm is eerlijk,
+een verzonnen contract niet.
+
+### Back-up
+
+Beide databases worden dagelijks gekopieerd door de `backup`-service in
+`docker-compose.yml` (`sqlite3 .backup` + integriteitscontrole, 14 dagen
+bewaard in `backups/`). Herstelprocedure: `deploy/restore.md`.
 
 ## Nieuwe retailer toevoegen
 

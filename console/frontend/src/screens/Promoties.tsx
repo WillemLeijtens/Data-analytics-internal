@@ -31,8 +31,11 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
 
   const pw = data.periode_type === "maand" ? "Maand" : "Week";
   const nConfirmed = Object.values(checked).filter(Boolean).length;
-  const maxAbs = Math.max(1, ...uplift.map((u) => Math.abs(u.uplift_pct ?? 0)));
-  const avg = uplift.length ? uplift.reduce((a, u) => a + (u.uplift_pct ?? 0), 0) / uplift.length : null;
+  // Promoties zonder genoeg basisperiodes hebben géén percentage; die mogen
+  // het gemiddelde en de uitersten niet als nul omlaag trekken.
+  const metPct = uplift.filter((u) => u.uplift_pct != null);
+  const maxAbs = Math.max(1, ...metPct.map((u) => Math.abs(u.uplift_pct)));
+  const avg = metPct.length ? metPct.reduce((a, u) => a + u.uplift_pct, 0) / metPct.length : null;
 
   const save = async () => {
     const bevestigd = (data.suggesties as any[])
@@ -95,27 +98,38 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
             {uplift.length ? (
               <>
                 <div className="sub" style={{ marginBottom: 10 }}>
-                  {uplift.length} promoties · gem.{" "}
+                  {metPct.length} promoties gemeten · gem.{" "}
                   <b className={avg != null && avg >= 0 ? "sig-green" : "sig-red"}>
                     {avg != null ? `${avg >= 0 ? "+" : ""}${avg.toFixed(1)}%` : "—"}
-                  </b>{" "}
-                  · beste <b className="sig-green">+{Math.max(...uplift.map((u) => u.uplift_pct ?? 0)).toFixed(1)}%</b>{" "}
-                  · zwakste <b className="sig-red">{Math.min(...uplift.map((u) => u.uplift_pct ?? 0)).toFixed(1)}%</b>
+                  </b>
+                  {metPct.length > 0 && <>
+                    {" "}· beste <b className="sig-green">+{Math.max(...metPct.map((u) => u.uplift_pct)).toFixed(1)}%</b>{" "}
+                    · zwakste <b className="sig-red">{Math.min(...metPct.map((u) => u.uplift_pct)).toFixed(1)}%</b>
+                  </>}
+                  {uplift.length > metPct.length &&
+                    ` · ${uplift.length - metPct.length} zonder genoeg basisperiodes`}
                 </div>
                 {uplift.map((u) => (
                   <div key={`${u.merk}${u.periode}`} style={{ display: "grid", gridTemplateColumns: "170px 1fr 70px", gap: 10, alignItems: "center", margin: "5px 0" }}>
                     <span style={{ fontSize: 11.5 }}>{u.merk} · {u.periode}</span>
                     <div className="bar-track" style={{ height: 8 }}>
-                      <div className="bar-fill" style={{
+                      {u.uplift_pct != null && <div className="bar-fill" style={{
                         height: 8,
-                        width: `${(Math.abs(u.uplift_pct ?? 0) / maxAbs) * 100}%`,
-                        background: (u.uplift_pct ?? 0) < 0 ? "oklch(0.55 0.18 27)"
+                        width: `${(Math.abs(u.uplift_pct) / maxAbs) * 100}%`,
+                        background: u.uplift_pct < 0 ? "oklch(0.55 0.18 27)"
                           : YEAR_COLORS[2026 - u.jaar] ?? "#BAC3C8",
-                      }} />
+                      }} />}
                     </div>
-                    <b style={{ fontSize: 12 }} className={(u.uplift_pct ?? 0) >= 0 ? "" : "sig-red"}>
-                      {(u.uplift_pct ?? 0) >= 0 ? "+" : ""}{u.uplift_pct}%
-                    </b>
+                    {u.uplift_pct != null ? (
+                      <b style={{ fontSize: 12 }} className={u.uplift_pct >= 0 ? "" : "sig-red"}>
+                        {u.uplift_pct >= 0 ? "+" : ""}{u.uplift_pct}%
+                      </b>
+                    ) : (
+                      <span className="sub" style={{ fontSize: 10.5 }}
+                        title={`Maar ${u.basisperiodes} ${pw.toLowerCase()}(en) zonder actie in ${u.jaar}`}>
+                        te weinig basis
+                      </span>
+                    )}
                   </div>
                 ))}
               </>
@@ -125,23 +139,31 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
 
         <div className="card">
           <div className="eyebrow">Hoe de suggestie werkt</div>
-          {data.capabilities.volume === false ? (
+          {data.methode === "handmatig" ? (
             <>
-              <p className="sub">Deze retailer levert <b>geen volumedata</b>, dus een stukprijs (omzet
-                gedeeld door volume) en daarmee een automatische suggestie zijn niet mogelijk.</p>
+              <p className="sub">Deze retailer levert {data.capabilities.volume === false
+                ? <>geen <b>volumedata</b></> : <>geen <b>artikelniveau</b></>}, dus een betrouwbare
+                prijsvergelijking is niet mogelijk — zonder artikelniveau meet je de verkoopmix
+                in plaats van de prijs.</p>
               <p className="sub">Handmatig actieperiodes aanvinken werkt wél: de tabel toont elke
                 {" "}{pw.toLowerCase()} per merk, en jij markeert de actieperiodes.</p>
             </>
           ) : (
             <>
-              <p className="sub">De stukprijs per {pw.toLowerCase()} is omzet gedeeld door volume, per merk
+              <p className="sub">De prijs wordt <b>per artikel</b> gevolgd en met een vaste mix opgeteld
+                tot één prijsindex per {pw.toLowerCase()}, per merk
                 {data.capabilities.banner ? " per banner" : " per land"}.</p>
-              <p className="sub">Ligt de stukprijs {Math.round(data.drempel * 100)}% of meer onder de mediaan van de feed,
-                dan verschijnt een suggestie ("afgeprijsd, -x%"). Er wordt nooit automatisch aangevinkt — jij bevestigt.</p>
+              <p className="sub">Dat is bewust niet de gemiddelde stukprijs van het hele merk: verkoopt
+                een goedkoop artikel een {pw.toLowerCase()} wat meer, dan daalt dat gemiddelde zonder dat
+                er iets is afgeprijsd.</p>
+              <p className="sub">Ligt de index {Math.round(data.drempel * 100)}% of meer onder de mediaan
+                van <b>hetzelfde jaar</b>, dan verschijnt een suggestie ("afgeprijsd, -x%"). Er wordt nooit
+                automatisch aangevinkt — jij bevestigt.</p>
             </>
           )}
-          <p className="sub">De uplift vergelijkt de omzet in de actieperiode met het gemiddelde van de periodes
-            zónder actie. Bevestigde actieperiodes blijven buiten die basislijn.</p>
+          <p className="sub">De uplift vergelijkt de omzet in de actieperiode met de <b>mediaan</b> van de
+            periodes zónder actie uit hetzelfde jaar. Bevestigde actieperiodes blijven buiten die
+            basislijn, en onder drie basisperiodes tonen we geen percentage.</p>
         </div>
       </div>
     </>

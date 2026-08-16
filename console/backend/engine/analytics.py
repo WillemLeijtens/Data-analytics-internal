@@ -13,7 +13,7 @@ from collections import defaultdict
 from statistics import median
 
 from . import fallback
-from .periods import period_number, period_year, sort_key
+from .periods import is_afgesloten, period_number, period_year, sort_key
 from .profile import active_profile, capabilities
 
 LABEL_TEST = "PROFIEL IN TEST"
@@ -111,6 +111,14 @@ ACTIEPUNT_GESTOPT = ("Neem contact op met de category manager om na te gaan "
 # winkels met één lege maand blijven wél zichtbaar, als signaal.
 GESTOPT_VANAF = 2
 
+# Onder dit aantal niet-actieperiodes in hetzelfde jaar is een basislijn geen
+# meting maar een toevalstreffer; dan tonen we geen uplift-percentage.
+MIN_BASISPERIODES = 3
+
+# Een artikel dat net in het schap ligt heeft nog geen rotatie die iets zegt;
+# onder dit aantal periodes met verkoop geven we geen delist-oordeel.
+MIN_ACTIEVE_PERIODES = 4
+
 
 def winkelanalyse(rows, caps: dict, jaar: int) -> dict:
     """Winkels die dit jaar stilgevallen zijn, en winkels die erbij kwamen.
@@ -118,8 +126,12 @@ def winkelanalyse(rows, caps: dict, jaar: int) -> dict:
     Per winkel én merk: een winkel kan het ene merk laten vallen en het
     andere blijven voeren, en dat is precies het gesprek met de category
     manager. Stilgevallen = dit jaar ergens omzet (of vorig jaar omzet) maar
-    in de laatste maand(en) niets meer. De omzet van vorig jaar staat erbij
-    als maat voor wat we mislopen."""
+    in de laatste maand(en) niets meer.
+
+    Gemiste omzet wordt gemeten over hetzelfde venster als de stilstand: de
+    maanden ná de laatste maand mét omzet, uit vorig jaar. Het hele vorige
+    jaar nemen terwijl dit jaar pas tot juli loopt, telt maanden mee die nog
+    moeten komen — op de echte ICI-data bijna een factor twee te hoog."""
     if not caps.get("winkel"):
         return {"beschikbaar": False}
 
@@ -132,47 +144,59 @@ def winkelanalyse(rows, caps: dict, jaar: int) -> dict:
             continue
         k = (r["winkel_id"], r["merk"])
         w = per.setdefault(k, {"winkel_id": r["winkel_id"], "winkel_naam": r["winkel_naam"],
-                               "merk": r["merk"], "nu": {}, "vorig": 0.0})
-        if j == jaar:
-            m = period_number(r["periode"])
-            w["nu"][m] = w["nu"].get(m, 0.0) + r["omzet"]
-        else:
-            w["vorig"] += r["omzet"]
+                               "merk": r["merk"], "nu": {}, "vorig": {}})
+        bucket = w["nu"] if j == jaar else w["vorig"]
+        m = period_number(r["periode"])
+        bucket[m] = bucket.get(m, 0.0) + r["omzet"]
 
     maanden = sorted({period_number(r["periode"]) for r in rows
                       if period_year(r["periode"]) == jaar})
+    # Merken zonder vorig jaar in de database: dan is "vorig jaar geen omzet"
+    # geen waarneming maar een gat in de data, en zou élke winkel als nieuw
+    # gemeld worden (op de echte ICI-data 244 in plaats van 2).
+    met_historie = {w["merk"] for w in per.values() if any(w["vorig"].values())}
+    zonder_historie = sorted({w["merk"] for w in per.values()} - met_historie,
+                             key=lambda m: (m is None, m))
+    leeg_resultaat = {
+        "beschikbaar": True, "jaar": jaar, "gestopt": [], "signalen": [],
+        "toegevoegd": [], "gemiste_omzet": 0.0, "gestopt_vanaf": GESTOPT_VANAF,
+        "historie_ontbreekt": zonder_historie, "actiepunt": ACTIEPUNT_GESTOPT}
     if not maanden:
-        return {"beschikbaar": True, "jaar": jaar, "gestopt": [], "signalen": [],
-                "toegevoegd": [], "gemiste_omzet": 0.0,
-                "gestopt_vanaf": GESTOPT_VANAF, "actiepunt": ACTIEPUNT_GESTOPT}
+        return leeg_resultaat
     laatste = maanden[-1]
 
     gestopt, signalen, toegevoegd = [], [], []
     for w in per.values():
         met_omzet = sorted(m for m, v in w["nu"].items() if v)
         dit_jaar = sum(w["nu"].values())
-        if not w["nu"].get(laatste) and (met_omzet or w["vorig"]):
-            leeg = [m for m in maanden if m > (met_omzet[-1] if met_omzet else 0)]
+        vorig_totaal = sum(w["vorig"].values())
+        if not w["nu"].get(laatste) and (met_omzet or vorig_totaal):
+            vanaf = (met_omzet[-1] if met_omzet else 0) + 1
+            leeg = [m for m in maanden if m >= vanaf]
             regel = {
                 "winkel_id": w["winkel_id"], "winkel_naam": w["winkel_naam"],
                 "merk": w["merk"], "laatste_maand": met_omzet[-1] if met_omzet else None,
                 "maanden_zonder_omzet": len(leeg),
-                "omzet_dit_jaar": dit_jaar, "omzet_vorig_jaar": w["vorig"]}
+                "omzet_dit_jaar": dit_jaar,
+                # Wat we in dezelfde maanden vorig jaar wél verkochten.
+                "gemist_zelfde_venster": sum(v for m, v in w["vorig"].items()
+                                             if vanaf <= m <= laatste),
+                "omzet_vorig_jaar": vorig_totaal}
             (gestopt if len(leeg) >= GESTOPT_VANAF else signalen).append(regel)
-        elif met_omzet and not w["vorig"]:
+        elif met_omzet and not vorig_totaal and w["merk"] in met_historie:
             toegevoegd.append({
                 "winkel_id": w["winkel_id"], "winkel_naam": w["winkel_naam"],
                 "merk": w["merk"], "eerste_maand": met_omzet[0],
                 "omzet_dit_jaar": dit_jaar})
 
     return {
-        "beschikbaar": True, "jaar": jaar, "laatste_maand": laatste,
-        "actiepunt": ACTIEPUNT_GESTOPT, "gestopt_vanaf": GESTOPT_VANAF,
-        "gestopt": sorted(gestopt, key=lambda x: -x["omzet_vorig_jaar"]),
+        **leeg_resultaat,
+        "laatste_maand": laatste,
+        "gestopt": sorted(gestopt, key=lambda x: -x["gemist_zelfde_venster"]),
         # Nog niet gestopt, wel opvallend: één lege maand na eerdere omzet.
-        "signalen": sorted(signalen, key=lambda x: -x["omzet_vorig_jaar"]),
+        "signalen": sorted(signalen, key=lambda x: -x["gemist_zelfde_venster"]),
         "toegevoegd": sorted(toegevoegd, key=lambda x: -x["omzet_dit_jaar"]),
-        "gemiste_omzet": sum(g["omzet_vorig_jaar"] for g in gestopt),
+        "gemiste_omzet": sum(g["gemist_zelfde_venster"] for g in gestopt),
     }
 
 
@@ -200,6 +224,12 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
     periods = sorted({r["periode"] for r in rows}, key=sort_key)
     latest = periods[-1]
     latest_rows = [r for r in rows if r["periode"] == latest]
+    # Loopt de laatste periode nog, dan is hij onvergelijkbaar met een hele
+    # periode vorig jaar: de YTD rekent tot en met de laatste AFGESLOTEN
+    # periode, terwijl de KPI de lopende periode wél toont — met een label.
+    latest_compleet = is_afgesloten(latest)
+    afgesloten = [p for p in periods if is_afgesloten(p)]
+    ytd_ref = afgesloten[-1] if afgesloten else latest
 
     def agg(rs):
         return {"omzet": sum(r["omzet"] for r in rs),
@@ -239,9 +269,10 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         labels.append(fallback.LABEL_SCHATTING)
     per_store = (kpi["omzet"] / n_stores) if n_stores else None
 
-    # YTD vs LYTD: same period window (1..latest number) in this and prior year.
-    y_now = period_year(latest)
-    upto = period_number(latest)
+    # YTD vs LYTD: same period window (1..latest number) in this and prior
+    # year — geteld t/m de laatste AFGESLOTEN periode.
+    y_now = period_year(ytd_ref)
+    upto = period_number(ytd_ref)
 
     def ytd_rows(year):
         return [r for r in rows if period_year(r["periode"]) == year
@@ -300,6 +331,7 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         "available": True, "empty": False, "capabilities": caps,
         "resolution": res.as_dict(), "labels": labels,
         "periode_type": caps["periode"], "laatste_periode": latest,
+        "laatste_periode_compleet": latest_compleet,
         "kpi": {
             "omzet": {"waarde": kpi["omzet"], "breakdown": brand_breakdown(latest_rows, "omzet")},
             "volume": {"waarde": kpi["volume"], "breakdown": brand_breakdown(latest_rows, "volume")},
@@ -389,6 +421,54 @@ def _promo_scope_key(caps):
         else (lambda r: (r["merk"], r["land"], None))
 
 
+def prijsindex(rows, key) -> dict[tuple, dict[str, float]]:
+    """Prijsindex per scope per periode, met een VASTE artikelmix.
+
+    De stukprijs van een hele scope (omzet ÷ volume over alle artikelen)
+    beweegt net zo hard mee met de verkoopmix als met de prijs. Bij Kruidvat
+    lopen de artikelprijzen van € 6,09 tot € 25,22: verkoopt het goedkope
+    artikel een week wat meer, dan 'daalt' de gemiddelde prijs zonder dat er
+    iets is afgeprijsd. Op de echte data leverde dat 42 van de 121 weken een
+    actie-suggestie op, waarvan 16 puur mixverschuiving.
+
+    Daarom per artikel de eigen prijs volgen en die met vaste gewichten
+    (het jaarvolume van dat artikel) optellen. Wat overblijft is prijs.
+    Gewichten en basisprijzen zijn per JAAR, want een prijspeil dat over de
+    jaren stijgt zou anders elk ouder jaar als 'afgeprijsd' bestempelen.
+    """
+    cell: dict[tuple, list] = defaultdict(lambda: [0, 0.0])
+    for r in rows:
+        if not r["artikel_ean"]:
+            continue
+        c = cell[(key(r), period_year(r["periode"]), r["artikel_ean"], r["periode"])]
+        c[0] += r["volume"]
+        c[1] += r["omzet"]
+
+    prijzen: dict[tuple, dict] = defaultdict(dict)   # (scope, jaar, ean) -> {periode: prijs}
+    gewicht: dict[tuple, int] = defaultdict(int)     # (scope, jaar, ean) -> volume
+    for (scope, jaar, ean, periode), (vol, rev) in cell.items():
+        if vol:
+            prijzen[(scope, jaar, ean)][periode] = rev / vol
+            gewicht[(scope, jaar, ean)] += vol
+
+    index: dict[tuple, dict[str, float]] = defaultdict(dict)
+    per_scope_jaar: dict[tuple, list] = defaultdict(list)
+    for sleutel in prijzen:
+        per_scope_jaar[(sleutel[0], sleutel[1])].append(sleutel)
+    for (scope, _jaar), sleutels in per_scope_jaar.items():
+        periodes = {p for s in sleutels for p in prijzen[s]}
+        for periode in periodes:
+            teller = noemer = 0.0
+            for s in sleutels:
+                prijs = prijzen[s].get(periode)
+                if prijs is not None and gewicht[s]:
+                    teller += prijs * gewicht[s]
+                    noemer += gewicht[s]
+            if noemer:
+                index[scope][periode] = teller / noemer
+    return index
+
+
 def promotions(conn, retailer_id: str) -> dict:
     caps, base_labels = retailer_caps(conn, retailer_id)
     if caps is None:
@@ -406,29 +486,33 @@ def promotions(conn, retailer_id: str) -> dict:
         agg["volume"] += r["volume"]
         agg["omzet"] += r["omzet"]
 
-    unit_prices = defaultdict(dict)
-    for (scope, periode), agg in per_scope_period.items():
-        if agg["volume"]:
-            unit_prices[scope][periode] = agg["omzet"] / agg["volume"]
-
     confirmed = {(r["merk"], r["land"], r["banner"], r["periode"])
                  for r in conn.execute(
                      "SELECT merk, land, banner, periode FROM promo_confirmations WHERE retailer_id=?",
                      (retailer_id,))}
 
+    # Een prijsdaling is alleen te meten met volume (stukprijs) én
+    # artikelniveau (anders meet je de verkoopmix, niet de prijs).
+    methode = "prijsindex" if caps.get("volume", True) and caps.get("artikel") else "handmatig"
     suggestions = []
-    if caps.get("volume", True):
-        for scope, prices in unit_prices.items():
-            med = median(prices.values())
-            for periode, price in sorted(prices.items(), key=lambda kv: sort_key(kv[0])):
-                drop = (med - price) / med if med else 0
-                merk, land, banner = scope
-                is_confirmed = (merk, land, banner, periode) in confirmed
-                if drop >= threshold or is_confirmed:
-                    suggestions.append({
-                        "merk": merk, "land": land, "banner": banner, "periode": periode,
-                        "suggestie": f"afgeprijsd, -{round(drop * 100)}%" if drop >= threshold else None,
-                        "bevestigd": is_confirmed})
+    if methode == "prijsindex":
+        index = prijsindex(rows, key)
+        for scope, per_periode in index.items():
+            per_jaar = defaultdict(dict)
+            for periode, waarde in per_periode.items():
+                per_jaar[period_year(periode)][periode] = waarde
+            for _jaar, waarden in per_jaar.items():
+                med = median(waarden.values())
+                for periode, waarde in sorted(waarden.items(), key=lambda kv: sort_key(kv[0])):
+                    drop = (med - waarde) / med if med else 0
+                    merk, land, banner = scope
+                    is_confirmed = (merk, land, banner, periode) in confirmed
+                    if drop >= threshold or is_confirmed:
+                        suggestions.append({
+                            "merk": merk, "land": land, "banner": banner, "periode": periode,
+                            "suggestie": f"afgeprijsd, -{round(drop * 100)}%" if drop >= threshold else None,
+                            "bevestigd": is_confirmed})
+        suggestions.sort(key=lambda s: (s["merk"] or "", sort_key(s["periode"])))
     else:
         # Zonder volume bestaat er geen stukprijs en dus geen automatische
         # suggestie — maar handmatig actieperiodes markeren moet blijven
@@ -440,27 +524,40 @@ def promotions(conn, retailer_id: str) -> dict:
                 "suggestie": None,
                 "bevestigd": (merk, land, banner, periode) in confirmed})
 
-    # Uplift per confirmed promo: promo period vs mean of NON-promo periods
-    # in the same scope. Confirmed periods stay out of the baseline, so
-    # re-importing a confirmed period never moves the baseline (acceptance 5).
+    # Uplift per bevestigde actie: de actieperiode tegen de MEDIAAN van de
+    # niet-actieperiodes uit HETZELFDE JAAR.
+    #
+    # Over alle jaren middelen vergelijkt door omzetniveaus heen: Kruidvat
+    # draaide in 2024 € 33k per week en in 2025 € 47k, dus een actie werd
+    # afgezet tegen een basislijn uit een ander regime. De mediaan in plaats
+    # van het gemiddelde houdt één uitschieter (een andere, niet-bevestigde
+    # actie) uit de basislijn. Bevestigde periodes blijven er sowieso buiten,
+    # dus herimport van een bevestigde periode verschuift niets.
     uplift = []
     for merk, land, banner, periode in sorted(confirmed, key=lambda c: sort_key(c[3])):
         scope = (merk, land, banner)
-        prices = per_scope_period
-        promo_rev = prices.get((scope, periode), {}).get("omzet")
+        promo_rev = per_scope_period.get((scope, periode), {}).get("omzet")
         if promo_rev is None:
             continue
+        jaar = period_year(periode)
         baseline_revs = [agg["omzet"] for (s, p), agg in per_scope_period.items()
-                         if s == scope and (merk, land, banner, p) not in confirmed]
-        if not baseline_revs:
-            continue
-        base = sum(baseline_revs) / len(baseline_revs)
-        uplift.append({"merk": merk, "land": land, "banner": banner, "periode": periode,
-                       "jaar": period_year(periode), "omzet": promo_rev, "basislijn": base,
-                       "uplift_pct": round((promo_rev - base) / base * 100, 1) if base else None})
+                         if s == scope and period_year(p) == jaar
+                         and (merk, land, banner, p) not in confirmed]
+        regel = {"merk": merk, "land": land, "banner": banner, "periode": periode,
+                 "jaar": jaar, "omzet": promo_rev, "basisperiodes": len(baseline_revs)}
+        if len(baseline_revs) < MIN_BASISPERIODES:
+            # Eén of twee referentieperiodes is geen basislijn maar toeval.
+            regel.update({"basislijn": None, "uplift_pct": None,
+                          "reden": "te weinig basisperiodes"})
+        else:
+            base = median(baseline_revs)
+            regel.update({"basislijn": base,
+                          "uplift_pct": round((promo_rev - base) / base * 100, 1)
+                          if base else None})
+        uplift.append(regel)
     uplift.sort(key=lambda u: -(u["uplift_pct"] or 0))
     return {"available": True, "suggesties": suggestions, "uplift": uplift,
-            "drempel": threshold, "periode_type": caps["periode"],
+            "drempel": threshold, "periode_type": caps["periode"], "methode": methode,
             "labels": labels, "resolution": res.as_dict(), "capabilities": caps}
 
 
@@ -499,7 +596,8 @@ def assortment(conn, retailer_id: str) -> dict:
         "SELECT merk, stuks_per_winkel_per_week FROM rotatie_targets WHERE retailer_id=?",
         (retailer_id,))}
 
-    per_art = defaultdict(lambda: {"volume": 0, "naam": None, "merk": None})
+    per_art = defaultdict(lambda: {"volume": 0, "naam": None, "merk": None,
+                                   "periodes": set(), "rijen": []})
     for r in rows:
         if not r["artikel_ean"]:
             continue
@@ -507,13 +605,33 @@ def assortment(conn, retailer_id: str) -> dict:
         a["volume"] += r["volume"]
         a["naam"] = a["naam"] or r["artikel_naam"]
         a["merk"] = a["merk"] or r["merk"]
+        a["rijen"].append(r)
+        if r["volume"]:
+            a["periodes"].add(r["periode"])
+
+    geordend = sorted(periods, key=sort_key)
 
     out = []
     for ean, a in per_art.items():
-        rotatie = a["volume"] / weeks / n_stores if n_stores else None
+        # Delen door het hele jaar terwijl een artikel pas in week 20 is
+        # geïntroduceerd, maakt van een gezonde loper een delist-kandidaat.
+        # Tel daarom vanaf de eerste periode mét verkoop.
+        eerste = min(a["periodes"], key=sort_key) if a["periodes"] else None
+        actief = len([p for p in geordend if sort_key(p) >= sort_key(eerste)]) if eerste else 0
+        actieve_weken = (actief * 52 / 12) if caps["periode"] == "maand" else actief
+        # En door de winkels die dít artikel voerden, niet door het hele
+        # filiaalnet van het merk.
+        art_stores, art_uit_feiten = store_count(conn, retailer_id, caps, a["rijen"], None)
+        noemer_winkels = art_stores if art_uit_feiten else n_stores
+        rotatie = (a["volume"] / actieve_weken / noemer_winkels
+                   if actieve_weken and noemer_winkels else None)
         target = targets.get(a["merk"])
         score = round(rotatie / target * 100) if rotatie is not None and target else None
-        if score is None:
+        if actief and actief < MIN_ACTIEVE_PERIODES:
+            # Te vers om over te oordelen: één zwakke startweek is geen bewijs.
+            advies = "Te kort geleden geïntroduceerd"
+            score = None
+        elif score is None:
             advies = "Geen rotatie-target ingesteld"
         elif score >= 115:
             advies = "Ruim op target"
@@ -525,11 +643,12 @@ def assortment(conn, retailer_id: str) -> dict:
             advies = "Mogelijke delist"
         out.append({"ean": ean, "naam": a["naam"], "merk": a["merk"],
                     "rotatie": round(rotatie, 2) if rotatie is not None else None,
-                    "target": target, "score": score, "advies": advies})
+                    "target": target, "score": score, "advies": advies,
+                    "actieve_periodes": actief, "winkels": noemer_winkels})
     out.sort(key=lambda x: (x["score"] is None, x["score"] if x["score"] is not None else 0))
     op_target = sum(1 for a in out if a["score"] is not None and a["score"] >= 100)
     onder = sum(1 for a in out if a["score"] is not None and 70 <= a["score"] < 100)
     delist = sum(1 for a in out if a["score"] is not None and a["score"] < 70)
     return {"available": True, "artikelen": out, "labels": labels,
-            "resolution": res.as_dict(),
+            "resolution": res.as_dict(), "periode_type": caps["periode"],
             "stats": {"op_target": op_target, "onder_target": onder, "delist": delist}}
