@@ -186,7 +186,7 @@ def make_ici_xlsx(blocks: dict[str, dict[str, dict[str, float]]]) -> bytes:
 
 
 def make_etos_xlsx(artikelen: list[dict], weeks: list[str] | None = None,
-                   brand_count: int | None = None) -> bytes:
+                   brand_count: int | None = None, scope: str = "ytd") -> bytes:
     """Genereer een werkboek in het ECHTE Etos Data Grid-widgetformaat:
     metadatablok (Fiscal YTD-range + Brand (N)), weekkoppen met de
     ISO-zondag als Ending-datum, en de UPC/Brand-subkop met per week een
@@ -194,6 +194,10 @@ def make_etos_xlsx(artikelen: list[dict], weeks: list[str] | None = None,
     raken als een productie-export.
 
     artikelen: [{upc, naam, merk, merk_nr, weeks: {"202632": (sales, units)}}]
+    scope: de Time-selectie van de export —
+      "ytd"    lopend jaar ("Fiscal YTD 202601-202632, Ending …")
+      "weeks"  kwartaal met expliciete weekrange ('… (Weeks …-…, Ending …)')
+      "ending" kwartalen/periodes met alleen een einddatum
     """
     import datetime as _dt
 
@@ -214,9 +218,27 @@ def make_etos_xlsx(artikelen: list[dict], weeks: list[str] | None = None,
     n_merken = brand_count if brand_count is not None else len(merken)
     ws.cell(row=11, column=1, value="Product :")
     ws.cell(row=11, column=2, value=f"Brand ({n_merken})")
-    ws.cell(row=18, column=1, value='Time "Fiscal YTD"')
-    ws.cell(row=18, column=2,
-            value=f"Fiscal YTD {weeks[0]}-{weeks[-1]}, Ending {weeks[-1]}")
+    laatste_zondag = _dt.date.fromisocalendar(
+        int(weeks[-1][:4]), int(weeks[-1][4:]), 7).strftime("%d/%m/%Y")
+    if scope == "ytd":
+        ws.cell(row=18, column=1, value='Time "Fiscal YTD"')
+        ws.cell(row=18, column=2,
+                value=f"Fiscal YTD {weeks[0]}-{weeks[-1]}, Ending {laatste_zondag}")
+    elif scope == "weeks":
+        ws.cell(row=13, column=1, value="Time :")
+        ws.cell(row=13, column=2,
+                value=f'Fiscal Quarter "202503 (Weeks {weeks[0]}-{weeks[-1]}, '
+                      f'Ending {laatste_zondag})"')
+        ws.cell(row=18, column=1, value="Fiscal Quarter (1)")
+        ws.cell(row=18, column=2, value="202503")
+    elif scope == "ending":
+        ws.cell(row=13, column=1, value="Time :")
+        ws.cell(row=13, column=2,
+                value=f'Time "2 Fiscal Quarters 202502-202503, Ending {laatste_zondag}"')
+        ws.cell(row=18, column=1, value="Fiscal Quarter (2)")
+        ws.cell(row=18, column=2, value="202503, 202502")
+    else:
+        raise ValueError(f"onbekende scope {scope!r}")
     ws.cell(row=19, column=1, value=f"Brand ({n_merken})")
     ws.cell(row=19, column=2, value=", ".join(merken))
     for j, wk in enumerate(weeks):

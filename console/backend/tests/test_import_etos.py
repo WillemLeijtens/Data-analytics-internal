@@ -23,6 +23,21 @@ REAL_ETOS = U / "b9ccb189-Data_Grid_57018_widget.xlsx"
 REAL_KV = U / "d62acf54-DWH__Sales_volume__sales_Tweezerman_KVNL_1299_1734396111539283577.xlsx"
 REAL_ICI = U / "fc6fc987-Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__4.xlsx"
 
+# Historiebestanden met andere Time-scopes (kwartalen, twee kwartalen,
+# fiscale periodes). Verwachte cijfers komen uit een ONAFHANKELIJKE telling
+# buiten de parser om: som van alle gevulde Sales/Units-cellen per bestand.
+REAL_HISTORIE = [
+    ("bd12efd7-Data_Grid_57018_widget_Q1_2025.xlsx",
+     438, 334302.90, 17220, "2025-W01", "2025-W16"),
+    ("728a9bd5-Data_Grid_57018_widget_Q2enQ3_2025.xlsx",
+     682, 685636.53, 40469, "2025-W17", "2025-W40"),
+    ("7fe006b1-Data_Grid_57018_widget_Q4_2025.xlsx",
+     328, 342033.51, 21518, "2025-W41", "2025-W52"),
+    ("c62214ae-Data_Grid_57018_widget_2024.xlsx",
+     685, 638163.13, 36463, "2024-W19", "2024-W52"),
+]
+HISTORIE_AANWEZIG = all((U / naam).exists() for naam, *_ in REAL_HISTORIE)
+
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
@@ -115,6 +130,59 @@ def test_three_real_retailers_one_batch(client):
         assert cross == 0
 
 
+# ---------------------------------------------------------------- historie
+
+@pytest.mark.skipif(not HISTORIE_AANWEZIG, reason="historiebestanden niet aanwezig")
+def test_real_historie_alle_scopes(client):
+    """De vier echte historiebestanden gebruiken andere Time-scopes
+    (Fiscal Quarter met weekrange, 2 Fiscal Quarters, 9 Fiscal Periods).
+    Elk moet inlezen met exact de onafhankelijk getelde totalen."""
+    import db
+    for naam, n, omzet, volume, eerste, laatste in REAL_HISTORIE:
+        r = upload(client, naam[9:], (U / naam).read_bytes())
+        assert r["status"] == "ingelezen" and r["retailer_id"] == "etos", \
+            f"{naam}: {r['status']} — {r.get('detail')}"
+        assert r["rows"] == n, naam
+    with db.get_conn() as conn:
+        for naam, n, omzet, volume, eerste, laatste in REAL_HISTORIE:
+            tot = conn.execute(
+                "SELECT SUM(omzet) o, SUM(volume) v, COUNT(*) n FROM sellout_facts "
+                "WHERE retailer_id='etos' AND periode BETWEEN ? AND ?",
+                (eerste, laatste)).fetchone()
+            assert tot["n"] == n, naam
+            assert tot["o"] == pytest.approx(omzet, abs=0.01), naam
+            assert tot["v"] == volume, naam
+
+
+@pytest.mark.skipif(not (HISTORIE_AANWEZIG and REAL_ETOS.exists()),
+                    reason="niet alle echte bestanden aanwezig")
+def test_alle_vijf_bestanden_samen_geeft_meerjarige_analyse(client):
+    """2024 + 3×2025 + YTD 2026 in één batch: geen dubbeltelling over de
+    bestanden heen, en de jaar-op-jaar-vergelijking komt tot leven."""
+    files = [("files", (naam[9:], (U / naam).read_bytes()))
+             for naam, *_ in REAL_HISTORIE]
+    files.append(("files", (REAL_ETOS.name[9:], REAL_ETOS.read_bytes())))
+    rr = client.post("/api/import", files=files).json()["results"]
+    assert all(x["status"] == "ingelezen" and x["retailer_id"] == "etos" for x in rr), rr
+
+    import db
+    with db.get_conn() as conn:
+        tot = conn.execute("SELECT SUM(omzet) o, COUNT(*) n FROM sellout_facts "
+                           "WHERE retailer_id='etos'").fetchone()
+        # Som van de vijf onafhankelijke tellingen — niets dubbel, niets kwijt.
+        verwacht = 334302.90 + 685636.53 + 342033.51 + 638163.13 + 900697.04
+        assert tot["o"] == pytest.approx(verwacht, abs=0.05)
+        assert tot["n"] == 438 + 682 + 328 + 685 + 1126
+
+    dash = client.get("/api/etos/dashboard").json()
+    assert dash["trend"]["jaren"] == [2024, 2025, 2026]
+    # 2025 is compleet (wk 1-52), dus de YoY 2026-vs-2025 heeft nu een echte
+    # delta op volledige basis: alle drie de merken in beide jaren.
+    assert dash["ytd"]["basis"]["volledig"] is True
+    assert dash["ytd"]["omzet"]["delta_pct"] is not None
+    assert dash["ytd"]["omzet"]["vorig"] > 0
+
+
 # ---------------------------------------------------------------- gegenereerd
 
 def test_generated_etos_imports_and_analyses(client):
@@ -189,11 +257,62 @@ def test_dubbele_upc_week_fails(client):
     assert r["status"] == "error" and "dubbel" in r["detail"].lower()
 
 
-def test_metadata_ontbreekt_fails(client):
+def test_brand_metadata_ontbreekt_fails(client):
     def wis(ws):
-        ws.cell(row=18, column=2).value = None    # Fiscal YTD-regel weg
+        # beide Brand (N)-vermeldingen weg
+        ws.cell(row=11, column=2).value = None
+        ws.cell(row=19, column=1).value = "Merken"
     r = upload(client, "Data_Grid_7_widget.xlsx", _herbouw(_demo(), wis))
-    assert r["status"] == "error" and "Fiscal YTD" in r["detail"]
+    assert r["status"] == "error" and "Brand (N)" in r["detail"]
+
+
+def test_scope_zonder_weekrange_wordt_geaccepteerd(client):
+    """De kwartaal/periode-exports noemen geen weekrange; dan geldt de
+    intrinsieke aaneengesloten-reeks-eis plus de Ending-kruiscontrole."""
+    r = upload(client, "Data_Grid_8_widget.xlsx", _demo(scope="ending"))
+    assert r["status"] == "ingelezen" and r["rows"] == 9
+    r = upload(client, "Data_Grid_9_widget.xlsx", _demo(scope="weeks"))
+    assert r["status"] == "ingelezen"
+
+
+def test_gat_in_weekreeks_zonder_range_fails(client):
+    """Zonder expliciete range moet een gat in de reeks alsnog opvallen."""
+    def knip(ws):
+        # week 202631 volledig weg (kop + subkop + data) -> gat 30..32
+        for rij in range(20, 26):
+            for cell in ws[rij]:
+                if cell.column in (6, 7):     # kolommen van week 2 (202631)
+                    cell.value = None
+    r = upload(client, "Data_Grid_10_widget.xlsx",
+               _herbouw(_demo(scope="ending"), knip))
+    assert r["status"] == "error" and "202631" in r["detail"]
+
+
+def test_scope_ending_hoort_bij_laatste_week_fails(client):
+    """Een Ending-datum in de Time-scope die niet bij de laatste weekkolom
+    hoort: metadata en kolommen gaan dan niet over dezelfde periode."""
+    def schuif(ws):
+        ws.cell(row=13, column=2).value = \
+            'Time "2 Fiscal Quarters 202502-202503, Ending 26/07/2026"'
+    r = upload(client, "Data_Grid_11_widget.xlsx",
+               _herbouw(_demo(scope="ending"), schuif))
+    assert r["status"] == "error" and "zelfde periode" in r["detail"]
+
+
+def test_weeks_range_die_niet_klopt_fails(client):
+    def rek(ws):
+        ws.cell(row=13, column=2).value = \
+            'Fiscal Quarter "202503 (Weeks 202630-202635, Ending 30/08/2026)"'
+    r = upload(client, "Data_Grid_12_widget.xlsx",
+               _herbouw(_demo(scope="weeks"), rek))
+    assert r["status"] == "error" and "ontbreekt" in r["detail"]
+
+
+def test_healthz_toont_profielen(client):
+    h = client.get("/healthz").json()
+    assert h["status"] == "ok"
+    assert h["profielen"].get("etos") == 1
+    assert "kruidvat" in h["profielen"] and "ici-paris-xl" in h["profielen"]
 
 
 # ---------------------------------------------------------------- bootstrap

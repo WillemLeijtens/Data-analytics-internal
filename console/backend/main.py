@@ -508,10 +508,16 @@ def healthz():
     from starlette.responses import JSONResponse
     try:
         with db.get_conn() as conn:
-            conn.execute("SELECT 1 FROM retailers LIMIT 1").fetchone()
+            # Welke parsers deze container daadwerkelijk heeft (hoogste
+            # live-versie per retailer): één curl beantwoordt "draait de
+            # nieuwe parser hier al?" — onmisbaar bij uitrolvragen, en geen
+            # gevoelige informatie.
+            profielen = {r["retailer_id"]: r["v"] for r in conn.execute(
+                "SELECT retailer_id, MAX(version) v FROM parser_profiles "
+                "WHERE status='live' GROUP BY retailer_id")}
     except Exception as e:  # noqa: BLE001 - probe must report, not raise
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
-    return {"status": "ok"}
+    return {"status": "ok", "profielen": profielen}
 
 
 # ---------------------------------------------------------------- frontend

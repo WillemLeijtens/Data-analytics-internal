@@ -4,10 +4,16 @@
 Het bestand is één tabblad met een metadatablok bovenaan en daaronder een
 artikel×week-matrix:
 
-  * metadata: o.a. 'Time "Fiscal YTD"' = "Fiscal YTD 202601-202632" en
-    "Brand (3)" — de enige controle-informatie die dit formaat biedt (er is
-    géén totalenrij zoals bij Kruidvat of merk-tab zoals bij ICI), dus de
-    parser verifieert alles wat hieruit af te leiden valt.
+  * metadata: "Brand (N)" plus een Time-scope die per export verschilt —
+    "Fiscal YTD 202601-202632", 'Fiscal Quarter "202504 (Weeks
+    202541-202552, Ending 28/12/2025)"', '2 Fiscal Quarters 202502-202503,
+    Ending 05/10/2025' of '9 Fiscal Periods 202405-202413, Ending
+    29/12/2024'. Dit is de enige controle-informatie die het formaat biedt
+    (er is géén totalenrij zoals bij Kruidvat of merk-tab zoals bij ICI),
+    dus de parser verifieert per scope alles wat eruit af te leiden valt:
+    een expliciete week-range wordt exact afgedwongen, een Ending-datum
+    moet de ISO-zondag van de laatste weekkolom zijn, en de weekreeks moet
+    altijd aaneengesloten zijn.
   * weekkoppen: "202601 (Ending 04/01/2026)" — elke week 2 kolommen breed.
     De Ending-datums vallen exact op de ISO-zondag van die week; dat wordt
     per week gecontroleerd, zodat een stille overstap van Etos op een
@@ -33,7 +39,13 @@ from openpyxl import load_workbook
 from .periods import parse_period
 
 WEEK_HDR_RE = re.compile(r"^(\d{6})\s*\(Ending\s+(\d{2}/\d{2}/\d{4})\)$")
-RANGE_RE = re.compile(r"Fiscal\s+YTD\s+(\d{6})-(\d{6})")
+# Expliciete week-ranges, in volgorde van voorkeur: de Quarter-variant noemt
+# de weken letterlijk ("Weeks 202541-202552"), de YTD-variant als
+# "Fiscal YTD 202601-202632". Quarters/Periods-selecties zonder week-range
+# vallen terug op de intrinsieke aaneengesloten-reeks-eis.
+WEEKS_RANGE_RE = re.compile(r"Weeks\s+(\d{6})-(\d{6})")
+YTD_RANGE_RE = re.compile(r"Fiscal\s+YTD\s+(\d{6})-(\d{6})")
+ENDING_RE = re.compile(r"Ending\s+(\d{2}/\d{2}/\d{4})")
 BRAND_COUNT_RE = re.compile(r"Brand\s*\((\d+)\)")
 BRAND_SUFFIX_RE = re.compile(r"\s*-\s*\d+$")
 
@@ -112,16 +124,21 @@ def parse_workbook(content: bytes) -> dict:
     subhdr = [_norm(c) for c in rows[sub_i]]
     weekhdr = [_norm(c) for c in rows[sub_i - 1]]
 
-    # Metadata: de enige controlebron van dit formaat — verplicht aanwezig.
-    blok = " | ".join(_norm(c) for r in rows[:sub_i] for c in r if _norm(c))
-    m_range = RANGE_RE.search(blok)
+    # Metadata: de enige controlebron van dit formaat. Het merkental is in
+    # elke scope-variant aanwezig en dus verplicht; de week-range hangt af
+    # van de gekozen Time-selectie.
+    # NB: de weekkoppenrij zelf (rij boven de subkop) telt niet mee als
+    # metadata — anders zou een Ending-datum daaruit zijn eigen controle
+    # kunnen "bevestigen".
+    blok = " | ".join(_norm(c) for r in rows[:sub_i - 1] for c in r if _norm(c))
     m_brands = BRAND_COUNT_RE.search(blok)
-    if not m_range or not m_brands:
-        raise ValueError("metadatablok mist 'Fiscal YTD …-…' of 'Brand (N)' — "
-                         "zonder die controlewaarden is het bestand niet te "
-                         "verifiëren; import afgebroken")
+    if not m_brands:
+        raise ValueError("metadatablok mist 'Brand (N)' — zonder dat "
+                         "controlegetal is het merkental niet te verifiëren; "
+                         "import afgebroken")
     verwacht_merken = int(m_brands.group(1))
-    verwachte_weken = _expected_weeks(m_range.group(1), m_range.group(2))
+    m_range = WEEKS_RANGE_RE.search(blok) or YTD_RANGE_RE.search(blok)
+    scope_endings = set(ENDING_RE.findall(blok))
 
     # Weekkolommen + de drie ankers uit de subkop.
     try:
@@ -151,14 +168,39 @@ def parse_workbook(content: bytes) -> dict:
                              "eronder; kolomindeling wijkt af")
         gezien.append(raw)
         weekcols.append((periode, j))
+    if not gezien:
+        raise ValueError("geen weekkolommen gevonden boven de UPC-kopregel")
+    if m_range:
+        # Expliciete range in de metadata ("Weeks …-…" of "Fiscal YTD …-…"):
+        # de kolommen moeten daar exact op aansluiten.
+        verwachte_weken = _expected_weeks(m_range.group(1), m_range.group(2))
+        bron = f"metadata-range {m_range.group(1)}-{m_range.group(2)}"
+    else:
+        # Quarters/Periods zonder week-range: dan geldt de intrinsieke eis
+        # dat de reeks aaneengesloten en oplopend is — een gat betekent een
+        # kapotte of geknipte export.
+        verwachte_weken = _expected_weeks(gezien[0], gezien[-1])
+        bron = f"aaneengesloten reeks {gezien[0]}-{gezien[-1]}"
     if gezien != verwachte_weken:
         ontbreekt = sorted(set(verwachte_weken) - set(gezien))
         extra = sorted(set(gezien) - set(verwachte_weken))
         raise ValueError(
-            "weekkolommen sluiten niet aan op de metadata-range "
-            f"{m_range.group(1)}-{m_range.group(2)}"
+            f"weekkolommen sluiten niet aan op de {bron}"
             + (f"; ontbreekt: {', '.join(ontbreekt)}" if ontbreekt else "")
             + (f"; onverwacht: {', '.join(extra)}" if extra else ""))
+    if scope_endings:
+        # De Time-scope noemt een einddatum; die moet de ISO-zondag van de
+        # laatste weekkolom zijn — anders gaan metadata en kolommen niet
+        # over dezelfde periode.
+        laatste_raw = gezien[-1]
+        laatste_zondag = dt.date.fromisocalendar(
+            int(laatste_raw[:4]), int(laatste_raw[4:]), 7).strftime("%d/%m/%Y")
+        if laatste_zondag not in scope_endings:
+            raise ValueError(
+                f"de einddatum in de Time-scope ({', '.join(sorted(scope_endings))}) "
+                f"hoort niet bij de laatste weekkolom {laatste_raw} "
+                f"(zondag {laatste_zondag}); metadata en kolommen gaan niet "
+                "over dezelfde periode — import afgebroken")
 
     facts: list[dict] = []
     for r in rows[sub_i + 1:]:
