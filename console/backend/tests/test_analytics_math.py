@@ -237,6 +237,64 @@ def test_ytd_basis_volledig_bij_samenhangende_feed(client):
         (120 + 130 + 12 + 13 - 100 - 110 - 10 - 11) / (100 + 110 + 10 + 11) * 100, abs=0.1)
 
 
+def test_ytd_per_merk_op_regelniveau(client):
+    """Per merk een eigen YTD-regel, elk binnen zijn EIGEN venster: een merk
+    met een kortere feed mag geen schijnbare daling tonen, en een merk zonder
+    vorig jaar krijgt geen percentage maar een reden."""
+    import seed
+
+    def kv(brand, gtin, sku, weeks):
+        return seed.make_dwh_xlsx([{"sku": sku, "gtin": gtin, "desc": brand,
+                                    "brand": brand, "weeks": weeks}])
+
+    upload(client, "DWH__Sales_Tweezerman_KVNL_a.xlsx",
+           kv("TWEEZERMAN", "4049469072773", "31210001",
+              {"202505": (10, 100.0), "202510": (10, 100.0), "202515": (10, 300.0),
+               "202605": (10, 150.0), "202610": (10, 150.0)}))
+    upload(client, "DWH__Sales_Alessandro_KVNL_b.xlsx",
+           kv("ALESSANDRO", "4064089040111", "31210003",
+              {"202605": (5, 500.0), "202620": (5, 500.0)}))
+
+    per = {m["merk"]: m for m in client.get("/api/kruidvat/dashboard").json()["ytd"]["per_merk"]}
+    tw = per["TWEEZERMAN"]
+    # Eigen venster t/m week 10: 2026 300 vs 2025 200 = +50%.
+    assert tw["vergelijkbaar"] is True and tw["tot_periode"] == 10
+    assert tw["omzet"]["nu"] == pytest.approx(300.0)
+    assert tw["omzet"]["vorig"] == pytest.approx(200.0)
+    assert tw["omzet"]["delta_pct"] == pytest.approx(50.0)
+    assert tw["volume"]["delta_pct"] == pytest.approx(0.0)   # 20 vs 20 stuks
+    al = per["ALESSANDRO"]
+    assert al["vergelijkbaar"] is False and al["omzet"]["delta_pct"] is None
+    assert al["reden"] == "geen 2025"
+    # Aflopend op omzet: ALESSANDRO (1000) boven TWEEZERMAN (300).
+    assert [m["merk"] for m in
+            client.get("/api/kruidvat/dashboard").json()["ytd"]["per_merk"]][0] == "ALESSANDRO"
+
+
+def test_artikelanalyse_merkfilter(client):
+    """Merkfilter op de artikelanalyse, zoals op het dashboard."""
+    import seed
+    upload(client, "DWH__Sales_KVNL_mix.xlsx", seed.make_dwh_xlsx([
+        {"sku": "31210001", "gtin": "4049469072773", "desc": "Slant",
+         "brand": "TWEEZERMAN", "weeks": {"202632": (10, 100.0)}},
+        {"sku": "31210003", "gtin": "4064089040111", "desc": "Striplac",
+         "brand": "ALESSANDRO", "weeks": {"202632": (5, 50.0)}}]))
+
+    alles = client.get("/api/kruidvat/artikelen").json()
+    assert len(alles["artikelen"]) == 2
+    assert alles["filters"]["merk"] == ["ALESSANDRO", "TWEEZERMAN"]
+
+    een = client.get("/api/kruidvat/artikelen?merk=TWEEZERMAN").json()
+    assert [a["merk"] for a in een["artikelen"]] == ["TWEEZERMAN"]
+    # De filterlijst blijft compleet, ook mét actief filter — anders kan de
+    # gebruiker het filter niet meer omzetten.
+    assert een["filters"]["merk"] == ["ALESSANDRO", "TWEEZERMAN"]
+
+    leeg = client.get("/api/kruidvat/artikelen?merk=BESTAATNIET").json()
+    assert leeg["artikelen"] == [] and leeg["gefilterd"] is True
+    assert leeg["filters"]["merk"] == ["ALESSANDRO", "TWEEZERMAN"]
+
+
 # ------------------------------------------------- instellingen-rijen
 
 def test_instellingen_feed_combinaties_en_rij_toevoegen(client):

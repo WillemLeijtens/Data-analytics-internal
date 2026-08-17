@@ -76,6 +76,20 @@ export function EmptyProfileCard({ retailer, go }:
   );
 }
 
+/** Filterchips (merk/land/banner). Leeg = alles; klikken zet aan/uit. */
+export function MultiChips({ all, sel, onChange }:
+  { all: string[]; sel: string[]; onChange: (v: string[]) => void }) {
+  return (
+    <span className="chips" style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
+      {all.map((v) => (
+        <button key={v} className={`chip ${sel.includes(v) ? "" : "off"}`}
+          aria-pressed={sel.length === 0 || sel.includes(v)}
+          onClick={() => onChange(sel.includes(v) ? sel.filter((x) => x !== v) : [...sel, v])}>{v}</button>
+      ))}
+    </span>
+  );
+}
+
 export function BrandDot({ merk }: { merk: string | null }) {
   return <span className="brand-dot" style={{ background: BRAND_COLORS[merk ?? ""] ?? "#7E8D92" }} />;
 }

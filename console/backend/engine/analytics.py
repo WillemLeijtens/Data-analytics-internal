@@ -355,6 +355,38 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
     def delta(now, prev):
         return round((now - prev) / prev * 100, 1) if prev else None
 
+    # YTD per merk, op regelniveau. Elke regel gebruikt het EIGEN venster van
+    # dat merk (1..tot_periode, op beide jaren toegepast) zodat de regel
+    # intern appels-met-appels is; een merk zonder vorig jaar krijgt geen
+    # delta maar een reden.
+    venster_per_merk = {v["merk"]: v["tot_periode"] for v in vergelijkbaar}
+    ytd_per_merk = []
+    for m in sorted({m for m, _ in per_merk_jaar}, key=lambda x: (x is None, x or "")):
+        tot_m = venster_per_merk.get(m, upto)
+        def merk_agg(year, _m=m, _tot=tot_m):
+            return agg([r for r in per_merk_jaar.get((_m, year), [])
+                        if period_number(r["periode"]) <= _tot])
+        nu_m, vorig_m = merk_agg(y_now), merk_agg(y_now - 1)
+        if not nu_m["omzet"] and not nu_m["volume"] \
+                and not vorig_m["omzet"] and not vorig_m["volume"]:
+            continue
+        heeft_basis = m in venster_per_merk
+        reden = None
+        if not heeft_basis:
+            reden = (f"geen {y_now - 1}" if per_merk_jaar.get((m, y_now))
+                     else f"geen {y_now}")
+        ytd_per_merk.append({
+            "merk": m, "tot_periode": tot_m, "vergelijkbaar": heeft_basis,
+            "reden": reden,
+            "omzet": {"nu": nu_m["omzet"], "vorig": vorig_m["omzet"],
+                      "delta_pct": delta(nu_m["omzet"], vorig_m["omzet"])
+                      if heeft_basis else None},
+            "volume": {"nu": nu_m["volume"], "vorig": vorig_m["volume"],
+                       "delta_pct": delta(nu_m["volume"], vorig_m["volume"])
+                       if heeft_basis else None},
+        })
+    ytd_per_merk.sort(key=lambda x: -x["omzet"]["nu"])
+
     # Trend: three year-lines per period number.
     years = sorted({period_year(r["periode"]) for r in rows})[-3:]
     trend = {"jaren": years, "series": {}}
@@ -413,6 +445,7 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
             "basis": {"volledig": basis_volledig,
                       "vergelijkbaar": vergelijkbaar,
                       "niet_vergelijkbaar": niet_vergelijkbaar},
+            "per_merk": ytd_per_merk,
             "omzet": {"nu": ytd_now["omzet"], "vorig": ytd_prior["omzet"],
                       "delta_pct": delta(comp_now_agg["omzet"], comp_prior_agg["omzet"])},
             "volume": {"nu": ytd_now["volume"], "vorig": ytd_prior["volume"],
@@ -431,7 +464,7 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
 
 # ---------------------------------------------------------------- articles
 
-def articles(conn, retailer_id: str) -> dict:
+def articles(conn, retailer_id: str, merk=None) -> dict:
     caps, base_labels = retailer_caps(conn, retailer_id)
     if caps is None:
         return {"available": False, "reason": "PARSER PROFIEL ONTBREEKT"}
@@ -439,10 +472,15 @@ def articles(conn, retailer_id: str) -> dict:
     if res.level_used.get("detail") != "artikel":
         return {"available": False, "reason": "GEGEVENS NIET BESCHIKBAAR",
                 "resolution": res.as_dict(), "labels": base_labels + res.labels}
-    rows = load_facts(conn, retailer_id)
+    # Eén query; het merkfilter is een Python-subset zodat de filterlijst en
+    # de cijfers uit dezelfde rijen komen (zelfde patroon als dashboard).
+    all_rows = load_facts(conn, retailer_id)
+    rows = [r for r in all_rows if not merk or r["merk"] in merk]
+    filters = {"merk": sorted({r["merk"] for r in all_rows if r["merk"]})}
     if not rows:
-        return {"available": True, "artikelen": [], "labels": base_labels + res.labels,
-                "resolution": res.as_dict()}
+        return {"available": True, "artikelen": [], "filters": filters,
+                "gefilterd": bool(all_rows),
+                "labels": base_labels + res.labels, "resolution": res.as_dict()}
     periods = sorted({r["periode"] for r in rows}, key=sort_key)
     latest = periods[-1]
     y_now, upto = period_year(latest), period_number(latest)
@@ -478,6 +516,7 @@ def articles(conn, retailer_id: str) -> dict:
                              if ltot["omzet"] else None})
     out.sort(key=lambda x: -x["totaal_ytd"]["omzet"])
     return {"available": True, "artikelen": out, "laatste_periode": latest,
+            "filters": filters,
             # Het jaar hoort bij de data, niet bij de kalender van vandaag:
             # de grafieklegenda gebruikt dit in plaats van vaste jaartallen.
             "jaar": y_now,

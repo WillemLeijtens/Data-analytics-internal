@@ -165,10 +165,10 @@ def dashboard(retailer_id: str, merk: str | None = None, land: str | None = None
 
 
 @app.get("/api/{retailer_id}/artikelen")
-def artikelen(retailer_id: str):
+def artikelen(retailer_id: str, merk: str | None = None):
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-        return analytics.articles(conn, retailer_id)
+        return analytics.articles(conn, retailer_id, merk.split(",") if merk else None)
 
 
 @app.get("/api/{retailer_id}/promoties")

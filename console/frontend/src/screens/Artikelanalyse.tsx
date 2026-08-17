@@ -1,13 +1,20 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { fmtEur, fmtNum } from "../api";
 import { ShellCtx } from "../App";
-import { BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, Sparkline, TrendChart, useApi } from "../components/shared";
+import { BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, Sparkline, TrendChart, useApi } from "../components/shared";
 
 export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
   const [metric, setMetric] = useState<"volume" | "omzet">("omzet");
   const [sel, setSel] = useState<string | null>(null);
-  const { data, error, reload } = useApi(`/${ctx.retailer}/artikelen`);
+  const [merk, setMerk] = useState<string[]>([]);
+
+  // Filter hoort bij één retailer: bij tabwissel opnieuw beginnen, anders
+  // levert een merk dat de nieuwe retailer niet voert een leeg scherm.
+  useEffect(() => { setMerk([]); setSel(null); }, [ctx.retailer]);
+
+  const q = merk.length ? `?merk=${encodeURIComponent(merk.join(","))}` : "";
+  const { data, error, reload } = useApi(`/${ctx.retailer}/artikelen${q}`);
 
   if (!data) return <LoadState error={error} reload={reload} />;
   if (!data.available && data.reason === "PARSER PROFIEL ONTBREEKT")
@@ -33,6 +40,16 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
     <>
       <h1>Artikelanalyse — {ctx.card?.naam}</h1>
       <LevelStrip labels={data.labels} retailer={ctx.retailer} />
+      {data.filters?.merk?.length > 0 && (
+        <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap", margin: "16px 0 4px" }}>
+          <span><span className="eyebrow">Merk </span>
+            <MultiChips all={data.filters.merk} sel={merk} onChange={setMerk} /></span>
+          <span className="sub" style={{ marginLeft: "auto" }}>
+            {data.artikelen.length} artikel{data.artikelen.length === 1 ? "" : "en"}
+            {merk.length > 0 && <> · <a style={{ cursor: "pointer" }} onClick={() => setMerk([])}>filter wissen</a></>}
+          </span>
+        </div>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h2>Sellout per artikel</h2>
         <div className="seg">

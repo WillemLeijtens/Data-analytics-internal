@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { fmtEur, fmtNum, BRAND_COLORS } from "../api";
 import { ShellCtx } from "../App";
-import { DeltaTag, EmptyProfileCard, LevelStrip, LoadState, TrendChart, useApi } from "../components/shared";
+import { BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, TrendChart, useApi } from "../components/shared";
 
 function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
   label: string; tag: string; tagAccent?: boolean; value: string; sub?: string;
@@ -143,17 +143,6 @@ function Winkelanalyse({ w, pWord }: { w: any; pWord: string }) {
   );
 }
 
-function MultiChips({ all, sel, onChange }: { all: string[]; sel: string[]; onChange: (v: string[]) => void }) {
-  return (
-    <span className="chips" style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
-      {all.map((v) => (
-        <button key={v} className={`chip ${sel.includes(v) ? "" : "off"}`}
-          onClick={() => onChange(sel.includes(v) ? sel.filter((x) => x !== v) : [...sel, v])}>{v}</button>
-      ))}
-    </span>
-  );
-}
-
 export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
   const [merk, setMerk] = useState<string[]>([]);
   const [land, setLand] = useState<string[]>([]);
@@ -267,6 +256,49 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           <div className="kpi-sub">{y.jaar - 1}: {fmtEur(y.omzet_per_winkel.vorig)}</div>
         </div>
       </div>
+      {y.per_merk?.length > 0 && (
+        // Per merk op regelniveau: elk merk vergeleken binnen zijn EIGEN
+        // venster, zodat een kortere feed geen schijnbare daling wordt.
+        <div className="tablewrap" style={{ overflowX: "auto" }}>
+          <table className="data" style={{ marginTop: 6 }}>
+            <thead><tr>
+              <th>Merk</th>
+              <th style={{ textAlign: "right" }}>Omzet {y.jaar}</th>
+              <th style={{ textAlign: "right" }}>Omzet {y.jaar - 1}</th>
+              <th>Δ</th>
+              {hasVolume && <>
+                <th style={{ textAlign: "right" }}>Volume {y.jaar}</th>
+                <th style={{ textAlign: "right" }}>Volume {y.jaar - 1}</th>
+                <th>Δ</th>
+              </>}
+            </tr></thead>
+            <tbody>
+              {y.per_merk.map((m: any) => (
+                <tr key={m.merk ?? "ONBEKEND"}>
+                  <td>
+                    <BrandDot merk={m.merk} />{m.merk ?? "ONBEKEND"}
+                    {m.tot_periode !== y.tot_periode && (
+                      <span className="sub"> · t/m {pWord.toLowerCase()} {m.tot_periode}</span>
+                    )}
+                  </td>
+                  <td style={{ textAlign: "right" }}>{fmtEur(m.omzet.nu)}</td>
+                  <td style={{ textAlign: "right" }}>{fmtEur(m.omzet.vorig)}</td>
+                  <td>{m.vergelijkbaar
+                    ? <DeltaTag pct={m.omzet.delta_pct} />
+                    : <span className="tag" title={`Niet te vergelijken: ${m.reden}`}>{m.reden}</span>}</td>
+                  {hasVolume && <>
+                    <td style={{ textAlign: "right" }}>{fmtNum(m.volume.nu)}</td>
+                    <td style={{ textAlign: "right" }}>{fmtNum(m.volume.vorig)}</td>
+                    <td>{m.vergelijkbaar
+                      ? <DeltaTag pct={m.volume.delta_pct} />
+                      : <span className="tag">—</span>}</td>
+                  </>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       {y.basis && !y.basis.volledig && (
         // Merk-feeds met ongelijke historie of actualiteit: het Δ% hierboven
         // is bewust alleen op de vergelijkbare merken berekend — anders leest
