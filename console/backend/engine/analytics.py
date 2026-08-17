@@ -464,6 +464,51 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
 
 # ---------------------------------------------------------------- articles
 
+# "Recent" voor de delist-signalen: ongeveer een kwartaal.
+RECENT_PERIODES = 13          # weken; bij een maandfeed 3 maanden
+
+# Onder deze omzet per winkel per week ligt een artikel feitelijk niet meer
+# in het schap: 530 winkels met EUR 50 omzet per week is EUR 0,09 per winkel
+# — dat betekent dat het nog in een handvol winkels verkoopt, niet in 530.
+#
+# Gekalibreerd op de echte Etos-assortimentsverdeling (49 artikelen, laatste
+# 13 weken, 530 winkels): gezonde lopers zitten op EUR 2 tot 8 per winkel per
+# week, de mediaan op EUR 0,45, en onder EUR 0,10 zit de staart die ook op
+# andere signalen dood oogt (o.a. een artikel met -96% jaar-op-jaar). Deze
+# grens vlagt daar 10 van de 49, als vraag ("delisted?") en niet als oordeel.
+MIN_OMZET_PER_WINKEL_PER_WEEK = 0.10
+
+
+def _artikel_status(tot, ltot, recent_omzet, n_recent, n_stores, periode_type, jaar):
+    """(status, reden, omzet per winkel per week) voor één artikel.
+
+    nieuw     — dit jaar omzet, vorig jaar niet: nieuw in het schap.
+    delisted  — vorig jaar wél omzet, dit jaar niets meer.
+    delisted? — twijfel: dit jaar wel gestart maar recent stilgevallen, of
+                nog wel omzet maar zo weinig dat het bij dit winkelbestand
+                niet meer op distributie kan wijzen.
+    """
+    if tot["omzet"] and not ltot["omzet"]:
+        return "nieuw", f"geen omzet in {jaar - 1}, dit jaar wel", None
+    if ltot["omzet"] and not tot["omzet"]:
+        return "delisted", f"wel omzet in {jaar - 1}, dit jaar niets", None
+
+    weken = n_recent * (52 / 12) if periode_type == "maand" else n_recent
+    per_winkel_week = (recent_omzet / n_stores / weken
+                       if n_stores and weken else None)
+    if tot["omzet"] and not recent_omzet:
+        eenheid = "maanden" if periode_type == "maand" else "weken"
+        return "delisted?", f"geen omzet in de laatste {n_recent} {eenheid}", per_winkel_week
+    if per_winkel_week is not None and 0 < per_winkel_week < MIN_OMZET_PER_WINKEL_PER_WEEK:
+        return ("delisted?",
+                f"nog maar {fmt_eur(per_winkel_week)} per winkel per week "
+                f"over {n_stores} winkels", per_winkel_week)
+    return None, None, per_winkel_week
+
+
+def fmt_eur(v: float) -> str:
+    return f"€ {v:,.2f}".replace(",", "·").replace(".", ",").replace("·", ".")
+
 def articles(conn, retailer_id: str, merk=None) -> dict:
     caps, base_labels = retailer_caps(conn, retailer_id)
     if caps is None:
@@ -485,6 +530,11 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
     latest = periods[-1]
     y_now, upto = period_year(latest), period_number(latest)
 
+    # Het "recente venster": ongeveer drie maanden, in de korrel van de feed.
+    recent = set(periods[-RECENT_PERIODES:] if caps["periode"] == "week"
+                 else periods[-3:])
+    n_recent = len(recent)
+
     per_art: dict = {}
     for r in rows:
         if not r["artikel_ean"]:
@@ -493,25 +543,39 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
             "ean": r["artikel_ean"], "naam": r["artikel_naam"], "merk": r["merk"],
             "ytd": defaultdict(lambda: {"volume": 0, "omzet": 0.0}),
             "lytd": defaultdict(lambda: {"volume": 0, "omzet": 0.0}),
-            "laatste": {"volume": 0, "omzet": 0.0}})
+            "laatste": {"volume": 0, "omzet": 0.0},
+            "recent_omzet": 0.0, "rijen": []})
+        a["rijen"].append(r)
         y, p = period_year(r["periode"]), period_number(r["periode"])
         bucket = a["ytd"] if y == y_now else a["lytd"] if y == y_now - 1 else None
         if bucket is not None and p <= upto:
             bucket[p]["volume"] += r["volume"]
             bucket[p]["omzet"] += r["omzet"]
+        if r["periode"] in recent:
+            a["recent_omzet"] += r["omzet"]
         if r["periode"] == latest:
             a["laatste"]["volume"] += r["volume"]
             a["laatste"]["omzet"] += r["omzet"]
+
+    # Winkelaantal voor de "verdwijnt uit het schap"-toets: uit de feiten als
+    # de retailer winkelniveau levert, anders het handmatige aantal.
+    settings = manual_store_settings(conn, retailer_id)
+    n_stores, _uit_feiten = store_count(conn, retailer_id, caps, rows, latest, settings)
 
     out = []
     for a in per_art.values():
         tot = {k: sum(v[k] for v in a["ytd"].values()) for k in ("volume", "omzet")}
         ltot = {k: sum(v[k] for v in a["lytd"].values()) for k in ("volume", "omzet")}
+        status, reden, per_winkel_week = _artikel_status(
+            tot, ltot, a["recent_omzet"], n_recent, n_stores,
+            caps["periode"], y_now)
         out.append({
             "ean": a["ean"], "naam": a["naam"], "merk": a["merk"],
             "sparkline": {"ytd": {p: dict(v) for p, v in sorted(a["ytd"].items())},
                           "lytd": {p: dict(v) for p, v in sorted(a["lytd"].items())}},
             "laatste_periode": a["laatste"], "totaal_ytd": tot, "totaal_lytd": ltot,
+            "status": status, "status_reden": reden,
+            "omzet_per_winkel_per_week": per_winkel_week,
             "ytd_delta_pct": round((tot["omzet"] - ltot["omzet"]) / ltot["omzet"] * 100, 1)
                              if ltot["omzet"] else None})
     out.sort(key=lambda x: -x["totaal_ytd"]["omzet"])

@@ -295,6 +295,60 @@ def test_artikelanalyse_merkfilter(client):
     assert leeg["filters"]["merk"] == ["ALESSANDRO", "TWEEZERMAN"]
 
 
+def test_artikelstatus_nieuw_delisted_en_twijfel(client):
+    """Statusmarkering per artikel: nieuw, delisted, of 'delisted?' bij
+    recente stilte of een omzet die niet past bij het winkelbestand."""
+    import seed
+
+    def art(sku, gtin, weeks):
+        return {"sku": sku, "gtin": gtin, "desc": f"Artikel {sku}",
+                "brand": "TWEEZERMAN", "weeks": weeks}
+
+    vorig = {f"2025{w:02d}": (20, 400.0) for w in range(1, 33)}
+    dit = {f"2026{w:02d}": (20, 400.0) for w in range(1, 33)}
+    # loper: beide jaren; nieuw: alleen 2026; weg: alleen 2025;
+    # stil: 2026 t/m week 10, daarna niets; schrale: hele jaar EUR 50/week.
+    upload(client, "DWH__Sales_Tweezerman_KVNL_status.xlsx", seed.make_dwh_xlsx([
+        art("31210001", "4049469072773", {**vorig, **dit}),
+        art("31210002", "4049469072780", dit),
+        art("31210003", "4049469072797", vorig),
+        art("31210004", "4049469072803",
+            {**{f"2025{w:02d}": (20, 400.0) for w in range(1, 33)},
+             **{f"2026{w:02d}": (20, 400.0) for w in range(1, 11)}}),
+        art("31210005", "4049469072810",
+            {**{f"2025{w:02d}": (2, 50.0) for w in range(1, 33)},
+             **{f"2026{w:02d}": (2, 50.0) for w in range(1, 33)}}),
+    ]))
+    # 530 winkels: EUR 400 per week is EUR 0,75 per winkel per week (gezond),
+    # EUR 50 per week is EUR 0,09 — precies het geval uit de praktijk.
+    client.put("/api/kruidvat/instellingen", json={"winkels_targets": [
+        {"merk": "TWEEZERMAN", "land": "NL", "banner": "KV", "aantal_winkels": 530}]})
+
+    per = {a["ean"]: a for a in client.get("/api/kruidvat/artikelen").json()["artikelen"]}
+    assert per["4049469072773"]["status"] is None            # gewone loper
+    assert per["4049469072780"]["status"] == "nieuw"
+    assert "2025" in per["4049469072780"]["status_reden"]
+    assert per["4049469072797"]["status"] == "delisted"
+    assert per["4049469072803"]["status"] == "delisted?"
+    assert "laatste 13 weken" in per["4049469072803"]["status_reden"]
+    schraal = per["4049469072810"]
+    assert schraal["status"] == "delisted?"
+    assert "per winkel per week" in schraal["status_reden"]
+    assert schraal["omzet_per_winkel_per_week"] == pytest.approx(50 / 530, abs=0.01)
+
+
+def test_artikelstatus_zonder_winkelaantal_geen_valse_twijfel(client):
+    """Zonder winkelaantal is 'te weinig per winkel' niet te berekenen; dan
+    hoort er geen twijfelvlag te staan in plaats van een gegokte."""
+    import seed
+    upload(client, "DWH__Sales_Tweezerman_KVNL_zonder.xlsx", seed.make_dwh_xlsx([
+        {"sku": "31210001", "gtin": "4049469072773", "desc": "S", "brand": "TWEEZERMAN",
+         "weeks": {**{f"2025{w:02d}": (2, 50.0) for w in range(1, 33)},
+                   **{f"2026{w:02d}": (2, 50.0) for w in range(1, 33)}}}]))
+    a = client.get("/api/kruidvat/artikelen").json()["artikelen"][0]
+    assert a["status"] is None and a["omzet_per_winkel_per_week"] is None
+
+
 # ------------------------------------------------- instellingen-rijen
 
 def test_instellingen_feed_combinaties_en_rij_toevoegen(client):

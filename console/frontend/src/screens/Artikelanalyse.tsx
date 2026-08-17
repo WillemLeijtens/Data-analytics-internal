@@ -4,10 +4,31 @@ import { fmtEur, fmtNum } from "../api";
 import { ShellCtx } from "../App";
 import { BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, Sparkline, TrendChart, useApi } from "../components/shared";
 
+/** Statusmarkering per artikel: nieuw in het schap, eruit, of twijfel. */
+function StatusBadge({ status, reden }: { status: string | null; reden: string | null }) {
+  if (!status) return null;
+  const stijl: Record<string, { tekst: string; kleur: string; rand: string }> = {
+    nieuw: { tekst: "NIEUW", kleur: "var(--pos)", rand: "var(--pos)" },
+    delisted: { tekst: "DELISTED", kleur: "var(--neg)", rand: "var(--neg)" },
+    "delisted?": { tekst: "DELISTED?", kleur: "#B4690E", rand: "#B4690E" },
+  };
+  const s = stijl[status];
+  if (!s) return null;
+  return (
+    <span title={reden ?? undefined}
+      style={{
+        display: "inline-block", fontSize: 9.5, fontWeight: 700, letterSpacing: "0.1em",
+        padding: "1px 6px", marginBottom: 3, borderRadius: 3,
+        color: s.kleur, border: `1px solid ${s.rand}`,
+      }}>{s.tekst}</span>
+  );
+}
+
 export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
   const [metric, setMetric] = useState<"volume" | "omzet">("omzet");
   const [sel, setSel] = useState<string | null>(null);
   const [merk, setMerk] = useState<string[]>([]);
+  const [alleenStatus, setAlleenStatus] = useState(false);
 
   // Filter hoort bij één retailer: bij tabwissel opnieuw beginnen, anders
   // levert een merk dat de nieuwe retailer niet voert een leeg scherm.
@@ -31,7 +52,9 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
 
   const isEuro = metric === "omzet";
   const pWord = data.periode_type === "maand" ? "Maand" : "Week";
-  const chosen = data.artikelen.find((a: any) => a.ean === sel);
+  const gemarkeerd = data.artikelen.filter((a: any) => a.status);
+  const zichtbaar = alleenStatus ? gemarkeerd : data.artikelen;
+  const chosen = zichtbaar.find((a: any) => a.ean === sel);
   const fmt = (v: number) => (isEuro ? fmtEur(v) : fmtNum(v));
   const toSeries = (spark: any, key: string) =>
     Object.fromEntries(Object.entries(spark).map(([p, v]: any) => [p, v[key]]));
@@ -44,9 +67,18 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
         <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap", margin: "16px 0 4px" }}>
           <span><span className="eyebrow">Merk </span>
             <MultiChips all={data.filters.merk} sel={merk} onChange={setMerk} /></span>
+          {gemarkeerd.length > 0 && (
+            <button className={`chip ${alleenStatus ? "" : "off"}`}
+              aria-pressed={alleenStatus}
+              title="Toon alleen nieuwe, gestopte en twijfelgevallen"
+              onClick={() => setAlleenStatus((v) => !v)}>
+              ⚑ {gemarkeerd.length} gemarkeerd
+            </button>
+          )}
           <span className="sub" style={{ marginLeft: "auto" }}>
-            {data.artikelen.length} artikel{data.artikelen.length === 1 ? "" : "en"}
-            {merk.length > 0 && <> · <a style={{ cursor: "pointer" }} onClick={() => setMerk([])}>filter wissen</a></>}
+            {zichtbaar.length} artikel{zichtbaar.length === 1 ? "" : "en"}
+            {(merk.length > 0 || alleenStatus) && <> · <a style={{ cursor: "pointer" }}
+              onClick={() => { setMerk([]); setAlleenStatus(false); }}>filter wissen</a></>}
           </span>
         </div>
       )}
@@ -63,9 +95,12 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
           <th>Laatste {pWord.toLowerCase()}</th><th>Totaal YTD</th>
         </tr></thead>
         <tbody>
-          {data.artikelen.map((a: any) => (
+          {zichtbaar.map((a: any) => (
             <tr key={a.ean} className={`click ${sel === a.ean ? "selected" : ""}`} onClick={() => setSel(a.ean)}>
-              <td>{a.naam}<br /><span className="mono sub">{a.ean}</span></td>
+              <td>
+                {a.status && <><StatusBadge status={a.status} reden={a.status_reden} /><br /></>}
+                {a.naam}<br /><span className="mono sub">{a.ean}</span>
+              </td>
               <td><BrandDot merk={a.merk} />{a.merk}</td>
               <td>
                 <Sparkline ytd={toSeries(a.sparkline.ytd, metric)} lytd={toSeries(a.sparkline.lytd, metric)}
