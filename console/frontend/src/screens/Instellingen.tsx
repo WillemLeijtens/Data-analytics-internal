@@ -72,6 +72,13 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   // Rijen toevoegen: zonder dit is een verse installatie een doodlopende
   // straat — de tabellen begonnen leeg en er was niets om te bewerken.
   const wtKey = (s: any) => `${s.merk}|${s.land}|${s.banner ?? ""}`;
+  // Vorige meting per scope: laat zien dat een merk in minder winkels ligt.
+  const vorigeMeting: Record<string, any> = {};
+  for (const h of data.winkels_historie ?? []) {
+    const k = wtKey(h);
+    vorigeMeting[k] = vorigeMeting[k] ? { ...vorigeMeting[k], vorig: vorigeMeting[k].nu } : {};
+    vorigeMeting[k].nu = h;
+  }
   const feedCombos = (data.feed_combinaties ?? []).filter(
     (c: any) => c.merk && !wt.some((s) => wtKey(s) === wtKey(c)));
   const addWt = (merk: string, land: string | null, banner: string | null) =>
@@ -142,9 +149,25 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
               <td>{s.merk}</td><td>{s.land}</td><td>{s.banner ?? "—"}</td>
               <td>{winkelsReadonly
                 ? <span className="sub" title="Komt uit de aanlevering">uit feed</span>
-                : <input type="number" min={1} style={{ width: 90 }} value={s.aantal_winkels ?? ""}
-                    aria-label={`Aantal winkels ${s.merk} ${s.land ?? ""} ${s.banner ?? ""}`}
-                    onChange={(e) => upd(wt, setWt, i, "aantal_winkels", e.target.value ? +e.target.value : null)} />}
+                : <>
+                    <input type="number" min={1} style={{ width: 90 }} value={s.aantal_winkels ?? ""}
+                      aria-label={`Aantal winkels ${s.merk} ${s.land ?? ""} ${s.banner ?? ""}`}
+                      onChange={(e) => upd(wt, setWt, i, "aantal_winkels", e.target.value ? +e.target.value : null)} />
+                    {(() => {
+                      // Was het eerder anders? Dan is dát het distributieverhaal.
+                      const h = vorigeMeting[wtKey(s)];
+                      if (!h?.vorig || h.vorig.aantal_winkels === h.nu.aantal_winkels) return null;
+                      const omlaag = h.nu.aantal_winkels < h.vorig.aantal_winkels;
+                      return (
+                        <div className="sub" style={{ fontSize: 10.5, marginTop: 2 }}
+                          title={`Gewijzigd op ${h.nu.gemeten_op?.slice(0, 10)}`}>
+                          <span className={omlaag ? "sig-red" : "sig-green"}>
+                            {omlaag ? "▼" : "▲"} was {h.vorig.aantal_winkels}
+                          </span>{" "}sinds {h.nu.gemeten_op?.slice(0, 10)}
+                        </div>
+                      );
+                    })()}
+                  </>}
               </td>
               <td><input type="number" min={0} style={{ width: 90 }} value={s.target_per_winkel ?? ""}
                 aria-label={`Target per winkel ${s.merk} ${s.land ?? ""} ${s.banner ?? ""}`}

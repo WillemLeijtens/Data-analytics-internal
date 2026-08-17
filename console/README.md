@@ -203,6 +203,17 @@ is; het dashboard toont hem wél als KPI maar met het label **LOPEND**, en de
 YTD-vergelijking rekent t/m de laatste **afgesloten** periode — anders zet je
 een halve maand naast een hele maand vorig jaar.
 
+### Distributiesignaal (Overzicht)
+
+Ligt ons merk nog in evenveel winkels? Twee bronnen, per retailer wat er
+beschikbaar is: levert de feed winkelniveau (ICI), dan telt de winkelanalyse
+de winkels die dit jaar stilgevallen zijn met de omzet die we mislopen;
+anders komt het uit de winkelaantallen in Instellingen — élke wijziging
+daarvan wordt bewaard in `winkelaantal_historie`, zodat "530 → 470 sinds
+17-08" zichtbaar wordt. Eén meting zegt nog niets (grijs); een daling van
+10% of meer is rood. Het instellingenscherm toont de vorige waarde onder het
+invoerveld.
+
 ### Winkelanalyse (retailers mét winkelniveau)
 
 Op het dashboard: winkels die dit jaar stilgevallen zijn (wél eerder omzet,

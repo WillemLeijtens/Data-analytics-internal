@@ -15,6 +15,7 @@ export type RetailerCard = {
   capabilities: Capabilities | null;
   signalen: {
     assortiment: { signaal: Signaal; tekst: string };
+    distributie: { signaal: Signaal; tekst: string };
     contract: { signaal: Signaal; tekst: string };
     data: { signaal: Signaal; tekst: string };
     composiet: Signaal; context: string;

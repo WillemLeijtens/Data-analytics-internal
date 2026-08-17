@@ -414,6 +414,61 @@ def test_artikelanalyse_geeft_jaar_mee(client):
     assert client.get("/api/kruidvat/artikelen").json()["jaar"] == 2026
 
 
+# ------------------------------------------------- distributiesignaal
+
+def test_distributie_uit_handmatig_winkelaantal(client):
+    """Kruidvat levert geen winkelniveau: de daling moet blijken uit de
+    winkelaantallen die de gebruiker bijhoudt. Elke wijziging wordt bewaard."""
+    import seed
+    upload(client, "DWH__Sales_Tweezerman_KVNL_32.xlsx",
+           seed.make_dwh_xlsx(seed._kv_demo_rows(["202632"])))
+
+    def kaart():
+        return next(c for c in client.get("/api/overview").json()["retailers"]
+                    if c["id"] == "kruidvat")["signalen"]["distributie"]
+
+    assert kaart()["signaal"] == "grey"          # nog niets ingevuld
+    zet = lambda n: client.put("/api/kruidvat/instellingen", json={"winkels_targets": [  # noqa: E731
+        {"merk": "TWEEZERMAN", "land": "NL", "banner": "KV", "aantal_winkels": n}]})
+    zet(912)
+    assert kaart()["signaal"] == "grey"          # één meting zegt nog niets
+    zet(880)                                     # -3,5%: let op
+    s = kaart()
+    assert s["signaal"] == "orange" and "912 → 880" in s["tekst"]
+    zet(700)                                     # -20%: actie nodig
+    assert kaart()["signaal"] == "red"
+    zet(900)                                     # weer omhoog
+    assert kaart()["signaal"] == "green"
+
+    # De historie is opvraagbaar voor het instellingenscherm.
+    hist = client.get("/api/kruidvat/instellingen").json()["winkels_historie"]
+    assert [h["aantal_winkels"] for h in hist] == [912, 880, 700, 900]
+    # Onveranderd opslaan voegt geen ruis toe aan de historie.
+    zet(900)
+    assert len(client.get("/api/kruidvat/instellingen").json()["winkels_historie"]) == 4
+
+
+def test_distributie_uit_de_feiten_bij_winkelniveau(client):
+    """ICI levert winkelniveau: dan komt het signaal uit de winkelanalyse
+    (gestopte winkels + gemiste omzet), niet uit een handmatig getal."""
+    import seed
+    blocks = {"DEPEND": {}}
+    # Zes winkels die vorig jaar en begin dit jaar verkochten en daarna stil
+    # vallen, plus één die doorloopt.
+    for w in range(1, 7):
+        blocks["DEPEND"][str(7000 + w)] = {
+            "202501": 100.0, "202502": 100.0, "202503": 100.0, "202601": 90.0}
+    blocks["DEPEND"]["7099"] = {
+        "202501": 100.0, "202502": 100.0, "202503": 100.0,
+        "202601": 90.0, "202602": 90.0, "202603": 90.0}
+    upload(client, "Maandelijkse_resultaten_ICI_dist.xlsx", seed.make_ici_xlsx(blocks))
+
+    s = next(c for c in client.get("/api/overview").json()["retailers"]
+             if c["id"] == "ici-paris-xl")["signalen"]["distributie"]
+    assert s["signaal"] == "red"                 # 6 gestopte winkels
+    assert "6 winkel(s) gestopt" in s["tekst"] and "gemist" in s["tekst"]
+
+
 # ------------------------------------------------- lopende periode
 
 def test_is_afgesloten_week_en_maand():

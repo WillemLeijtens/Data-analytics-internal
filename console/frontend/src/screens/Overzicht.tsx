@@ -91,6 +91,8 @@ export default function Overzicht({ ctx }: { ctx: ShellCtx }) {
                 <div className={`context ${SIG_TEXT[s.composiet]}`}>{s.context}</div>
                 <div className="dots">
                   <i title={`Assortiment: ${s.assortiment.tekst}`} className={`dot-${s.assortiment.signaal}`} />
+                  <i title={`Distributie: ${s.distributie?.tekst ?? "n.v.t."}`}
+                    className={`dot-${s.distributie?.signaal ?? "grey"}`} />
                   <i title={`Contract: ${s.contract.tekst}`} className={`dot-${s.contract.signaal}`} />
                   <i title={`Data: ${s.data.tekst}`} className={`dot-${s.data.signaal}`} />
                 </div>
@@ -103,6 +105,30 @@ export default function Overzicht({ ctx }: { ctx: ShellCtx }) {
           </div>
         </div>
       </div>
+
+      <h2>Distributie</h2>
+      <p className="sub" style={{ marginTop: -6 }}>
+        Ligt ons merk in evenveel winkels als eerder? Retailers die winkelniveau
+        leveren (ICI) rekenen dit uit de feiten; bij de andere komt het uit de
+        winkelaantallen die je bij Instellingen bijhoudt — elke wijziging wordt
+        bewaard.
+      </p>
+      <table className="data">
+        <thead><tr><th>Retailer</th><th>Signaal</th><th>Bron</th></tr></thead>
+        <tbody>
+          {data.retailers.filter((c) => c.profiel).map((c) => (
+            <tr key={c.id} className="click" onClick={() => ctx.go(c.id, c.capabilities?.winkel ? "dashboard" : "instellingen")}>
+              <td>{c.naam}</td>
+              <td>
+                <span className={`brand-dot dot-${c.signalen.distributie?.signaal ?? "grey"}`}
+                  style={{ width: 9, height: 9 }} />
+                {c.signalen.distributie?.tekst ?? "n.v.t."}
+              </td>
+              <td className="sub">{c.capabilities?.winkel ? "uit de aanlevering" : "handmatig winkelaantal"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       <h2>Capability matrix</h2>
       <table className="data">

@@ -406,6 +406,12 @@ def get_settings(retailer_id: str):
             "winkels_targets": [dict(r) for r in conn.execute(
                 "SELECT * FROM retailer_settings WHERE retailer_id=? ORDER BY merk, land, banner",
                 (retailer_id,))],
+            # Elke wijziging van een winkelaantal, zodat het scherm kan tonen
+            # dat een merk in minder winkels ligt dan eerst.
+            "winkels_historie": [dict(r) for r in conn.execute(
+                "SELECT merk, land, banner, aantal_winkels, gemeten_op "
+                "FROM winkelaantal_historie WHERE retailer_id=? "
+                "ORDER BY merk, land, banner, gemeten_op", (retailer_id,))],
             "rotatie_targets": [dict(r) for r in conn.execute(
                 "SELECT * FROM rotatie_targets WHERE retailer_id=? ORDER BY merk", (retailer_id,))],
             "mail_rules": [dict(r) for r in conn.execute(
@@ -454,6 +460,22 @@ def save_settings(retailer_id: str, body: SettingsBody):
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
         if body.winkels_targets is not None:
+            # Winkelaantallen die VERANDEREN worden gelogd: alleen zo is een
+            # dalende distributie later terug te zien (het Overzicht toont
+            # dat als signaal). Ongewijzigde waarden voegen niets toe.
+            vorige = {(r["merk"], r["land"], r["banner"]): r["aantal_winkels"]
+                      for r in conn.execute(
+                          "SELECT merk, land, banner, aantal_winkels FROM retailer_settings "
+                          "WHERE retailer_id=?", (retailer_id,))}
+            nieuw = [(s["merk"], s["land"], s.get("banner"), s.get("aantal_winkels"))
+                     for s in body.winkels_targets
+                     if s.get("aantal_winkels")
+                     and vorige.get((s["merk"], s["land"], s.get("banner")))
+                     != s.get("aantal_winkels")]
+            conn.executemany(
+                "INSERT INTO winkelaantal_historie (retailer_id, merk, land, banner, "
+                "aantal_winkels) VALUES (?,?,?,?,?)",
+                [(retailer_id, *rij) for rij in nieuw])
             conn.execute("DELETE FROM retailer_settings WHERE retailer_id=?", (retailer_id,))
             conn.executemany(
                 "INSERT INTO retailer_settings (retailer_id, merk, land, banner, aantal_winkels, "

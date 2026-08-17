@@ -1,5 +1,5 @@
-"""Signal radar (Overzicht): per retailer three signals — assortiment,
-contract, data — plus the composite (worst wins).
+"""Signal radar (Overzicht): per retailer four signals — assortiment,
+distributie, contract, data — plus the composite (worst wins).
 
 green = op orde, orange = let op, red = actie nodig, grey = n.v.t.
 """
@@ -108,20 +108,83 @@ def assortment_signal(conn, retailer_id: str) -> tuple[str, str]:
     return "green", "Alles op orde"
 
 
+def distributie_signal(conn, retailer_id: str) -> tuple[str, str]:
+    """Loopt het aantal winkels dat onze merken voert terug?
+
+    Twee bronnen, afhankelijk van wat de retailer aanlevert:
+      * winkelniveau in de feed (ICI) -> de winkelanalyse telt de winkels die
+        dit jaar stilgevallen zijn, met de omzet die we daardoor mislopen;
+      * geen winkelniveau (Kruidvat, Etos) -> de handmatig ingevulde
+        winkelaantallen uit Instellingen, waarvan elke wijziging bewaard
+        wordt. Zonder tweede meting valt er nog niets te zeggen (grijs).
+    """
+    prof = active_profile(conn, retailer_id)
+    if not prof:
+        return "grey", "n.v.t."
+    caps = capabilities(prof.definition)
+
+    if caps.get("winkel"):
+        rows = analytics.load_facts(conn, retailer_id)
+        if not rows:
+            return "grey", "Nog geen data"
+        jaar = max(period_year(r["periode"]) for r in rows)
+        w = analytics.winkelanalyse(rows, caps, jaar)
+        gestopt = len(w.get("gestopt", []))
+        if not gestopt:
+            return "green", "Geen winkels stilgevallen"
+        gemist = w.get("gemiste_omzet") or 0
+        tekst = f"{gestopt} winkel(s) gestopt · € {gemist:,.0f} gemist".replace(",", ".")
+        # Eén stille winkel is opruimwerk; een reeks is een distributieprobleem.
+        return ("red" if gestopt >= 5 else "orange"), tekst
+
+    # Handmatige aantallen: vergelijk de laatste meting per scope met de
+    # meting daarvóór. Alleen dalingen zijn een signaal.
+    hist = conn.execute(
+        "SELECT merk, land, banner, aantal_winkels, gemeten_op "
+        "FROM winkelaantal_historie WHERE retailer_id=? "
+        "ORDER BY merk, land, banner, gemeten_op", (retailer_id,)).fetchall()
+    per_scope: dict[tuple, list] = {}
+    for r in hist:
+        per_scope.setdefault((r["merk"], r["land"], r["banner"]), []).append(r)
+    dalingen = []
+    for (merk, _land, _banner), rijen in per_scope.items():
+        if len(rijen) < 2:
+            continue
+        nu, vorig = rijen[-1]["aantal_winkels"], rijen[-2]["aantal_winkels"]
+        if nu < vorig:
+            dalingen.append((merk, vorig, nu, rijen[-1]["gemeten_op"][:10]))
+    if not per_scope:
+        return "grey", "Geen winkelaantallen ingevuld"
+    if not any(len(r) >= 2 for r in per_scope.values()):
+        return "grey", "Nog maar één meting"
+    if not dalingen:
+        return "green", "Winkelbestand stabiel"
+    dalingen.sort(key=lambda d: d[2] - d[1])
+    merk, vorig, nu, sinds = dalingen[0]
+    pct = (vorig - nu) / vorig * 100
+    tekst = f"{merk}: {vorig} → {nu} winkels sinds {sinds}"
+    if len(dalingen) > 1:
+        tekst += f" (+{len(dalingen) - 1} ander(e))"
+    return ("red" if pct >= 10 else "orange"), tekst
+
+
 def retailer_signals(conn, retailer_id: str) -> dict:
     prof = active_profile(conn, retailer_id)
     if prof is None:
         return {"assortiment": {"signaal": "grey", "tekst": "n.v.t."},
+                "distributie": {"signaal": "grey", "tekst": "n.v.t."},
                 "contract": {"signaal": "grey", "tekst": "n.v.t."},
                 "data": {"signaal": "grey", "tekst": "Nog geen profiel"},
                 "composiet": "grey", "context": "Nog geen profiel"}
     a_sig, a_txt = assortment_signal(conn, retailer_id)
+    v_sig, v_txt = distributie_signal(conn, retailer_id)
     c_sig, c_txt = contract_signal(conn, retailer_id)
     d_sig, d_txt = data_signal(conn, retailer_id)
-    comp = _worst([a_sig, c_sig, d_sig])
-    context = {a_sig: a_txt, c_sig: c_txt, d_sig: d_txt}.get(comp, "Alles op orde") \
-        if comp != "green" else "Alles op orde"
+    comp = _worst([a_sig, v_sig, c_sig, d_sig])
+    context = {a_sig: a_txt, v_sig: v_txt, c_sig: c_txt, d_sig: d_txt}.get(
+        comp, "Alles op orde") if comp != "green" else "Alles op orde"
     return {"assortiment": {"signaal": a_sig, "tekst": a_txt},
+            "distributie": {"signaal": v_sig, "tekst": v_txt},
             "contract": {"signaal": c_sig, "tekst": c_txt},
             "data": {"signaal": d_sig, "tekst": d_txt},
             "composiet": comp, "context": context}
