@@ -448,6 +448,29 @@ def test_distributie_uit_handmatig_winkelaantal(client):
     assert len(client.get("/api/kruidvat/instellingen").json()["winkels_historie"]) == 4
 
 
+def test_bestaand_winkelaantal_krijgt_nulmeting(client):
+    """Staat er al een winkelaantal in de database zonder historie (zoals op
+    de bestaande installatie), dan wordt dát als nulmeting vastgelegd bij de
+    eerste opslag. Anders levert de eerste wijziging één punt op en blijft
+    het signaal grijs — precies wanneer je de daling wilt zien."""
+    import db
+    import seed
+    upload(client, "DWH__Sales_Tweezerman_KVNL_32.xlsx",
+           seed.make_dwh_xlsx(seed._kv_demo_rows(["202632"])))
+    # Bootst de bestaande situatie na: een waarde zonder enige historie.
+    with db.get_conn() as conn:
+        conn.execute("INSERT INTO retailer_settings (retailer_id, merk, land, banner, "
+                     "aantal_winkels) VALUES ('kruidvat','TWEEZERMAN','NL','KV',530)")
+    client.put("/api/kruidvat/instellingen", json={"winkels_targets": [
+        {"merk": "TWEEZERMAN", "land": "NL", "banner": "KV", "aantal_winkels": 470}]})
+
+    hist = client.get("/api/kruidvat/instellingen").json()["winkels_historie"]
+    assert [h["aantal_winkels"] for h in hist] == [530, 470]
+    s = next(c for c in client.get("/api/overview").json()["retailers"]
+             if c["id"] == "kruidvat")["signalen"]["distributie"]
+    assert s["signaal"] == "red" and "530 → 470" in s["tekst"]
+
+
 def test_distributie_uit_de_feiten_bij_winkelniveau(client):
     """ICI levert winkelniveau: dan komt het signaal uit de winkelanalyse
     (gestopte winkels + gemiste omzet), niet uit een handmatig getal."""

@@ -467,11 +467,24 @@ def save_settings(retailer_id: str, body: SettingsBody):
                       for r in conn.execute(
                           "SELECT merk, land, banner, aantal_winkels FROM retailer_settings "
                           "WHERE retailer_id=?", (retailer_id,))}
-            nieuw = [(s["merk"], s["land"], s.get("banner"), s.get("aantal_winkels"))
-                     for s in body.winkels_targets
-                     if s.get("aantal_winkels")
-                     and vorige.get((s["merk"], s["land"], s.get("banner")))
-                     != s.get("aantal_winkels")]
+            met_historie = {(r["merk"], r["land"], r["banner"]) for r in conn.execute(
+                "SELECT DISTINCT merk, land, banner FROM winkelaantal_historie "
+                "WHERE retailer_id=?", (retailer_id,))}
+            nieuw = []
+            for s in body.winkels_targets:
+                aantal = s.get("aantal_winkels")
+                if not aantal:
+                    continue
+                scope = (s["merk"], s["land"], s.get("banner"))
+                oud = vorige.get(scope)
+                # Nog geen historie voor deze scope? Leg dan eerst de waarde
+                # vast zoals hij nú in de database staat. Zonder die nulmeting
+                # levert de eerste wijziging maar één punt op en blijft het
+                # signaal grijs — precies wanneer je de daling wilt zien.
+                if scope not in met_historie and oud:
+                    nieuw.append((*scope, oud))
+                if oud != aantal:
+                    nieuw.append((*scope, aantal))
             conn.executemany(
                 "INSERT INTO winkelaantal_historie (retailer_id, merk, land, banner, "
                 "aantal_winkels) VALUES (?,?,?,?,?)",
