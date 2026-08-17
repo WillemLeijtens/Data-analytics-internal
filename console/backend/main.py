@@ -130,15 +130,12 @@ else:
 # CORS header would only widen the surface behind the gateway for nothing.
 db.init_db()
 
-# A fresh install must not boot without parser profiles — bootstrap loads the
-# profiles/settings/contracts (no sales facts). Idempotent, so it is a no-op
-# on every start after the first. Demo sales data: `make seed`.
-with db.get_conn() as _conn:
-    _needs_bootstrap = not _conn.execute(
-        "SELECT 1 FROM parser_profiles LIMIT 1").fetchone()
-if _needs_bootstrap:
-    import seed as _seed
-    _seed.bootstrap()
+# Bootstrap draait bij ELKE start, niet alleen bij een lege database: hij is
+# idempotent (INSERT OR IGNORE per retailer/versie), en alleen zo komt een
+# NIEUW meegeleverd parser-profiel (zoals Etos) ook aan op een bestaande
+# installatie — de oude alleen-bij-lege-tabel-check hield dat tegen.
+import seed as _seed  # noqa: E402
+_seed.bootstrap()
 
 
 def _retailer_or_404(conn, retailer_id: str):

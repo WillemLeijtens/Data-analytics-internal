@@ -143,9 +143,19 @@ console/
 Schema: zie `profiles/*.json` (PROMPT.md §3). Kernregels:
 
 - **Profielen komen uit het project**, niet uit de app: ingebouwde parsers
-  (`builtin`, zoals kruidvat_dwh en ici_maandrapport) of een JSON in
+  (`builtin`: kruidvat_dwh, ici_maandrapport, etos_datagrid) of een JSON in
   `profiles/`. De app heeft geen mapping-editor en geen publiceer-endpoint;
   het Parser-scherm is alleen-lezen plus "controleren op bestand".
+- **Etos (Data Grid-widgetexport)**: artikel×week-matrix, land constant NL,
+  geen winkel- of bannerniveau. Dit formaat heeft géén totalenrij; de parser
+  verifieert daarom fail-closed alles wat het bestand zelf biedt: het
+  merkental ("Brand (N)"), het weekbereik ("Fiscal YTD …-…") en per week de
+  Ending-datum tegen de ISO-zondag — wijkt Etos ooit af van ISO-weken, dan
+  stopt de import in plaats van weken verkeerd te labelen. Elke download is
+  een groeiend YTD-bestand: overlappende weken worden vervangen op de
+  natuurlijke sleutel, dus herimporteren telt nooit dubbel.
+- **Bootstrap draait bij elke start** (idempotent): een nieuw meegeleverd
+  profiel komt zo ook op een bestaande installatie aan.
 - **Capabilities worden afgeleid** uit mapping + constants (of liggen bij een
   ingebouwde parser vast), nergens opgeslagen.
 - **Detectie**: filename-glob, met sheet/verplichte-headers als tiebreak, en

@@ -1,0 +1,27 @@
+{
+  "retailer_id": "etos",
+  "version": 1,
+  "status": "live",
+  "builtin": "etos_datagrid",
+  "detection": {
+    "filename_glob": "Data_Grid_*widget*.xlsx",
+    "sheet": null,
+    "header_row": 1,
+    "required_headers": [],
+    "filetype": "xlsx",
+    "csv_delimiter": null,
+    "decimal": "."
+  },
+  "period": {
+    "type": "week",
+    "source_column": "(ingebouwd: weekkolommen met Ending-datums)",
+    "format": "yyyyww"
+  },
+  "mapping": [],
+  "constants": {
+    "land": "NL"
+  },
+  "thresholds": {
+    "promo_price_drop": 0.05
+  }
+}

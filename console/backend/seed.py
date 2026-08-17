@@ -185,6 +185,83 @@ def make_ici_xlsx(blocks: dict[str, dict[str, dict[str, float]]]) -> bytes:
     return buf.getvalue()
 
 
+def make_etos_xlsx(artikelen: list[dict], weeks: list[str] | None = None,
+                   brand_count: int | None = None) -> bytes:
+    """Genereer een werkboek in het ECHTE Etos Data Grid-widgetformaat:
+    metadatablok (Fiscal YTD-range + Brand (N)), weekkoppen met de
+    ISO-zondag als Ending-datum, en de UPC/Brand-subkop met per week een
+    Sales/Units-paar — zodat seed en tests de ingebouwde parser exact zo
+    raken als een productie-export.
+
+    artikelen: [{upc, naam, merk, merk_nr, weeks: {"202632": (sales, units)}}]
+    """
+    import datetime as _dt
+
+    from openpyxl import Workbook
+    if weeks is None:
+        weeks = sorted({w for a in artikelen for w in a["weeks"]})
+    merken = sorted({f'{a["merk"]} - {a["merk_nr"]}' for a in artikelen})
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data_Grid_57018_widget"
+    ws.cell(row=4, column=1, value="File")
+    ws.cell(row=5, column=1, value="File Generated")
+    ws.cell(row=5, column=2, value="2026-08-17 19:54 CEST")
+    ws.cell(row=6, column=1, value="Board Name")
+    ws.cell(row=6, column=2, value="Sales per item analyse")
+    ws.cell(row=7, column=1, value="Widget Name")
+    ws.cell(row=7, column=2, value="Data Grid")
+    n_merken = brand_count if brand_count is not None else len(merken)
+    ws.cell(row=11, column=1, value="Product :")
+    ws.cell(row=11, column=2, value=f"Brand ({n_merken})")
+    ws.cell(row=18, column=1, value='Time "Fiscal YTD"')
+    ws.cell(row=18, column=2,
+            value=f"Fiscal YTD {weeks[0]}-{weeks[-1]}, Ending {weeks[-1]}")
+    ws.cell(row=19, column=1, value=f"Brand ({n_merken})")
+    ws.cell(row=19, column=2, value=", ".join(merken))
+    for j, wk in enumerate(weeks):
+        jaar, week = int(wk[:4]), int(wk[4:])
+        zondag = _dt.date.fromisocalendar(jaar, week, 7)
+        ws.cell(row=20, column=4 + j * 2,
+                value=f"{wk} (Ending {zondag.strftime('%d/%m/%Y')})")
+        ws.cell(row=21, column=4 + j * 2, value="Sales € TY")
+        ws.cell(row=21, column=5 + j * 2, value="Units TY")
+    ws.cell(row=21, column=1, value="UPC Name")
+    ws.cell(row=21, column=2, value="UPC ID")
+    ws.cell(row=21, column=3, value="Brand")
+    r = 21
+    for a in artikelen:
+        r += 1
+        ws.cell(row=r, column=1, value=a["naam"])
+        ws.cell(row=r, column=2, value=str(a["upc"]))
+        ws.cell(row=r, column=3, value=f'{a["merk"]} - {a["merk_nr"]}')
+        for j, wk in enumerate(weeks):
+            if wk in a["weeks"]:
+                sales, units = a["weeks"][wk]
+                ws.cell(row=r, column=4 + j * 2, value=sales)
+                ws.cell(row=r, column=5 + j * 2, value=units)
+    ws.cell(row=r + 5, column=1,
+            value="All insights and reports are for internal use only.")
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _etos_demo_artikelen(weeks: list[str], factor: float = 1.0) -> list[dict]:
+    basis = [("120789202", "BJORN AXEN VOLUMIZING SHAMPOO", "BJÖRN AXÉN", "2912", 11.5),
+             ("120727773", "TWEEZERMAN LASH CURLER", "TWEEZERMAN", "2278", 19.75),
+             ("120742623", "PATCHOLOGY FLASHPATCH EYE GELS", "PATCHOLOGY", "2731", 13.25)]
+    out = []
+    for i, (upc, naam, merk, nr, prijs) in enumerate(basis):
+        wkdata = {}
+        for k, wk in enumerate(weeks):
+            units = int((8 + (i * 7 + k * 3) % 21) * factor)
+            wkdata[wk] = (round(units * prijs, 2), units)
+        out.append({"upc": upc, "naam": naam, "merk": merk, "merk_nr": nr,
+                    "weeks": wkdata})
+    return out
+
+
 def _ici_demo_blocks(months: list[str]) -> dict:
     blocks: dict = {}
     for merk, base in (("TWEEZERMAN", 60.0), ("DEPEND", 22.0)):
@@ -204,6 +281,10 @@ def build_seed_files() -> list[tuple[str, bytes]]:
 
     files.append(("Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__demo.xlsx",
                   make_ici_xlsx(_ici_demo_blocks(["202607"]))))
+
+    files.append(("Data_Grid_57018_widget_demo.xlsx",
+                  make_etos_xlsx(_etos_demo_artikelen(
+                      [f"2026{wk:02d}" for wk in range(30, 33)]))))
 
     h, d = _read_standin(SEED / "douglas_Abverkauf_KW32.csv")
     files.append(("Douglas_Abverkauf_KW32.xlsx",
@@ -266,6 +347,9 @@ def build_history_files() -> list[tuple[str, bytes]]:
         month_labels = [f"{year}{m:02d}" for m in range(1, 8 if year == 2026 else 13)]
         files.append((f"Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__{year}.xlsx",
                       make_ici_xlsx(_ici_demo_blocks(month_labels))))
+
+        files.append((f"Data_Grid_{57000 + year - 2024}_widget.xlsx",
+                      make_etos_xlsx(_etos_demo_artikelen(week_labels, factor=factor))))
     return files
 
 
@@ -273,7 +357,8 @@ def bootstrap():
     """Wat een verse installatie nodig heeft om te WERKEN: alleen de
     parser-profielen. Geen instellingen, geen contracten, geen cijfers —
     alles wat verzonnen is, hoort in seed() (demo). Idempotent; draait
-    automatisch bij de eerste containerstart."""
+    bij ELKE containerstart, zodat een nieuw meegeleverd profiel ook op
+    een bestaande installatie aankomt."""
     db.init_db()
     with db.get_conn() as conn:
         for path in sorted(PROFILES.glob("*.json")):
@@ -283,6 +368,11 @@ def bootstrap():
                 "published_at) VALUES (?,?,?,?, CASE WHEN ?='live' THEN datetime('now') END)",
                 (d["retailer_id"], d["version"], d["status"],
                  json.dumps(d, ensure_ascii=False), d["status"]))
+            if d["status"] == "live":
+                # Zonder deze vlag blijft de retailerkaart op "NIEUW" staan
+                # terwijl er wel degelijk een werkende parser is.
+                conn.execute("UPDATE retailers SET aangesloten=1 WHERE id=?",
+                             (d["retailer_id"],))
 
 
 def _load_demo_settings():

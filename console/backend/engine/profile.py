@@ -32,6 +32,9 @@ BUILTIN_CAPS = {
     "ici_maandrapport": {"periode": "maand", "merk": True, "artikel": False,
                          "winkel": True, "banner": False, "land": True,
                          "volume": False},
+    "etos_datagrid": {"periode": "week", "merk": True, "artikel": True,
+                      "winkel": False, "banner": False, "land": True,
+                      "volume": True},
 }
 
 

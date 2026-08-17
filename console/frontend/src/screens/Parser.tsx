@@ -84,7 +84,9 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
               ? "het werkblad met het metadatablok (Country/Formula/Brand) én een 'SKU No.'-kop; van meerdere bladen wint het blad waarvan het regelaantal klopt met zijn eigen Total-rij."
               : builtin === "ici_maandrapport"
                 ? "de tabbladen met een Store/Address-kop gevolgd door maandkolommen, plus het merk-tabblad voor de controle op de totalen."
-                : "de kolomkoppen en het bestandstype die in dit profiel vastliggen."}</p>
+                : builtin === "etos_datagrid"
+                  ? "de UPC-kopregel met daarboven weekkoppen met Ending-datums. Gecontroleerd op merkental, weekbereik en ISO-einddatums uit het metadatablok — dit formaat heeft geen totalenrij, dus dat is de maximale controle."
+                  : "de kolomkoppen en het bestandstype die in dit profiel vastliggen."}</p>
           <p className="sub">Hernoemt de retailer een bestand of tabblad, dan blijft de
             herkenning gewoon werken.</p>
         </div>

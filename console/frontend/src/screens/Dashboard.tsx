@@ -281,7 +281,8 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           {y.basis.niet_vergelijkbaar.length > 0 && (
             y.basis.niet_vergelijkbaar.length === 1
               ? <> {y.basis.niet_vergelijkbaar[0] ?? "ONBEKEND"} ontbreekt in {y.jaar - 1} en telt daarom niet mee in het percentage — de absolute totalen tellen wél alles.</>
-              : <> {y.basis.niet_vergelijkbaar.map((m: string) => m ?? "ONBEKEND").join(" en ")} ontbreken in {y.jaar - 1} en tellen daarom niet mee in het percentage — de absolute totalen tellen wél alles.</>
+              : <> {(() => { const n = y.basis.niet_vergelijkbaar.map((m: string) => m ?? "ONBEKEND");
+                    return `${n.slice(0, -1).join(", ")} en ${n[n.length - 1]}`; })()} ontbreken in {y.jaar - 1} en tellen daarom niet mee in het percentage — de absolute totalen tellen wél alles.</>
           )}
         </p>
       )}
