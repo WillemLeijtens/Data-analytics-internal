@@ -141,22 +141,27 @@ if [ -z "$PROJECTEN" ]; then
     echo "Geen compose-containers gevonden."
 else
     echo "$PROJECTEN" | sed 's/^/   /'
-    AANTAL_P=$(echo "$PROJECTEN" | awk -F'\t' 'NF>1 && $1!="" {print $1}' | sort -u | wc -l)
-    if [ "$AANTAL_P" -gt 1 ]; then
-        echo
-        echo "Meer dan één project. Databases per map (nieuwste = waarschijnlijk de echte):"
-        GEVONDEN=0
-        while IFS=$'\t' read -r _naam dir; do
-            [ -n "${dir:-}" ] || continue
-            for db in "$dir/console/data/console.db" "$dir/data/analytics.db"; do
-                if [ -f "$db" ]; then
-                    printf '   %s  %s\n' "$(date -r "$db" '+%Y-%m-%d %H:%M')" "$db"
-                    GEVONDEN=1
-                fi
-            done
-        done <<< "$PROJECTEN"
-        [ "$GEVONDEN" -eq 0 ] && echo "   (geen databases leesbaar vanaf hier — kijk zelf in beide mappen)"
-        meld "LET OP  er staan meerdere compose-projecten op deze host. Sluit de verkeerde NIET blind af: elke map heeft zijn eigen database. Vergelijk de datums hierboven eerst."
+    # Alleen ANDERE checkouts van dít project zijn een probleem; de overige
+    # apps op deze droplet (bolcom-agent, kadc, …) horen er gewoon te staan.
+    # Herkenningspunt: een map met onze databases erin.
+    echo
+    echo "Checkouts van dit project (aan hun databases herkend):"
+    DUBBEL=0
+    while IFS=$'\t' read -r _naam dir; do
+        [ -n "${dir:-}" ] || continue
+        VAN_ONS=0
+        for db in "$dir/console/data/console.db" "$dir/data/analytics.db"; do
+            if [ -f "$db" ]; then
+                printf '   %s  %s\n' "$(date -r "$db" '+%Y-%m-%d %H:%M')" "$db"
+                VAN_ONS=1
+            fi
+        done
+        [ "$VAN_ONS" -eq 1 ] && DUBBEL=$((DUBBEL + 1))
+    done <<< "$PROJECTEN"
+    if [ "$DUBBEL" -eq 0 ]; then
+        echo "   (geen databases leesbaar vanaf hier)"
+    elif [ "$DUBBEL" -gt 1 ]; then
+        meld "LET OP  er staan $DUBBEL checkouts van dit project op deze host, elk met een eigen database. Sluit de verkeerde NIET blind af — vergelijk eerst de datums hierboven."
     fi
 fi
 
