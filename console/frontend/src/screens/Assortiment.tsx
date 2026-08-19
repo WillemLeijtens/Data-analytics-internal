@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { ShellCtx } from "../App";
-import { BrandDot, EmptyProfileCard, LevelStrip, LoadState, useApi } from "../components/shared";
+import { BrandDot, DekkingWaarschuwing, EmptyProfileCard, LevelStrip, LoadState, useApi } from "../components/shared";
 
 function Warn() {
   return (
@@ -47,7 +47,8 @@ export default function Assortiment({ ctx }: { ctx: ShellCtx }) {
         <tbody>
           {data.artikelen.map((a: any) => (
             <tr key={a.ean}>
-              <td>{a.naam}<br /><span className="mono sub">{a.ean}</span></td>
+              <td><DekkingWaarschuwing dekking={a.dekking} />{a.naam}<br />
+                <span className="mono sub">{a.ean}</span></td>
               <td><BrandDot merk={a.merk} />{a.merk}</td>
               <td>
                 {a.rotatie ?? "—"} st/winkel/week

@@ -13,6 +13,7 @@ import datetime as dt
 from collections import defaultdict
 from statistics import median
 
+from . import dekking as dekking_mod
 from . import fallback
 from .periods import (is_afgesloten, period_number, period_type_of,
                       period_year, sort_key)
@@ -855,6 +856,10 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
     settings = manual_store_settings(conn, retailer_id)
     n_stores, _uit_feiten = store_count(conn, retailer_id, caps, rows, latest, settings)
 
+    # Gaten in de aanlevering: een land of formule die eerder stopt, later
+    # begint of een gat heeft, vertekent elk artikel dat daar verkocht wordt.
+    alle_gaten = dekking_mod.gaten(rows, caps)
+
     out = []
     for a in per_art.values():
         tot = {k: sum(v[k] for v in a["ytd"].values()) for k in ("volume", "omzet")}
@@ -868,12 +873,13 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
                           "lytd": {p: dict(v) for p, v in sorted(a["lytd"].items())}},
             "laatste_periode": a["laatste"], "totaal_ytd": tot, "totaal_lytd": ltot,
             "status": status, "status_reden": reden,
+            "dekking": dekking_mod.per_artikel(alle_gaten, a["rijen"], caps),
             "omzet_per_winkel_per_week": per_winkel_week,
             "ytd_delta_pct": round((tot["omzet"] - ltot["omzet"]) / ltot["omzet"] * 100, 1)
                              if ltot["omzet"] else None})
     out.sort(key=lambda x: -x["totaal_ytd"]["omzet"])
     return {"available": True, "artikelen": out, "laatste_periode": latest,
-            "filters": filters,
+            "filters": filters, "dekking": alle_gaten,
             # Het jaar hoort bij de data, niet bij de kalender van vandaag:
             # de grafieklegenda gebruikt dit in plaats van vaste jaartallen.
             "jaar": y_now,
@@ -1077,6 +1083,7 @@ def assortment(conn, retailer_id: str) -> dict:
             a["periodes"].add(r["periode"])
 
     geordend = sorted(periods, key=sort_key)
+    alle_gaten = dekking_mod.gaten(rows, caps)
 
     out = []
     for ean, a in per_art.items():
@@ -1111,11 +1118,13 @@ def assortment(conn, retailer_id: str) -> dict:
         out.append({"ean": ean, "naam": a["naam"], "merk": a["merk"],
                     "rotatie": round(rotatie, 2) if rotatie is not None else None,
                     "target": target, "score": score, "advies": advies,
-                    "actieve_periodes": actief, "winkels": noemer_winkels})
+                    "actieve_periodes": actief, "winkels": noemer_winkels,
+                    "dekking": dekking_mod.per_artikel(alle_gaten, a["rijen"], caps)})
     out.sort(key=lambda x: (x["score"] is None, x["score"] if x["score"] is not None else 0))
     op_target = sum(1 for a in out if a["score"] is not None and a["score"] >= 100)
     onder = sum(1 for a in out if a["score"] is not None and 70 <= a["score"] < 100)
     delist = sum(1 for a in out if a["score"] is not None and a["score"] < 70)
     return {"available": True, "artikelen": out, "labels": labels,
             "resolution": res.as_dict(), "periode_type": caps["periode"],
+            "dekking": alle_gaten,
             "stats": {"op_target": op_target, "onder_target": onder, "delist": delist}}

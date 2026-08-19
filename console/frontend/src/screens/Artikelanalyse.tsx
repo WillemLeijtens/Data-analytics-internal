@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { fmtEur, fmtNum } from "../api";
 import { ShellCtx } from "../App";
-import { BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, Sparkline, TrendChart, useApi } from "../components/shared";
+import { BrandDot, DekkingWaarschuwing, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, Sparkline, TrendChart, useApi } from "../components/shared";
 
 /** Statusmarkering per artikel: nieuw in het schap, eruit, of twijfel. */
 function StatusBadge({ status, reden }: { status: string | null; reden: string | null }) {
@@ -99,7 +99,8 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
             <tr key={a.ean} className={`click ${sel === a.ean ? "selected" : ""}`} onClick={() => setSel(a.ean)}>
               <td>
                 {a.status && <><StatusBadge status={a.status} reden={a.status_reden} /><br /></>}
-                {a.naam}<br /><span className="mono sub">{a.ean}</span>
+                <DekkingWaarschuwing dekking={a.dekking} />{a.naam}<br />
+                <span className="mono sub">{a.ean}</span>
               </td>
               <td><BrandDot merk={a.merk} />{a.merk}</td>
               <td>
