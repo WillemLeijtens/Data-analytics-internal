@@ -78,7 +78,9 @@ def test_real_dwh_sample_full_counts(client):
     assert r["rows"] == 4566
     dash = client.get("/api/kruidvat/dashboard").json()
     per_brand = {b["merk"]: b["waarde"] for b in dash["kpi"]["omzet"]["breakdown"]}
-    assert set(per_brand) == {"ALESSANDRO", "DEPEND GEL IQ"}
+    # Het bestand schrijft "DEPEND GEL IQ"; de app voegt dat samen met DEPEND
+    # zoals ICI het levert (engine/merken.py), anders zijn het twee merken.
+    assert set(per_brand) == {"ALESSANDRO", "DEPEND"}
     art = client.get("/api/kruidvat/artikelen").json()
     assert len(art["artikelen"]) == 156
 

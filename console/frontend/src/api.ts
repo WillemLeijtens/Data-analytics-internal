@@ -31,7 +31,7 @@ export type RetailerCard = {
 export const BRAND_COLORS: Record<string, string> = {
   TWEEZERMAN: "var(--cat1)",
   ALESSANDRO: "var(--cat5)",
-  "DEPEND GEL IQ": "var(--cat6)",
+  DEPEND: "var(--cat6)",
   "OLIVIA GARDEN": "var(--cat2)",
 };
 

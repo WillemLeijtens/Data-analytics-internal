@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 
+from . import merken
 from . import parser as parser_mod
 from .profile import Profile, get_profiles
 
@@ -126,6 +127,13 @@ def run_import(conn, filename: str, content: bytes) -> dict:
              json.dumps({"message": str(e), "rijen": e.row_errors}, ensure_ascii=False)))
         return {"import_id": cur.lastrowid, "status": "error", "filename": filename,
                 "retailer_id": profile.retailer_id, "rows": 0, "detail": str(e)}
+
+    # Merknamen gelijktrekken VOORDAT er iets wordt vervangen of geschreven:
+    # de natuurlijke sleutel bevat het merk, dus normaliseren na het bepalen
+    # van wat vervangen moet worden zou de verkeerde rijen laten staan. Zie
+    # engine/merken.py — dit is de enige poort waar alle feeds langskomen.
+    for f in result["facts"]:
+        f["merk"] = merken.normaliseer(f.get("merk"))
 
     replace_existing()
     _replace_redelivered_facts(conn, profile.retailer_id, result["facts"])
