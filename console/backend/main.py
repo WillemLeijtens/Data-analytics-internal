@@ -13,13 +13,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import db
-from engine import analytics, contracts, importer, signals
+from engine import analytics, contracts, importer, projecten, signals
 from engine import parser as parser_mod
 from engine.periods import sort_key
 from engine.profile import active_profile, capabilities, get_profiles
@@ -625,6 +625,167 @@ def link_sharepoint(retailer_id: str, body: SharepointBody):
         # De map wordt wél vastgelegd; documenten komen er pas bij als de
         # Graph-koppeling er is. Geen verzonnen contracten in de tussentijd.
         return {"ok": True, "documenten": docs, "bron": contracts.bron_naam()}
+
+
+# ---------------------------------------------------------------- projecten
+
+# Wie deed dit? De console zelf heeft geen inlog (het portaal authenticeert),
+# maar veel portalen geven de ingelogde gebruiker door in een header. Die is
+# leidend; anders de naam die de gebruiker in het scherm heeft ingevuld
+# (localStorage, gaat mee in de payload); anders "onbekend". Het logboek is
+# een werkafspraak, geen beveiliging.
+_GEBRUIKER_HEADERS = ("remote-user", "remote-email", "x-forwarded-user",
+                      "x-auth-request-user", "x-auth-request-email")
+
+
+def _gebruiker(request: Request, door: str | None) -> str:
+    for h in _GEBRUIKER_HEADERS:
+        w = request.headers.get(h)
+        if w and w.strip():
+            return w.strip()[:80]
+    if door and door.strip():
+        return door.strip()[:80]
+    return "onbekend"
+
+
+def _project_or_404(conn, project_id: int):
+    row = conn.execute("SELECT * FROM projecten WHERE id=?", (project_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "project niet gevonden")
+    return row
+
+
+def _project_detail(conn, project_id: int) -> dict:
+    row = _project_or_404(conn, project_id)
+    producten = [dict(r) for r in conn.execute(
+        "SELECT * FROM project_producten WHERE project_id=? ORDER BY volgorde, id",
+        (project_id,))]
+    kosten = [dict(r) for r in conn.execute(
+        "SELECT * FROM project_kosten WHERE project_id=? ORDER BY volgorde, id",
+        (project_id,))]
+    log = [dict(r) for r in conn.execute(
+        "SELECT op, door, actie FROM project_log WHERE project_id=? ORDER BY op DESC, id DESC",
+        (project_id,))]
+    return {**dict(row), "producten": producten, "kosten": kosten, "log": log,
+            "berekening": projecten.bereken(dict(row), producten, kosten)}
+
+
+class ProjectBody(BaseModel):
+    naam: str
+    retailer_id: str | None = None
+    omschrijving: str | None = None
+    start_datum: str | None = None
+    eind_datum: str | None = None
+    producten: list[dict] = []
+    kosten: list[dict] = []
+    door: str | None = None       # naam voor het logboek (zie _gebruiker)
+
+
+def _valideer_project(conn, body: ProjectBody):
+    try:
+        projecten.valideer(body.model_dump(), body.producten, body.kosten)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(422, f"ongeldig project: {e}")
+    if body.retailer_id:
+        _retailer_or_404(conn, body.retailer_id)
+
+
+@app.get("/api/projecten")
+def list_projecten():
+    with db.get_conn() as conn:
+        namen = {r["id"]: r["naam"] for r in conn.execute("SELECT id, naam FROM retailers")}
+        out = []
+        for row in conn.execute("SELECT * FROM projecten ORDER BY COALESCE(gewijzigd_op, aangemaakt_op) DESC"):
+            d = _project_detail(conn, row["id"])
+            b = d["berekening"]
+            out.append({
+                "id": row["id"], "naam": row["naam"],
+                "retailer_id": row["retailer_id"],
+                "retailer_naam": namen.get(row["retailer_id"]),
+                "start_datum": row["start_datum"], "eind_datum": row["eind_datum"],
+                "looptijd_weken": b["looptijd_weken"],
+                "aantal_producten": len(d["producten"]),
+                "eenmalig": b["eenmalig"], "terugkerend": b["terugkerend"],
+                "aangemaakt_op": row["aangemaakt_op"], "aangemaakt_door": row["aangemaakt_door"],
+                "gewijzigd_op": row["gewijzigd_op"], "gewijzigd_door": row["gewijzigd_door"],
+            })
+        return out
+
+
+@app.post("/api/projecten")
+def create_project(body: ProjectBody, request: Request):
+    with db.get_conn() as conn:
+        _valideer_project(conn, body)
+        wie = _gebruiker(request, body.door)
+        cur = conn.execute(
+            "INSERT INTO projecten (naam, retailer_id, omschrijving, start_datum, "
+            "eind_datum, aangemaakt_door) VALUES (?,?,?,?,?,?)",
+            (body.naam.strip(), body.retailer_id, body.omschrijving,
+             body.start_datum, body.eind_datum, wie))
+        project_id = cur.lastrowid
+        # Elk project start met de vaste kostenregels: bedragen leeg, schakel
+        # op de gebruikelijke stand. Weglaten wat niet speelt kan altijd nog.
+        conn.executemany(
+            "INSERT INTO project_kosten (project_id, volgorde, soort, label, bedrag, terugkerend) "
+            "VALUES (?,?,?,?,NULL,?)",
+            [(project_id, i, soort, label, terugkerend)
+             for i, (soort, label, terugkerend) in enumerate(projecten.STANDAARD_KOSTEN)])
+        conn.execute(
+            "INSERT INTO project_log (project_id, door, actie) VALUES (?,?,?)",
+            (project_id, wie, "aangemaakt"))
+        return _project_detail(conn, project_id)
+
+
+@app.get("/api/projecten/{project_id}")
+def get_project(project_id: int):
+    with db.get_conn() as conn:
+        return _project_detail(conn, project_id)
+
+
+@app.put("/api/projecten/{project_id}")
+def save_project(project_id: int, body: ProjectBody, request: Request):
+    """Alles-in-één opslaan, atomair: velden, producten en kosten in één
+    transactie vervangen — zelfde patroon als Instellingen."""
+    with db.get_conn() as conn:
+        _project_or_404(conn, project_id)
+        _valideer_project(conn, body)
+        wie = _gebruiker(request, body.door)
+        conn.execute(
+            "UPDATE projecten SET naam=?, retailer_id=?, omschrijving=?, start_datum=?, "
+            "eind_datum=?, gewijzigd_op=datetime('now'), gewijzigd_door=? WHERE id=?",
+            (body.naam.strip(), body.retailer_id, body.omschrijving,
+             body.start_datum, body.eind_datum, wie, project_id))
+        conn.execute("DELETE FROM project_producten WHERE project_id=?", (project_id,))
+        conn.executemany(
+            "INSERT INTO project_producten (project_id, volgorde, naam, kostprijs, "
+            "verkoopprijs, aantal_winkels, stuks_per_winkel, rotatie_per_winkel_per_week, "
+            "verpakking_per_stuk) VALUES (?,?,?,?,?,?,?,?,?)",
+            [(project_id, i, p["naam"].strip(), p.get("kostprijs"), p.get("verkoopprijs"),
+              p.get("aantal_winkels"), p.get("stuks_per_winkel"),
+              p.get("rotatie_per_winkel_per_week"), p.get("verpakking_per_stuk"))
+             for i, p in enumerate(body.producten)])
+        conn.execute("DELETE FROM project_kosten WHERE project_id=?", (project_id,))
+        conn.executemany(
+            "INSERT INTO project_kosten (project_id, volgorde, soort, label, bedrag, terugkerend) "
+            "VALUES (?,?,?,?,?,?)",
+            [(project_id, i, k["soort"], k["label"].strip(), k.get("bedrag"),
+              1 if k.get("terugkerend") else 0)
+             for i, k in enumerate(body.kosten)])
+        conn.execute(
+            "INSERT INTO project_log (project_id, door, actie) VALUES (?,?,?)",
+            (project_id, wie,
+             f"gewijzigd — {len(body.producten)} product(en), "
+             f"{len(body.kosten)} kostenregel(s)"))
+        return _project_detail(conn, project_id)
+
+
+@app.delete("/api/projecten/{project_id}")
+def delete_project(project_id: int):
+    with db.get_conn() as conn:
+        _project_or_404(conn, project_id)
+        # ON DELETE CASCADE ruimt producten, kosten en log mee op.
+        conn.execute("DELETE FROM projecten WHERE id=?", (project_id,))
+        return {"ok": True}
 
 
 # ---------------------------------------------------------------- health

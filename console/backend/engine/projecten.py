@@ -1,0 +1,161 @@
+"""Rekenmodel van de projectcalculator.
+
+Een project rekent een listing of actie vooraf door en levert TWEE
+uitkomsten, omdat ze twee verschillende beslissingen voeden:
+
+  * EENMALIG — de eerste vulling: elk deelnemend filiaal krijgt een
+    startvoorraad (aantal_winkels x stuks_per_winkel). Dit is de sell-in
+    die één keer gefactureerd wordt.
+  * TERUGKEREND — de doorverkoop daarna: rotatie per winkel per week x
+    aantal winkels, per week en opgeteld over de looptijd van het project.
+
+Kosten hebben een schakel `terugkerend`: eenmalige kosten (listing fee, een
+display) drukken op de eenmalige marge, looptijdkosten (marketingbudget,
+co-op, logistiek) op de terugkerende. De verpakking per stúk zit in de
+productmarge van beide kanten; de kostenregel "Verpakkingskosten (totaal)"
+is voor eenmalige verpakking die niet per stuk te verdelen is.
+
+Alles is None-tolerant: een half ingevuld project rekent met 0 voor wat er
+nog niet staat, in plaats van te crashen of het scherm te blokkeren.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+
+# De vaste kostenregels waarmee elk nieuw project start. De gebruiker kan
+# bedragen leeg laten, de schakel omzetten en vrije regels toevoegen.
+STANDAARD_KOSTEN = [
+    ("listing_fee", "Listing fee", 0),
+    ("coop", "Co-op bijdrage", 1),
+    ("marketing", "Marketingbudget", 1),
+    ("display", "Displaykosten", 0),
+    ("logistiek", "Logistieke kosten", 1),
+    ("verpakking", "Verpakkingskosten (totaal)", 0),
+]
+
+KOSTEN_SOORTEN = {s for s, _, _ in STANDAARD_KOSTEN} | {"overig"}
+
+
+def _n(v) -> float:
+    """Leeg veld telt als nul; de calculator mag nooit crashen op een
+    half ingevuld project."""
+    return float(v) if v is not None else 0.0
+
+
+def looptijd_weken(start: str | None, eind: str | None) -> int | None:
+    """Hele weken tussen start- en einddatum (minimaal 1 zodra beide datums
+    er staan: een actie van drie dagen is één actieweek, geen nul)."""
+    if not start or not eind:
+        return None
+    dagen = (dt.date.fromisoformat(eind) - dt.date.fromisoformat(start)).days
+    if dagen < 0:
+        return None
+    return max(1, round(dagen / 7))
+
+
+def _product(p: dict) -> dict:
+    winkels = _n(p.get("aantal_winkels"))
+    marge_per_stuk = (_n(p.get("verkoopprijs")) - _n(p.get("kostprijs"))
+                      - _n(p.get("verpakking_per_stuk")))
+    stuks_eenmalig = winkels * _n(p.get("stuks_per_winkel"))
+    stuks_week = winkels * _n(p.get("rotatie_per_winkel_per_week"))
+    return {
+        **p,
+        "marge_per_stuk": round(marge_per_stuk, 4),
+        "eenmalig_stuks": round(stuks_eenmalig, 2),
+        "eenmalig_omzet": round(stuks_eenmalig * _n(p.get("verkoopprijs")), 2),
+        "eenmalig_marge": round(stuks_eenmalig * marge_per_stuk, 2),
+        "week_stuks": round(stuks_week, 2),
+        "week_omzet": round(stuks_week * _n(p.get("verkoopprijs")), 2),
+        "week_marge": round(stuks_week * marge_per_stuk, 2),
+    }
+
+
+def _pct(marge: float, omzet: float) -> float | None:
+    return round(marge / omzet * 100, 1) if omzet else None
+
+
+def bereken(project: dict, producten: list[dict], kosten: list[dict]) -> dict:
+    """De volledige doorrekening. Puur: geen database, geen klok."""
+    regels = [_product(p) for p in producten]
+    weken = looptijd_weken(project.get("start_datum"), project.get("eind_datum"))
+
+    kosten_eenmalig = sum(_n(k.get("bedrag")) for k in kosten if not k.get("terugkerend"))
+    kosten_looptijd = sum(_n(k.get("bedrag")) for k in kosten if k.get("terugkerend"))
+
+    een_omzet = sum(r["eenmalig_omzet"] for r in regels)
+    een_productmarge = sum(r["eenmalig_marge"] for r in regels)
+    week_omzet = sum(r["week_omzet"] for r in regels)
+    week_marge = sum(r["week_marge"] for r in regels)
+
+    # Zonder looptijd is er wél een weekbeeld maar geen looptijdtotaal; de
+    # looptijdkosten kunnen dan nergens tegen afgezet worden en de
+    # terugkerende marge blijft None in plaats van een schijngetal.
+    terug_omzet = round(week_omzet * weken, 2) if weken else None
+    terug_productmarge = round(week_marge * weken, 2) if weken else None
+    terug_marge = round(terug_productmarge - kosten_looptijd, 2) \
+        if terug_productmarge is not None else None
+
+    een_marge = round(een_productmarge - kosten_eenmalig, 2)
+    totaal_omzet = round(een_omzet + (terug_omzet or 0), 2)
+    totaal_marge = round(een_marge + (terug_marge or 0), 2) \
+        if terug_marge is not None else een_marge
+
+    return {
+        "producten": regels,
+        "looptijd_weken": weken,
+        "eenmalig": {
+            "omzet": round(een_omzet, 2),
+            "productmarge": round(een_productmarge, 2),
+            "kosten": round(kosten_eenmalig, 2),
+            "marge": een_marge,
+            "marge_pct": _pct(een_marge, een_omzet),
+        },
+        "terugkerend": {
+            "per_week": {"omzet": round(week_omzet, 2), "marge": round(week_marge, 2)},
+            "omzet": terug_omzet,
+            "productmarge": terug_productmarge,
+            "kosten": round(kosten_looptijd, 2),
+            "marge": terug_marge,
+            "marge_pct": _pct(terug_marge, terug_omzet)
+            if terug_marge is not None and terug_omzet else None,
+        },
+        "totaal": {
+            "omzet": totaal_omzet,
+            "marge": totaal_marge,
+            "marge_pct": _pct(totaal_marge, totaal_omzet),
+        },
+    }
+
+
+def valideer(project: dict, producten: list[dict], kosten: list[dict]) -> None:
+    """Raise ValueError vóór er iets aan de database verandert."""
+    if not str(project.get("naam") or "").strip():
+        raise ValueError("projectnaam is verplicht")
+    for veld in ("start_datum", "eind_datum"):
+        w = project.get(veld)
+        if w:
+            try:
+                dt.date.fromisoformat(w)
+            except ValueError:
+                raise ValueError(f"{veld} {w!r} is geen datum (YYYY-MM-DD)")
+    s, e = project.get("start_datum"), project.get("eind_datum")
+    if s and e and e < s:
+        raise ValueError("einddatum ligt vóór de startdatum")
+    for p in producten:
+        if not str(p.get("naam") or "").strip():
+            raise ValueError("elk product heeft een naam nodig")
+        for veld in ("kostprijs", "verkoopprijs", "aantal_winkels",
+                     "stuks_per_winkel", "rotatie_per_winkel_per_week",
+                     "verpakking_per_stuk"):
+            w = p.get(veld)
+            if w is not None and float(w) < 0:
+                raise ValueError(f"{veld} kan niet negatief zijn ({p['naam']})")
+    for k in kosten:
+        if k.get("soort") not in KOSTEN_SOORTEN:
+            raise ValueError(f"onbekende kostensoort {k.get('soort')!r}")
+        if not str(k.get("label") or "").strip():
+            raise ValueError("elke kostenregel heeft een omschrijving nodig")
+        if k.get("bedrag") is not None and float(k["bedrag"]) < 0:
+            raise ValueError(f"kostenbedrag kan niet negatief zijn ({k['label']})")

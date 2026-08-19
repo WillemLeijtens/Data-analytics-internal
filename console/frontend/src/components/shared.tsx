@@ -446,6 +446,21 @@ export function ArtikelSignalen({ status, reden, dekking }:
   );
 }
 
+/** ?-icoontje met uitleg bij een veldlabel. Native title-tooltip: werkt
+ *  overal, ook voor schermlezers via aria-label. */
+export function Uitleg({ tekst }: { tekst: string }) {
+  return (
+    <span title={tekst} aria-label={tekst} role="img" tabIndex={0}
+      style={{
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        width: 14, height: 14, marginLeft: 5, borderRadius: "50%",
+        border: "1px solid var(--t-fg3)", color: "var(--t-fg3)",
+        fontSize: 9.5, fontWeight: 700, cursor: "help", verticalAlign: "-2px",
+        userSelect: "none",
+      }}>?</span>
+  );
+}
+
 /* ---------------------------------------------------------------- thema */
 
 const THEMA_OPTIES: { modus: ThemaModus; label: string; titel: string; icoon: JSX.Element }[] = [

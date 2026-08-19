@@ -11,6 +11,7 @@ import ImportScreen from "./screens/Import";
 import ImportStatus from "./screens/ImportStatus";
 import Parser from "./screens/Parser";
 import Instellingen from "./screens/Instellingen";
+import Projecten from "./screens/Projecten";
 
 const SIG_DOT: Record<string, string> = {
   green: "dot-green", orange: "dot-orange", red: "dot-red", grey: "dot-grey",
@@ -18,7 +19,7 @@ const SIG_DOT: Record<string, string> = {
 
 // Screens that exist for the 'alle retailers' tab (README: Overzicht, Import,
 // Import status); everything else needs a concrete retailer.
-const ALL_SCREENS = new Set(["overzicht", "import", "import-status"]);
+const ALL_SCREENS = new Set(["overzicht", "projecten", "import", "import-status"]);
 
 export type ShellCtx = {
   retailer: string;                 // 'alle' | retailer id
@@ -67,6 +68,7 @@ function Sidebar({ ctx, screen }: { ctx: ShellCtx; screen: string }) {
     <nav className="sidebar">
       <div className="logo"><img src={logo} alt="By Leijtens" /></div>
       {item("overzicht", "Overzicht")}
+      {item("projecten", "Projectcalculator")}
       {group("ANALYSES", <>
         {item("dashboard", "Dashboard", { sub: true, disabled: ctx.retailer === "alle" })}
         {item("artikelen", "Artikelanalyse", { sub: true, disabled: ctx.retailer === "alle" || noArticle, title: artTitle })}
@@ -128,6 +130,7 @@ function Shell() {
     if (retailer === "alle" && !ALL_SCREENS.has(screen)) return <RetailerPicker ctx={ctx} screen={screen} />;
     switch (screen) {
       case "overzicht": return <Overzicht ctx={ctx} />;
+      case "projecten": return <Projecten ctx={ctx} />;
       case "dashboard": return <Dashboard ctx={ctx} />;
       case "artikelen": return <Artikelanalyse ctx={ctx} />;
       case "promoties": return <Promoties ctx={ctx} />;
