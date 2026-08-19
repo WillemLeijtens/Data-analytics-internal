@@ -20,8 +20,9 @@ Twee dingen die het veilig maken:
     zou doen.
 
 Gebruik:
-    python tools/eenmalig_winkelbestand.py <bestand.xlsx>            # kijken
-    python tools/eenmalig_winkelbestand.py <bestand.xlsx> --schrijf  # doen
+    python tools/eenmalig_winkelbestand.py <bestand.xlsx>             # kijken
+    python tools/eenmalig_winkelbestand.py <bestand.xlsx> --schrijf   # doen
+    python tools/eenmalig_winkelbestand.py <bestand.xlsx> --verwijder # ongedaan maken
 """
 
 from __future__ import annotations
@@ -261,13 +262,46 @@ def schrijf(conn, pad: str, feiten: list[dict]) -> int:
     return import_id
 
 
+def verwijder(conn, pad: str) -> tuple[int, int]:
+    """Alles wat dit bestand ooit heeft weggeschreven weer weg.
+
+    Op de file_hash, dus precies de lading van dít bestand — feiten van
+    andere imports blijven staan. Nodig omdat winkelrijen de analyses
+    merkbaar trager maken: 54.000 extra regels maakten het dashboard bij
+    Kruidvat ruim zeven keer zo traag."""
+    hash_ = file_hash(Path(pad).read_bytes())
+    ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM imports WHERE file_hash=?", (hash_,))]
+    rijen = 0
+    for i in ids:
+        rijen += conn.execute(
+            "DELETE FROM sellout_facts WHERE import_id=?", (i,)).rowcount
+        conn.execute("DELETE FROM imports WHERE id=?", (i,))
+    return len(ids), rijen
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("bestand")
     p.add_argument("--schrijf", action="store_true",
                    help="daadwerkelijk wegschrijven (zonder deze vlag alleen tonen)")
+    p.add_argument("--verwijder", action="store_true",
+                   help="de eerder ingelezen lading van dit bestand weer weghalen")
     a = p.parse_args(argv)
+
+    if a.verwijder:
+        if not Path(a.bestand).is_file():
+            print(f"Afgebroken: bestand niet gevonden: {a.bestand}", file=sys.stderr)
+            return 1
+        with db.get_conn() as conn:
+            imports, rijen = verwijder(conn, a.bestand)
+        if not imports:
+            print("Niets te verwijderen: dit bestand is hier nooit ingelezen.")
+        else:
+            print(f"Verwijderd: {rijen} feiten uit {imports} import(s). "
+                  "De rest van de database is ongemoeid.")
+        return 0
 
     try:
         feiten, s = lees_bestand(a.bestand)

@@ -238,3 +238,35 @@ def test_verkeerd_bestand_wordt_geweigerd(omgeving, tmp_path):
     with pytest.raises(script.Afgebroken):
         script.lees_bestand(pad)
     assert _feiten(client) == (0, 0)
+
+
+def test_verwijderen_maakt_de_lading_ongedaan(omgeving, tmp_path):
+    """Winkelrijen maken de analyses merkbaar trager; terugdraaien moet dus
+    net zo eenvoudig zijn als inlezen — en alleen de eigen lading raken."""
+    client, script = omgeving
+    import seed
+    upload(client, "kv_nl.xlsx", seed.make_dwh_xlsx(
+        [{"sku": "31210001", "gtin": "4049469072773", "desc": "Slant",
+          "brand": "TWEEZERMAN", "weeks": {"202632": (10, 100.0)}}]))
+    ander = _feiten(client)
+
+    weken = ["202540", "202541"]
+    pad = _bestand(tmp_path, maak_winkelbestand(_twee_winkels(weken), weken))
+    script.main([pad, "--schrijf"])
+    assert _feiten(client)[0] > ander[0]
+
+    assert script.main([pad, "--verwijder"]) == 0
+    # Terug bij af, en de import van een ander bestand staat er nog.
+    assert _feiten(client) == ander
+    import db
+    with db.get_conn() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sellout_facts WHERE winkel_id IS NOT NULL").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM imports").fetchone()[0] == 1
+
+
+def test_verwijderen_zonder_eerdere_lading_is_ongevaarlijk(omgeving, tmp_path):
+    client, script = omgeving
+    pad = _bestand(tmp_path, maak_winkelbestand(_twee_winkels(["202540"]), ["202540"]))
+    assert script.main([pad, "--verwijder"]) == 0
+    assert _feiten(client) == (0, 0)
