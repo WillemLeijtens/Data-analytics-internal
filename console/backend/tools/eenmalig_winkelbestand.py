@@ -128,7 +128,18 @@ def _kolommen(ws) -> tuple[int, dict, dict]:
 def lees_bestand(pad: str) -> tuple[list[dict], dict]:
     """(feiten, samenvatting). Leest alleen het weekblad; 'Sales per day'
     bevat dezelfde omzet per dag en zou dus dubbeltellen."""
-    wb = openpyxl.load_workbook(pad, read_only=True, data_only=True)
+    bron = Path(pad)
+    if not bron.is_file():
+        raise Afgebroken(
+            f"bestand niet gevonden: {pad}\n"
+            "  Staat het al op de droplet? Kopieer het eerst VANAF je eigen "
+            "computer:\n"
+            "    scp <bestand>.xlsx root@<droplet>:~/analytics/console/data/\n"
+            "  en controleer met: ls -la ~/analytics/console/data/")
+    try:
+        wb = openpyxl.load_workbook(pad, read_only=True, data_only=True)
+    except Exception as e:  # noqa: BLE001 - alles wat openpyxl niet lust
+        raise Afgebroken(f"{bron.name} is geen leesbaar xlsx-bestand ({e})") from e
     if BLAD not in wb.sheetnames:
         raise Afgebroken(f"blad '{BLAD}' ontbreekt; gevonden: {wb.sheetnames}")
     ws = wb[BLAD]
