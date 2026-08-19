@@ -72,7 +72,13 @@ services:
     image: caddy:2
     restart: unless-stopped
     environment:
-      - SITE_ADDRESS=${SITE_ADDRESS:-188.166.88.105}
+      # De standaardwaarde is de sslip-hostnaam, NIET het kale IP: voor een
+      # IP-literal stuurt de browser geen SNI mee en geeft Let's Encrypt geen
+      # certificaat uit, dus valt Caddy terug op zijn interne CA en mislukt
+      # elke handshake. De uitleg staat bovenin de Caddyfile. Compose levert
+      # altijd een waarde aan, dus de fallback in de Caddyfile zelf komt
+      # nooit aan bod — die twee moeten daarom gelijk zijn.
+      - SITE_ADDRESS=${SITE_ADDRESS:-188-166-88-105.sslip.io}
     ports:
       # Only 443: this droplet's host port 80 is already used by an
       # existing nginx instance for another app — left untouched.

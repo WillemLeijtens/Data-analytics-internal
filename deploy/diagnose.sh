@@ -195,6 +195,33 @@ else
     fi
 fi
 
+# --------------------------------------------------------- publieke site ---
+# Caddy beheert TLS voor de naam in SITE_ADDRESS. Staat daar een kaal IP,
+# dan kan Let's Encrypt geen certificaat uitgeven en valt Caddy terug op zijn
+# interne CA; elke browser krijgt dan een mislukte handshake in plaats van
+# een foutpagina. Zie de uitleg bovenin de Caddyfile.
+kop "Publieke site"
+SITE=$(grep -E '^SITE_ADDRESS=' .env 2>/dev/null | cut -d= -f2- | tr -d "\"' ")
+if [ -z "${SITE:-}" ]; then
+    SITE=$(grep -oE 'SITE_ADDRESS:-[^}]+' docker-compose.yml | head -n1 | sed 's/^SITE_ADDRESS:-//')
+    echo "SITE_ADDRESS staat niet in .env; compose valt terug op: ${SITE:-onbekend}"
+    meld "LET OP  SITE_ADDRESS ontbreekt in .env. Compose gebruikt dan zijn standaardwaarde (${SITE:-onbekend}) — leg de waarde vast in .env, dan staat hij niet in twee bestanden."
+else
+    echo "SITE_ADDRESS: $SITE"
+fi
+if echo "${SITE:-}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    meld "PROBLEEM SITE_ADDRESS is een kaal IP ($SITE). Voor een IP-adres stuurt de browser geen SNI mee en geeft Let's Encrypt geen certificaat uit, dus mislukt elke HTTPS-verbinding. Gebruik de sslip-naam: $(echo "$SITE" | tr '.' '-').sslip.io"
+fi
+if [ -n "${SITE:-}" ] && command -v curl >/dev/null 2>&1; then
+    CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "https://$SITE/" 2>/dev/null)
+    echo "https://$SITE/ -> $CODE"
+    case "$CODE" in
+        000) meld "PROBLEEM https://$SITE/ komt niet tot stand: geen antwoord op de TLS-handshake. Meestal geen geldig certificaat voor deze naam (docker compose logs caddy); anders is de host of poort 443 niet bereikbaar van hier." ;;
+        2*|3*) meld "OK      de publieke site antwoordt ($CODE)." ;;
+        *) meld "LET OP  de publieke site antwoordt met $CODE." ;;
+    esac
+fi
+
 # -------------------------------------------------------------- back-ups ---
 # De back-up faalde dagenlang zonder dat iemand het zag: de fout stond alleen
 # in de containerlog. Daarom hier expliciet kijken of er RECENTE bestanden
