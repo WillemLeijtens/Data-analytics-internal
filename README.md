@@ -199,6 +199,29 @@ droplet has no built-in redundancy.
 
 To redeploy after a code change: `git pull && docker compose up -d --build`.
 
+### When a deploy fails
+
+Run `bash deploy/diagnose.sh` from the repo directory. It only reads — it
+never starts, stops or changes anything — and it reports which process holds
+ports 80/443, whether more than one compose project is running on this host,
+and whether the console container is healthy at its *actual* published
+address. Three causes account for nearly every failed deploy here:
+
+- **`Bind for 0.0.0.0:443 failed: port is already allocated`** — something
+  else owns 443. Usually a second checkout of this repo running as its own
+  compose project (a different directory means a different project name, so
+  compose does not stop the other one). Each directory has its own `data/`
+  and `console/data/`, i.e. its own database: check which one is current
+  before shutting either down. Can also be the host's nginx, or an orphaned
+  `docker-proxy` left behind by a half-finished restart.
+- **`curl localhost:8010/healthz` returns nothing** — normally not a fault
+  but the wrong address: with `CONSOLE_BIND` set to the private address the
+  console is not published on loopback. `docker compose port console 8000`
+  prints the real one, and `docker compose ps` shows the container's own
+  health regardless.
+- **A pending system restart** (`/var/run/reboot-required`) explains orphaned
+  port bindings after kernel updates.
+
 <details>
 <summary>Alternative considered: Render.com (parked for now)</summary>
 

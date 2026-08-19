@@ -36,7 +36,7 @@ docker compose stop console                       # schrijvers eerst stil
 cp console/data/console.db console/data/console.db.kapot   # bewaar het origineel
 cp backups/console-JJJJMMDD.db console/data/console.db
 docker compose start console
-curl -s localhost:8010/healthz                    # {"status":"ok"}
+curl -fsS "http://$(docker compose port console 8000)/healthz"   # {"status":"ok",...}
 ```
 
 Zelfde procedure voor de Streamlit-app met `app`/`poller` en

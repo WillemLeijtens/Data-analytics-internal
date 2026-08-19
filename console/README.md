@@ -42,9 +42,21 @@ Kerngegevens voor de gateway-registratie:
 ```bash
 cd <repo>
 git pull
-docker compose up -d --build console      # bindt op 127.0.0.1:8010 -> :8000
-curl -fsS localhost:8010/healthz
+docker compose up -d --build console      # bindt op ${CONSOLE_BIND}:8010 -> :8000
+curl -fsS "http://$(docker compose port console 8000)/healthz"
 ```
+
+`localhost:8010` werkt alleen bij de standaardbinding. Staat `CONSOLE_BIND`
+op het privé-adres (nodig zodra de gateway erbij moet), dan luistert loopback
+niet en weigert `curl localhost:8010` terecht — vandaar `docker compose port`,
+dat het echte adres opvraagt. Onafhankelijk van welk adres dan ook: de
+container heeft een `HEALTHCHECK`, dus `docker compose ps` toont `healthy`
+zodra de app draait.
+
+Start er iets niet, dan wijst `bash deploy/diagnose.sh` de oorzaak aan: welk
+proces een poort vasthoudt, of er per ongeluk twee compose-projecten naast
+elkaar staan (elk met een eigen database), en of de console gezond is. Het
+script leest alleen en wijzigt niets.
 
 **Toegangscontrole: één schakelaar, `CONSOLE_AUTH`.** Instellingen kunnen
 elkaar dus niet tegenspreken.
