@@ -141,11 +141,18 @@ for dienst in console app; do
             meld "PROBLEEM $dienst luistert op $ADRES; dat lijkt geen prive-adres. Alles hoort achter het portaal te staan." ;;
     esac
     if command -v curl >/dev/null 2>&1; then
-        CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 8 "http://$ADRES$pad" 2>/dev/null)
+        # Een paar pogingen: de Streamlit-app heeft na een herstart ~15 s
+        # nodig om pandas en altair te laden. Direct na `up -d` meten geeft
+        # anders een 000 die op een storing lijkt terwijl hij nog opstart.
+        for poging in 1 2 3 4 5; do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 8 "http://$ADRES$pad" 2>/dev/null)
+            [ "$CODE" != "000" ] && break
+            [ "$poging" -lt 5 ] && sleep 4
+        done
         echo "   http://$ADRES$pad -> $CODE"
         case "$CODE" in
             2*|3*) meld "OK      $dienst antwoordt op http://$ADRES$pad ($CODE)." ;;
-            000)   meld "PROBLEEM $dienst antwoordt niet op http://$ADRES$pad. Zie: docker compose logs $dienst" ;;
+            000)   meld "PROBLEEM $dienst antwoordt niet op http://$ADRES$pad (5 pogingen over ~20 s). Zie: docker compose logs $dienst" ;;
             *)     meld "LET OP  $dienst antwoordt met $CODE op http://$ADRES$pad." ;;
         esac
     fi
