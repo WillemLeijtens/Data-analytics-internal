@@ -373,18 +373,77 @@ export function TijdlijnPanelen({ periodes, reeksen, isMaand }:
 /** Rode driehoek met uitroepteken: de cijfers van dit artikel zijn vertekend
  *  doordat een land of formule niet volledig is aangeleverd. Bij hover (en
  *  voor een schermlezer) staat er wát er ontbreekt. */
+/** De driehoek zelf. Kleur bepaalt de betekenis: rood = er ontbreekt data,
+    amber = aandachtspunt in de cijfers die er wél zijn. */
+function Driehoek({ kleur }: { kleur: string }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={kleur}
+      strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+      style={{ display: "block" }}>
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
+/** Waarschuwing dat de aanlevering gaten heeft. Meerdere meldingen worden
+    regels binnen één tooltip: één icoon per artikel, niet een rij driehoeken. */
 export function DekkingWaarschuwing({ dekking }: { dekking?: { tekst: string }[] }) {
   if (!dekking?.length) return null;
-  const melding = dekking.map((d) => d.tekst).join("\n");
+  const regels = dekking.map((d) => d.tekst);
+  const melding = regels.length === 1 ? regels[0] : regels.map((t) => `• ${t}`).join("\n");
   return (
-    <span title={melding} aria-label={`Let op: ${melding}`} role="img"
-      style={{ color: "var(--neg)", marginRight: 6, verticalAlign: "-2px", display: "inline-block" }}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-        strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-        <line x1="12" y1="9" x2="12" y2="13" />
-        <line x1="12" y1="17" x2="12.01" y2="17" />
-      </svg>
+    <span title={melding} aria-label={`Let op: ${regels.join("; ")}`} role="img"
+      style={{ color: "var(--neg)", display: "inline-flex", alignItems: "center" }}>
+      <Driehoek kleur="currentColor" />
+    </span>
+  );
+}
+
+/** Aandachtspunt in de cijfers zelf (rotatie onder target). Amber, zodat rood
+    op hetzelfde scherm maar één ding blijft betekenen: er ontbreekt data. */
+export function AandachtMarkering({ tekst }: { tekst?: string | null }) {
+  return (
+    <span title={tekst ?? undefined} aria-label={`Aandachtspunt${tekst ? `: ${tekst}` : ""}`} role="img"
+      style={{ color: "var(--warn)", display: "inline-flex", alignItems: "center" }}>
+      <Driehoek kleur="currentColor" />
+    </span>
+  );
+}
+
+/** Statusmarkering per artikel: nieuw in het schap, eruit, of twijfel. */
+export function StatusBadge({ status, reden }: { status?: string | null; reden?: string | null }) {
+  if (!status) return null;
+  const stijl: Record<string, { tekst: string; kleur: string }> = {
+    nieuw: { tekst: "NIEUW", kleur: "var(--pos)" },
+    delisted: { tekst: "DELISTED", kleur: "var(--neg)" },
+    "delisted?": { tekst: "DELISTED?", kleur: "var(--warn)" },
+  };
+  const s = stijl[status];
+  if (!s) return null;
+  return (
+    <span title={reden ?? undefined}
+      style={{
+        display: "inline-block", fontSize: 9.5, fontWeight: 700, letterSpacing: "0.1em",
+        padding: "1px 6px", borderRadius: 3, whiteSpace: "nowrap",
+        color: s.kleur, border: `1px solid ${s.kleur}`,
+      }}>{s.tekst}</span>
+  );
+}
+
+/** Alle signalen van één artikel op een eigen regel boven de naam.
+    Ze sluiten elkaar niet uit: een nieuw artikel waarvan een land niet meer
+    aanlevert hoort beide markeringen te tonen, elk met een eigen uitleg.
+    De dekkingsdriehoek staat vooraan — die zegt iets over de betrouwbaarheid
+    van alles wat erachter staat. */
+export function ArtikelSignalen({ status, reden, dekking }:
+  { status?: string | null; reden?: string | null; dekking?: { tekst: string }[] }) {
+  if (!status && !dekking?.length) return null;
+  return (
+    <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 3 }}>
+      <DekkingWaarschuwing dekking={dekking} />
+      <StatusBadge status={status} reden={reden} />
     </span>
   );
 }

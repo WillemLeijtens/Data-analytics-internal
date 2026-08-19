@@ -1,16 +1,6 @@
 import { Link } from "react-router-dom";
 import { ShellCtx } from "../App";
-import { BrandDot, DekkingWaarschuwing, EmptyProfileCard, LevelStrip, LoadState, useApi } from "../components/shared";
-
-function Warn() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--neg)"
-      strokeWidth="2" style={{ verticalAlign: "-2px", marginRight: 5 }}>
-      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
-      <path d="M12 9v4" /><path d="M12 17h.01" />
-    </svg>
-  );
-}
+import { AandachtMarkering, ArtikelSignalen, BrandDot, EmptyProfileCard, LevelStrip, LoadState, useApi } from "../components/shared";
 
 export default function Assortiment({ ctx }: { ctx: ShellCtx }) {
   const { data, error, reload } = useApi(`/${ctx.retailer}/assortiment`);
@@ -47,7 +37,8 @@ export default function Assortiment({ ctx }: { ctx: ShellCtx }) {
         <tbody>
           {data.artikelen.map((a: any) => (
             <tr key={a.ean}>
-              <td><DekkingWaarschuwing dekking={a.dekking} />{a.naam}<br />
+              <td><ArtikelSignalen dekking={a.dekking} />
+                {a.naam}<br />
                 <span className="mono sub">{a.ean}</span></td>
               <td><BrandDot merk={a.merk} />{a.merk}</td>
               <td>
@@ -65,7 +56,12 @@ export default function Assortiment({ ctx }: { ctx: ShellCtx }) {
               <td>{a.score != null
                 ? <span className={`tag ${a.score >= 100 ? "pos" : "neg"}`}>{a.score}%</span>
                 : <span className="tag">—</span>}</td>
-              <td>{a.score != null && a.score < 100 && <Warn />}{a.advies}</td>
+              {/* Amber, niet rood: onder target is een aandachtspunt in de
+                  cijfers, geen ontbrekende data. Rood betekent op dit scherm
+                  alleen nog dat er data mist. */}
+              <td><span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                {a.score != null && a.score < 100 && <AandachtMarkering tekst="Rotatie onder target" />}
+                {a.advies}</span></td>
             </tr>
           ))}
           {!data.artikelen.length && <tr><td colSpan={6} className="sub">Nog geen artikeldata.</td></tr>}

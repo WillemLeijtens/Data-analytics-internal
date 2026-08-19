@@ -2,27 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { fmtEur, fmtNum } from "../api";
 import { ShellCtx } from "../App";
-import { BrandDot, DekkingWaarschuwing, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, Sparkline, TrendChart, useApi } from "../components/shared";
-
-/** Statusmarkering per artikel: nieuw in het schap, eruit, of twijfel. */
-function StatusBadge({ status, reden }: { status: string | null; reden: string | null }) {
-  if (!status) return null;
-  const stijl: Record<string, { tekst: string; kleur: string; rand: string }> = {
-    nieuw: { tekst: "NIEUW", kleur: "var(--pos)", rand: "var(--pos)" },
-    delisted: { tekst: "DELISTED", kleur: "var(--neg)", rand: "var(--neg)" },
-    "delisted?": { tekst: "DELISTED?", kleur: "var(--warn)", rand: "var(--warn)" },
-  };
-  const s = stijl[status];
-  if (!s) return null;
-  return (
-    <span title={reden ?? undefined}
-      style={{
-        display: "inline-block", fontSize: 9.5, fontWeight: 700, letterSpacing: "0.1em",
-        padding: "1px 6px", marginBottom: 3, borderRadius: 3,
-        color: s.kleur, border: `1px solid ${s.rand}`,
-      }}>{s.tekst}</span>
-  );
-}
+import { ArtikelSignalen, BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, Sparkline, TrendChart, useApi } from "../components/shared";
 
 export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
   const [metric, setMetric] = useState<"volume" | "omzet">("omzet");
@@ -52,7 +32,10 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
 
   const isEuro = metric === "omzet";
   const pWord = data.periode_type === "maand" ? "Maand" : "Week";
-  const gemarkeerd = data.artikelen.filter((a: any) => a.status);
+  // Beide soorten signalen tellen mee. Stond hier alleen `a.status`, dan viel
+  // een artikel met enkel een datagat buiten het aantal én uit de lijst zodra
+  // de chip aan stond — precies de melding die dan verdween.
+  const gemarkeerd = data.artikelen.filter((a: any) => a.status || a.dekking?.length);
   const zichtbaar = alleenStatus ? gemarkeerd : data.artikelen;
   const chosen = zichtbaar.find((a: any) => a.ean === sel);
   const fmt = (v: number) => (isEuro ? fmtEur(v) : fmtNum(v));
@@ -70,7 +53,7 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
           {gemarkeerd.length > 0 && (
             <button className={`chip ${alleenStatus ? "" : "off"}`}
               aria-pressed={alleenStatus}
-              title="Toon alleen nieuwe, gestopte en twijfelgevallen"
+              title="Toon alleen nieuwe, gestopte en twijfelgevallen, en artikelen met ontbrekende data"
               onClick={() => setAlleenStatus((v) => !v)}>
               ⚑ {gemarkeerd.length} gemarkeerd
             </button>
@@ -98,8 +81,8 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
           {zichtbaar.map((a: any) => (
             <tr key={a.ean} className={`click ${sel === a.ean ? "selected" : ""}`} onClick={() => setSel(a.ean)}>
               <td>
-                {a.status && <><StatusBadge status={a.status} reden={a.status_reden} /><br /></>}
-                <DekkingWaarschuwing dekking={a.dekking} />{a.naam}<br />
+                <ArtikelSignalen status={a.status} reden={a.status_reden} dekking={a.dekking} />
+                {a.naam}<br />
                 <span className="mono sub">{a.ean}</span>
               </td>
               <td><BrandDot merk={a.merk} />{a.merk}</td>
