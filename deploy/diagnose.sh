@@ -190,6 +190,29 @@ else
     fi
 fi
 
+# -------------------------------------------------------------- back-ups ---
+# De back-up faalde dagenlang zonder dat iemand het zag: de fout stond alleen
+# in de containerlog. Daarom hier expliciet kijken of er RECENTE bestanden
+# staan, in plaats van of de service draait.
+kop "Back-ups"
+if [ ! -d backups ]; then
+    echo "Geen map 'backups/' in deze checkout."
+else
+    for naam in console analytics; do
+        NIEUWSTE=$(ls -1t "backups/$naam-"*.db 2>/dev/null | head -n1)
+        if [ -z "$NIEUWSTE" ]; then
+            echo "$naam: GEEN ENKELE back-up"
+            meld "PROBLEEM er is geen enkele back-up van de $naam-database. Kijk in: docker compose logs backup"
+        else
+            OUD_UREN=$(( ( $(date +%s) - $(date -r "$NIEUWSTE" +%s) ) / 3600 ))
+            printf '%s: %s (%s uur oud)\n' "$naam" "$NIEUWSTE" "$OUD_UREN"
+            if [ "$OUD_UREN" -gt 48 ]; then
+                meld "PROBLEEM de nieuwste back-up van $naam is $OUD_UREN uur oud. Kijk in: docker compose logs backup"
+            fi
+        fi
+    done
+fi
+
 # ------------------------------------------------------------- herstart ----
 if [ -f /var/run/reboot-required ]; then
     kop "Openstaande herstart"

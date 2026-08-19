@@ -94,8 +94,14 @@ services:
     environment:
       - BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS:-14}
     volumes:
-      - ./console/data:/data/console:ro
-      - ./data:/data/streamlit:ro
+      # BEWUST niet :ro. Een SQLite-database in WAL-modus is niet te openen
+      # zonder schrijfrechten: de lezer moet de index in het -shm-bestand
+      # kunnen aanmaken en bijwerken, ook als hij verder alleen leest. Met
+      # `:ro` faalde elke back-up met "unable to open database file" — en
+      # omdat dat alleen in de containerlog stond, viel het niet op.
+      # De back-up zelf schrijft nog steeds uitsluitend naar /backups.
+      - ./console/data:/data/console
+      - ./data:/data/streamlit
       - ./backups:/backups
       - ./deploy/backup.sh:/backup.sh:ro
     entrypoint: ["/bin/sh", "-c", "apk add --no-cache sqlite >/dev/null && exec /bin/sh /backup.sh"]

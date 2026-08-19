@@ -41,6 +41,9 @@ maak_backup() {
     else
         rm -f "$tmp"
         echo "[backup] MISLUKT: kon $bron niet kopieren" >&2
+        echo "[backup]   Staat de bronmap als ':ro' in docker-compose.yml? Een" >&2
+        echo "[backup]   WAL-database heeft schrijfrechten nodig om te kunnen" >&2
+        echo "[backup]   worden geopend, ook om alleen te lezen." >&2
         return 1
     fi
     # Opruimen: alles ouder dan BEWAARDAGEN weg.
