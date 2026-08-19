@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import os
 import secrets
 import sys
@@ -409,9 +410,9 @@ def get_settings(retailer_id: str):
             # Elke wijziging van een winkelaantal, zodat het scherm kan tonen
             # dat een merk in minder winkels ligt dan eerst.
             "winkels_historie": [dict(r) for r in conn.execute(
-                "SELECT merk, land, banner, aantal_winkels, gemeten_op "
+                "SELECT id, merk, land, banner, aantal_winkels, geldig_vanaf, gemeten_op "
                 "FROM winkelaantal_historie WHERE retailer_id=? "
-                "ORDER BY merk, land, banner, gemeten_op", (retailer_id,))],
+                "ORDER BY merk, land, banner, geldig_vanaf", (retailer_id,))],
             "rotatie_targets": [dict(r) for r in conn.execute(
                 "SELECT * FROM rotatie_targets WHERE retailer_id=? ORDER BY merk", (retailer_id,))],
             "mail_rules": [dict(r) for r in conn.execute(
@@ -485,10 +486,11 @@ def save_settings(retailer_id: str, body: SettingsBody):
                     nieuw.append((*scope, oud))
                 if oud != aantal:
                     nieuw.append((*scope, aantal))
+            vandaag = dt.date.today().isoformat()
             conn.executemany(
                 "INSERT INTO winkelaantal_historie (retailer_id, merk, land, banner, "
-                "aantal_winkels) VALUES (?,?,?,?,?)",
-                [(retailer_id, *rij) for rij in nieuw])
+                "aantal_winkels, geldig_vanaf) VALUES (?,?,?,?,?,?)",
+                [(retailer_id, *rij, vandaag) for rij in nieuw])
             conn.execute("DELETE FROM retailer_settings WHERE retailer_id=?", (retailer_id,))
             conn.executemany(
                 "INSERT INTO retailer_settings (retailer_id, merk, land, banner, aantal_winkels, "
@@ -511,6 +513,58 @@ def save_settings(retailer_id: str, body: SettingsBody):
                 [(retailer_id, m["naam"], m.get("afzender"), m.get("bijlage_glob"),
                   1 if m.get("actief", True) else 0, m.get("laatste_run"))
                  for m in body.mail_rules])
+        return {"ok": True}
+
+
+class WinkelaantalBody(BaseModel):
+    merk: str
+    land: str | None = None
+    banner: str | None = None
+    aantal_winkels: int
+    geldig_vanaf: str          # YYYY-MM-DD: vanaf wanneer dit aantal gold
+
+
+@app.post("/api/{retailer_id}/winkelaantallen")
+def add_winkelaantal(retailer_id: str, body: WinkelaantalBody):
+    """Een winkelaantal met terugwerkende kracht vastleggen.
+
+    Zonder datums zou de omzet per winkel over de hele historie door het
+    getal van vandaag gedeeld worden — precies het effect dat zichtbaar moet
+    worden verdwijnt dan. Hiermee leg je vast dat er bijvoorbeeld 530 winkels
+    waren vanaf 01-2025 en 470 vanaf 06-2026."""
+    if body.aantal_winkels <= 0:
+        raise HTTPException(422, "aantal_winkels moet groter dan nul zijn")
+    try:
+        datum = dt.date.fromisoformat(body.geldig_vanaf)
+    except ValueError:
+        raise HTTPException(422, f"geldig_vanaf {body.geldig_vanaf!r} is geen datum (YYYY-MM-DD)")
+    if datum > dt.date.today():
+        raise HTTPException(422, "geldig_vanaf ligt in de toekomst")
+    with db.get_conn() as conn:
+        _retailer_or_404(conn, retailer_id)
+        # Eén meting per scope per datum: opnieuw invoeren corrigeert de
+        # vorige in plaats van er een tweede waarheid naast te zetten.
+        conn.execute(
+            "DELETE FROM winkelaantal_historie WHERE retailer_id=? AND geldig_vanaf=? "
+            "AND COALESCE(merk,'')=COALESCE(?,'') AND COALESCE(land,'')=COALESCE(?,'') "
+            "AND COALESCE(banner,'')=COALESCE(?,'')",
+            (retailer_id, datum.isoformat(), body.merk, body.land, body.banner))
+        conn.execute(
+            "INSERT INTO winkelaantal_historie (retailer_id, merk, land, banner, "
+            "aantal_winkels, geldig_vanaf) VALUES (?,?,?,?,?,?)",
+            (retailer_id, body.merk, body.land, body.banner, body.aantal_winkels,
+             datum.isoformat()))
+        return {"ok": True}
+
+
+@app.delete("/api/{retailer_id}/winkelaantallen/{meting_id}")
+def delete_winkelaantal(retailer_id: str, meting_id: int):
+    with db.get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM winkelaantal_historie WHERE id=? AND retailer_id=?",
+            (meting_id, retailer_id))
+        if not cur.rowcount:
+            raise HTTPException(404, "meting niet gevonden")
         return {"ok": True}
 
 

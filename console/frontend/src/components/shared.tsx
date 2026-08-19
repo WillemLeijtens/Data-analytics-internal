@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { BRAND_COLORS, apiGet, fmtEur, fmtNum } from "../api";
+import { BRAND_COLORS, apiGet, fmtEur, fmtNum, merkKleur } from "../api";
 
 /** Uniform laden/fout-gedrag voor de leesschermen: elke API-fout wordt een
  * nette kaart met "Opnieuw proberen" in plaats van een eeuwig "Laden…". */
@@ -91,7 +91,7 @@ export function MultiChips({ all, sel, onChange }:
 }
 
 export function BrandDot({ merk }: { merk: string | null }) {
-  return <span className="brand-dot" style={{ background: BRAND_COLORS[merk ?? ""] ?? "#7E8D92" }} />;
+  return <span className="brand-dot" style={{ background: merkKleur(merk) }} />;
 }
 
 export function DeltaTag({ pct }: { pct: number | null }) {
@@ -220,5 +220,148 @@ export function Sparkline({ ytd, lytd, isEuro, periodWord }:
         </span>
       )}
     </span>
+  );
+}
+
+/* -------------------------------------------------- TijdlijnPanelen */
+
+type TijdlijnReeks = {
+  merk: string;
+  omzet: number[];
+  winkels: (number | null)[];
+  per_winkel: (number | null)[];
+  bron: string[];
+};
+
+/** Twee panelen op één doorlopende tijdas: boven de omzet per winkel, eronder
+ *  het winkelbestand. Bewust geen tweede y-as in één grafiek — dan bepaalt de
+ *  schaalkeuze hoe sterk het verband lijkt. Zo lees je direct of een stijgend
+ *  gemiddelde van beter verkopen komt of van minder winkels. */
+export function TijdlijnPanelen({ periodes, reeksen, isMaand }:
+  { periodes: string[]; reeksen: TijdlijnReeks[]; isMaand: boolean }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const ref = useRef<SVGSVGElement>(null);
+  const W = 860, HB = 190, HO = 110, PAD = 52, GAP = 26;
+  const H = HB + GAP + HO + 26;
+  if (!periodes.length) return <p className="sub">Nog geen data.</p>;
+
+  const x = (i: number) => PAD + (i / Math.max(1, periodes.length - 1)) * (W - PAD - 14);
+  const maxTop = Math.max(1, ...reeksen.flatMap((r) => r.per_winkel.filter((v): v is number => v != null)));
+  const winkelWaarden = reeksen.flatMap((r) => r.winkels.filter((v): v is number => v != null));
+  const maxBot = Math.max(1, ...winkelWaarden);
+  // Ondergrens van het winkelpaneel niet op nul: een daling van 530 naar 470
+  // is anders een onzichtbaar streepje bovenin.
+  const minBot = Math.max(0, Math.min(...winkelWaarden) * 0.9);
+  const yTop = (v: number) => 20 + (1 - v / maxTop) * (HB - 34);
+  const yBot = (v: number) => HB + GAP + 14 + (1 - (v - minBot) / Math.max(1, maxBot - minBot)) * (HO - 30);
+
+  const pad = (vals: (number | null)[], yf: (v: number) => number, alleenGemeten?: boolean,
+               bron?: string[]) => {
+    const stukken: string[] = [];
+    let huidig = "";
+    vals.forEach((v, i) => {
+      const past = v != null && (!bron || (alleenGemeten ? bron[i] !== "aangenomen" : bron[i] === "aangenomen"));
+      if (!past) { if (huidig) { stukken.push(huidig); huidig = ""; } return; }
+      huidig += `${huidig ? "L" : "M"}${x(i)},${yf(v as number)}`;
+    });
+    if (huidig) stukken.push(huidig);
+    return stukken;
+  };
+
+  const labelIdx = periodes.map((_, i) => i)
+    .filter((i) => i % Math.ceil(periodes.length / 8) === 0);
+
+  const onMove = (e: React.MouseEvent) => {
+    const rect = ref.current!.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * W;
+    let dichtst = 0;
+    periodes.forEach((_, i) => { if (Math.abs(x(i) - px) < Math.abs(x(dichtst) - px)) dichtst = i; });
+    setHover(dichtst);
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <svg ref={ref} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", cursor: "crosshair" }}
+        role="img"
+        aria-label={`Omzet per winkel en aantal winkels per ${isMaand ? "maand" : "week"}, ${periodes[0]} tot ${periodes[periodes.length - 1]}`}
+        onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        <title>Boven: omzet per winkel. Onder: aantal winkels. Zelfde tijdas, zelfde kleur per merk.</title>
+
+        <text x={PAD} y={12} fontSize="10.5" fill="#64777D" letterSpacing="0.12em">OMZET PER WINKEL</text>
+        {[0.5, 1].map((f) => (
+          <line key={f} x1={PAD} x2={W - 14} y1={yTop(maxTop * f)} y2={yTop(maxTop * f)} stroke="#EAEFF1" />
+        ))}
+        {[maxTop, maxTop / 2].map((v, i) => (
+          <text key={i} x={PAD - 6} y={yTop(v) + 3} textAnchor="end" fontSize="10.5" fill="#7E8D92">
+            {v >= 10000 ? "€" + Math.round(v / 1000) + "k" : fmtEur(v)}
+          </text>
+        ))}
+
+        <text x={PAD} y={HB + GAP + 4} fontSize="10.5" fill="#64777D" letterSpacing="0.12em">AANTAL WINKELS</text>
+        <line x1={PAD} x2={W - 14} y1={yBot(minBot)} y2={yBot(minBot)} stroke="#EAEFF1" />
+        {[maxBot, minBot].map((v, i) => (
+          <text key={i} x={PAD - 6} y={yBot(v) + 3} textAnchor="end" fontSize="10.5" fill="#7E8D92">
+            {Math.round(v)}
+          </text>
+        ))}
+
+        {reeksen.map((r) => {
+          const kleur = merkKleur(r.merk);
+          return (
+            <g key={r.merk}>
+              {pad(r.per_winkel, yTop, true, r.bron).map((d, i) => (
+                <path key={`t${i}`} d={d} fill="none" stroke={kleur} strokeWidth={1.8} />
+              ))}
+              {pad(r.per_winkel, yTop, false, r.bron).map((d, i) => (
+                // Gestippeld waar het winkelaantal een aanname is.
+                <path key={`ta${i}`} d={d} fill="none" stroke={kleur} strokeWidth={1.4}
+                  strokeDasharray="3 3" opacity={0.7} />
+              ))}
+              {pad(r.winkels, yBot, true, r.bron).map((d, i) => (
+                <path key={`b${i}`} d={d} fill="none" stroke={kleur} strokeWidth={1.8} />
+              ))}
+              {pad(r.winkels, yBot, false, r.bron).map((d, i) => (
+                <path key={`ba${i}`} d={d} fill="none" stroke={kleur} strokeWidth={1.4}
+                  strokeDasharray="3 3" opacity={0.7} />
+              ))}
+            </g>
+          );
+        })}
+
+        {hover != null && (
+          <line x1={x(hover)} x2={x(hover)} y1={14} y2={HB + GAP + HO - 12}
+            stroke="#0E323B" strokeWidth={0.8} opacity={0.35} />
+        )}
+        {labelIdx.map((i) => (
+          <text key={i} x={x(i)} y={H - 6} textAnchor="middle" fontSize="10" fill="#7E8D92">
+            {periodes[i]}
+          </text>
+        ))}
+      </svg>
+
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 6 }}>
+        {reeksen.map((r) => (
+          <span key={r.merk} className="sub" style={{ fontSize: 11 }}>
+            <span style={{ color: merkKleur(r.merk) }}>—</span> {r.merk}
+          </span>
+        ))}
+      </div>
+
+      {hover != null && (
+        <div className="tooltip" style={{
+          left: `${Math.min(78, Math.max(12, (x(hover) / W) * 100))}%`, top: 0,
+        }}>
+          <b>{periodes[hover]}</b>
+          {reeksen.map((r) => (
+            <div key={r.merk} style={{ whiteSpace: "nowrap" }}>
+              <span style={{ color: merkKleur(r.merk) }}>■</span>{" "}
+              {r.merk}: {r.per_winkel[hover] != null ? fmtEur(r.per_winkel[hover] as number) : "—"}
+              {" "}· {r.winkels[hover] ?? "—"} winkels
+              {r.bron[hover] === "aangenomen" && " (aangenomen)"}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { fmtEur, fmtNum, BRAND_COLORS } from "../api";
+import { fmtEur, fmtNum, merkKleur } from "../api";
 import { ShellCtx } from "../App";
-import { BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, TrendChart, useApi } from "../components/shared";
+import { BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, TijdlijnPanelen, TrendChart, useApi } from "../components/shared";
 
 function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
   label: string; tag: string; tagAccent?: boolean; value: string; sub?: string;
@@ -29,7 +29,7 @@ function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
             </span>
           </div>
           <div className="bar-track">
-            <div className="bar-fill" style={{ width: `${(b.waarde / max) * 100}%`, background: BRAND_COLORS[b.merk] ?? "var(--main)" }} />
+            <div className="bar-fill" style={{ width: `${(b.waarde / max) * 100}%`, background: merkKleur(b.merk) }} />
           </div>
         </div>
       ))}
@@ -39,6 +39,84 @@ function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
 
 const MAANDEN = ["", "jan", "feb", "mrt", "apr", "mei", "jun",
   "jul", "aug", "sep", "okt", "nov", "dec"];
+
+
+/** Omzet per winkel over tijd, met het winkelbestand eronder. Een stijgend
+ *  gemiddelde kan van beter verkopen komen of van minder winkels; de
+ *  decompositie eronder splitst dat exact. */
+function TijdlijnBlok({ t, pWord }: { t: any; pWord: string }) {
+  const [alles, setAlles] = useState(false);
+  const reeksen = alles ? [{ ...t.totaal, merk: "TOTAAL" }] : t.per_merk;
+  const d = t.decompositie;
+  const aangenomen = t.per_merk.some((r: any) => r.bron.includes("aangenomen"));
+  const pct = (v: number) => `${v > 0 ? "+" : ""}${v.toLocaleString("nl-NL")}%`;
+  return (
+    <>
+      <hr className="hairline" />
+      <h2>Omzet per winkel over tijd</h2>
+      <p className="sub" style={{ marginTop: -6 }}>
+        Boven de gemiddelde omzet per winkel, eronder het aantal winkels — zelfde
+        tijdas, zelfde kleur per merk. Loopt de bovenste lijn op terwijl de onderste
+        zakt, dan komt de stijging van een kleiner winkelbestand en niet van betere verkoop.
+        {t.venster > 1 && ` Het winkelaantal is een voortschrijdend gemiddelde over ${t.venster} ${pWord.toLowerCase()}en, omdat een losse ${pWord.toLowerCase()} bij langzame merken te veel ruis geeft.`}
+      </p>
+      <div className="seg" style={{ margin: "10px 0 14px" }}>
+        <button className={!alles ? "on" : ""} onClick={() => setAlles(false)}>Per merk</button>
+        <button className={alles ? "on" : ""} onClick={() => setAlles(true)}>Totaal</button>
+      </div>
+      <div className="card">
+        <TijdlijnPanelen periodes={t.periodes} reeksen={reeksen} isMaand={pWord === "Maand"} />
+      </div>
+
+      {d?.per_merk?.length > 0 && t.vergelijking?.vorig && (
+        <div style={{ marginTop: 14 }}>
+          <div className="eyebrow">Waar komt het verschil vandaan? {t.vergelijking.nu} vs {t.vergelijking.vorig}</div>
+          <table className="data" style={{ marginTop: 8 }}>
+            <thead><tr>
+              <th>Merk</th>
+              <th style={{ textAlign: "right" }}>Omzet</th>
+              <th style={{ textAlign: "right" }}>= winkels</th>
+              <th style={{ textAlign: "right" }}>× per winkel</th>
+              <th>Winkels toen → nu</th>
+            </tr></thead>
+            <tbody>
+              {d.per_merk.map((r: any) => (
+                <tr key={r.merk}>
+                  <td><BrandDot merk={r.merk} />{r.merk}</td>
+                  <td style={{ textAlign: "right" }}><DeltaTag pct={r.omzet_pct} /></td>
+                  <td style={{ textAlign: "right" }}><DeltaTag pct={r.winkels_pct} /></td>
+                  <td style={{ textAlign: "right" }}><DeltaTag pct={r.per_winkel_pct} /></td>
+                  <td className="sub">{r.winkels_toen} → {r.winkels_nu}</td>
+                </tr>
+              ))}
+              {d.totaal && (
+                <tr>
+                  <td><b>Totaal</b></td>
+                  <td style={{ textAlign: "right" }}><DeltaTag pct={d.totaal.omzet_pct} /></td>
+                  <td style={{ textAlign: "right" }}><DeltaTag pct={d.totaal.winkels_pct} /></td>
+                  <td style={{ textAlign: "right" }}><DeltaTag pct={d.totaal.per_winkel_pct} /></td>
+                  <td className="sub">{d.totaal.winkels_toen} → {d.totaal.winkels_nu}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          <p className="sub" style={{ marginTop: 8 }}>
+            De drie kolommen sluiten exact op elkaar aan: omzet = winkels × omzet per winkel
+            {d.per_merk[0] && ` (${d.per_merk[0].merk}: ${pct(d.per_merk[0].omzet_pct)} = ${pct(d.per_merk[0].winkels_pct)} × ${pct(d.per_merk[0].per_winkel_pct)})`}.
+          </p>
+        </div>
+      )}
+
+      {aangenomen && (
+        <p className="sub" style={{ marginTop: 10 }}>
+          Gestippeld deel: daar is nog geen gemeten winkelaantal, dus er wordt met het
+          oudst bekende getal gerekend. Voeg metingen met datum toe bij Instellingen om
+          dat deel hard te maken.
+        </p>
+      )}
+    </>
+  );
+}
 
 /** Winkels zonder omzet in de laatste periode(n) — gestopt of nog signaal. */
 function StilTabel({ rijen, w, pWord, naam, leeg }: {
@@ -343,6 +421,10 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           </p>
         )}
       </div>
+
+      {data.tijdlijn?.periodes?.length > 1 && (
+        <TijdlijnBlok t={data.tijdlijn} pWord={pWord} />
+      )}
 
       {data.winkelanalyse?.beschikbaar && <Winkelanalyse w={data.winkelanalyse} pWord={pWord} />}
     </>

@@ -3,6 +3,64 @@ import { apiGet, apiSend } from "../api";
 import { ShellCtx } from "../App";
 import { EmptyProfileCard, LoadState } from "../components/shared";
 
+
+/** Winkelaantallen met terugwerkende kracht. Zonder datums wordt de hele
+ *  historie door het getal van vandaag gedeeld en verdwijnt juist het effect
+ *  van een gekrompen winkelbestand op de gemiddelde omzet per winkel. */
+function MetingenBeheer({ retailer, rij, metingen, herlaad }:
+  { retailer: string; rij: any; metingen: any[]; herlaad: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [aantal, setAantal] = useState("");
+  const [datum, setDatum] = useState("");
+  const [fout, setFout] = useState<string | null>(null);
+
+  const toevoegen = async () => {
+    try {
+      await apiSend(`/${retailer}/winkelaantallen`, "POST", {
+        merk: rij.merk, land: rij.land, banner: rij.banner,
+        aantal_winkels: +aantal, geldig_vanaf: datum,
+      });
+      setAantal(""); setDatum(""); setFout(null); herlaad();
+    } catch (e: any) {
+      setFout(String(e?.message ?? e));
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 4 }}>
+      <button className="chip off" style={{ fontSize: 10 }} onClick={() => setOpen(!open)}>
+        {open ? "verberg historie" : `historie (${metingen.length})`}
+      </button>
+      {open && (
+        <div style={{ marginTop: 6 }}>
+          {metingen.map((m) => (
+            <div key={m.id} className="sub" style={{ fontSize: 10.5, display: "flex", gap: 8, alignItems: "center" }}>
+              <span className="mono">{m.geldig_vanaf}</span>
+              <span>{m.aantal_winkels} winkels</span>
+              <button className="chip off" style={{ fontSize: 9 }} title="Meting verwijderen"
+                onClick={async () => {
+                  await apiSend(`/${retailer}/winkelaantallen/${m.id}`, "DELETE");
+                  herlaad();
+                }}>✕</button>
+            </div>
+          ))}
+          {!metingen.length && <div className="sub" style={{ fontSize: 10.5 }}>Nog geen metingen.</div>}
+          <div style={{ display: "flex", gap: 5, marginTop: 5, alignItems: "center" }}>
+            <input type="number" min={1} placeholder="aantal" style={{ width: 70 }}
+              aria-label={`Historisch winkelaantal ${rij.merk}`}
+              value={aantal} onChange={(e) => setAantal(e.target.value)} />
+            <input type="date" style={{ width: 130 }} aria-label="Geldig vanaf"
+              value={datum} onChange={(e) => setDatum(e.target.value)} />
+            <button className="btn ghost" style={{ fontSize: 10, padding: "3px 8px" }}
+              disabled={!aantal || !datum} onClick={toevoegen}>vastleggen</button>
+          </div>
+          {fout && <div className="sub sig-red" style={{ fontSize: 10.5 }}>{fout}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Handmatig een merk/land/banner-rij toevoegen, voor combinaties die (nog)
  *  niet in de feed zitten. */
 function HandmatigeRij({ onAdd }: { onAdd: (m: string, l: string | null, b: string | null) => void }) {
@@ -163,10 +221,13 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
                           title={`Gewijzigd op ${h.nu.gemeten_op?.slice(0, 10)}`}>
                           <span className={omlaag ? "sig-red" : "sig-green"}>
                             {omlaag ? "▼" : "▲"} was {h.vorig.aantal_winkels}
-                          </span>{" "}sinds {h.nu.gemeten_op?.slice(0, 10)}
+                          </span>{" "}sinds {h.nu.geldig_vanaf ?? h.nu.gemeten_op?.slice(0, 10)}
                         </div>
                       );
                     })()}
+                    <MetingenBeheer retailer={ctx.retailer} rij={s}
+                      metingen={(data.winkels_historie ?? []).filter((h: any) => wtKey(h) === wtKey(s))}
+                      herlaad={load} />
                   </>}
               </td>
               <td><input type="number" min={0} style={{ width: 90 }} value={s.target_per_winkel ?? ""}

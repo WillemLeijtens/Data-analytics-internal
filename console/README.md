@@ -203,6 +203,36 @@ is; het dashboard toont hem wél als KPI maar met het label **LOPEND**, en de
 YTD-vergelijking rekent t/m de laatste **afgesloten** periode — anders zet je
 een halve maand naast een hele maand vorig jaar.
 
+### Omzet per winkel over tijd (dashboard)
+
+Twee panelen op één tijdas: boven de gemiddelde omzet per winkel, eronder het
+winkelbestand — één lijn per merk, zelfde kleur. Loopt de bovenste lijn op
+terwijl de onderste zakt, dan komt de stijging van een kleiner winkelbestand
+en niet van betere verkoop. Bewust geen tweede y-as in één grafiek: dan
+bepaalt de schaalkeuze hoe sterk het verband lijkt.
+
+Daaronder de decompositie, exact multiplicatief:
+`omzet% = winkels% × omzet-per-winkel%`. Op de echte ICI-data (juli 2026 vs
+juli 2025): TWEEZERMAN +32,6% = −0,7% × +33,5%; DEPEND +63,8% = +14,6% ×
++42,9%.
+
+Het winkelaantal per periode komt uit de bron die beschikbaar is:
+
+- **winkelniveau in de feed** (ICI): unieke winkels mét omzet in een
+  voortschrijdend venster (3 maanden / 13 weken). Een losse maand is bij een
+  langzaam merk ruis — DEPEND springt van 66 naar 102 winkels per maand
+  terwijl het kwartaalcijfer rond 123–133 ligt. Voor de decompositie worden
+  wél de ruwe periodecijfers gebruikt, zodat teller en noemer over dezelfde
+  periode gaan en de drie percentages exact op elkaar aansluiten.
+- **geen winkelniveau** (Kruidvat, Etos): een stapfunctie uit de handmatige
+  metingen. Elk winkelaantal heeft een **`geldig_vanaf`**-datum (migratie
+  004), dus 2025 wordt door het aantal van 2025 gedeeld en niet door dat van
+  vandaag. Vóór de oudste meting rekent de app door met dat oudste getal,
+  maar gemarkeerd als `aangenomen` (gestippeld in de grafiek).
+
+Historische metingen leg je vast bij **Instellingen** → per rij "historie":
+aantal + datum. Ook via `POST /api/{retailer}/winkelaantallen`.
+
 ### Distributiesignaal (Overzicht)
 
 Ligt ons merk nog in evenveel winkels? Twee bronnen, per retailer wat er

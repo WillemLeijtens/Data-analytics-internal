@@ -9,11 +9,13 @@ reporting (the imports flag makes both possible).
 
 from __future__ import annotations
 
+import datetime as dt
 from collections import defaultdict
 from statistics import median
 
 from . import fallback
-from .periods import is_afgesloten, period_number, period_year, sort_key
+from .periods import (is_afgesloten, period_number, period_type_of,
+                      period_year, sort_key)
 from .profile import active_profile, capabilities
 
 LABEL_TEST = "PROFIEL IN TEST"
@@ -102,6 +104,99 @@ def store_count(conn, retailer_id: str, caps: dict, rows, peil: str | None,
         scope = (s["land"], s["banner"] if caps.get("banner") else None)
         per_scope[scope] = max(per_scope.get(scope, 0), s["aantal_winkels"])
     return (sum(per_scope.values()) or None), False
+
+
+def periode_einddatum(periode: str) -> dt.date:
+    """Laatste dag van een periode — het ijkpunt waartegen een meetdatum
+    ('geldig vanaf') afgezet wordt."""
+    jaar, nummer = period_year(periode), period_number(periode)
+    if period_type_of(periode) == "maand":
+        return (dt.date(jaar + (nummer == 12), (nummer % 12) + 1, 1)
+                - dt.timedelta(days=1))
+    try:
+        return dt.date.fromisocalendar(jaar, nummer, 7)
+    except ValueError:               # week 53 in een 52-weekjaar
+        return dt.date.fromisocalendar(jaar, 52, 7)
+
+
+# Voortschrijdend venster voor het winkelaantal uit de feiten. De maandtelling
+# van een langzaamloper springt van 66 naar 102 winkels (DEPEND bij ICI) —
+# dat is geen distributie die op en neer gaat maar een winkel die die maand
+# toevallig niets verkocht. Over een kwartaal is dezelfde reeks stabiel.
+VENSTER = {"maand": 3, "week": 13}
+
+
+def winkels_per_periode(conn, retailer_id: str, caps: dict, rows, periodes: list[str],
+                        settings: list[dict] | None = None,
+                        historie: list[dict] | None = None) -> dict[str, tuple]:
+    """{periode: (aantal_winkels, bron)} met bron feiten|gemeten|aangenomen.
+
+    Twee bronnen, afhankelijk van wat de retailer levert:
+      * winkelniveau in de feed -> unieke winkels mét omzet in een
+        voortschrijdend venster (zie VENSTER);
+      * anders -> stapfunctie uit de handmatige metingen: per periode de
+        laatste meting die op of vóór het einde van die periode gold. Vóór de
+        eerste meting rekenen we door met dat oudste getal, maar gemarkeerd
+        als 'aangenomen' — anders zou de hele historie stilzwijgend door het
+        winkelaantal van vandaag gedeeld worden.
+    """
+    if caps.get("winkel"):
+        n = VENSTER.get(caps.get("periode"), 3)
+        per_periode: dict[str, set] = defaultdict(set)
+        for r in rows:
+            if r["winkel_id"] and r["omzet"]:
+                per_periode[r["periode"]].add(r["winkel_id"])
+        out = {}
+        for i, p in enumerate(periodes):
+            venster = periodes[max(0, i - n + 1):i + 1]
+            winkels = set().union(*[per_periode.get(v, set()) for v in venster]) \
+                if venster else set()
+            out[p] = (len(winkels) or None, "feiten")
+        return out
+
+    if historie is None:
+        historie = [dict(r) for r in conn.execute(
+            "SELECT merk, land, banner, aantal_winkels, geldig_vanaf "
+            "FROM winkelaantal_historie WHERE retailer_id=? AND geldig_vanaf IS NOT NULL "
+            "ORDER BY geldig_vanaf", (retailer_id,))]
+    if settings is None:
+        settings = manual_store_settings(conn, retailer_id)
+
+    # Alleen de scopes die in deze (gefilterde) rijen voorkomen tellen mee,
+    # en per land/banner het grootste aantal — zelfde regel als store_count,
+    # zodat merken elkaar niet vermenigvuldigen.
+    selected = {(r["merk"], r["land"], r["banner"] if caps.get("banner") else None)
+                for r in rows}
+
+    def totaal_op(datum: dt.date | None) -> tuple[int | None, bool]:
+        per_scope: dict[tuple, int] = {}
+        gemeten = False
+        for merk, land, banner in selected:
+            metingen = [h for h in historie
+                        if h["merk"] == merk and h["land"] == land
+                        and (not caps.get("banner") or h["banner"] == banner)]
+            if not metingen:
+                continue
+            geldig = [h for h in metingen
+                      if datum is None or dt.date.fromisoformat(h["geldig_vanaf"]) <= datum]
+            if geldig:
+                waarde, gemeten = geldig[-1]["aantal_winkels"], True
+            else:
+                waarde = metingen[0]["aantal_winkels"]      # oudste, aangenomen
+            scope = (land, banner)
+            per_scope[scope] = max(per_scope.get(scope, 0), waarde)
+        return (sum(per_scope.values()) or None), gemeten
+
+    out = {}
+    for p in periodes:
+        aantal, gemeten = totaal_op(periode_einddatum(p))
+        if aantal is None:
+            # Geen historie: val terug op de huidige instelling, en wees
+            # eerlijk dat dat een aanname is voor het verleden.
+            aantal = store_count(conn, retailer_id, caps, rows, p, settings)[0]
+            gemeten = False
+        out[p] = (aantal, "gemeten" if gemeten else "aangenomen")
+    return out
 
 
 ACTIEPUNT_GESTOPT = ("Neem contact op met de category manager om na te gaan "
@@ -231,6 +326,12 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
                 "filters": filters, "resolution": res.as_dict(),
                 "labels": labels, "capabilities": caps}
     settings = manual_store_settings(conn, retailer_id)
+    # Gedateerde winkelaantallen: hiermee wordt elke periode gedeeld door het
+    # winkelbestand zoals dat TÓEN gold, in plaats van door dat van vandaag.
+    historie = [dict(r) for r in conn.execute(
+        "SELECT merk, land, banner, aantal_winkels, geldig_vanaf "
+        "FROM winkelaantal_historie WHERE retailer_id=? AND geldig_vanaf IS NOT NULL "
+        "ORDER BY geldig_vanaf", (retailer_id,))]
 
     periods = sorted({r["periode"] for r in rows}, key=sort_key)
     latest = periods[-1]
@@ -428,6 +529,94 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
          if p != latest),
         key=lambda x: (x["merk"] is None, x["merk"] or ""))
 
+    # ---- Tijdlijn: omzet per winkel mét het winkelbestand eronder --------
+    # Een stijgend gemiddelde kan twee dingen betekenen — beter verkopen, of
+    # minder winkels. Alleen als beide reeksen op dezelfde tijdas staan is
+    # dat te scheiden, en de decompositie maakt het exact.
+    tijdlijn_periodes = periods                      # chronologisch gesorteerd
+    n_venster = VENSTER.get(caps["periode"], 3) if caps.get("winkel") else 1
+
+    def reeks(rs) -> dict:
+        omzet_p = defaultdict(float)
+        for r in rs:
+            omzet_p[r["periode"]] += r["omzet"]
+        tellingen = winkels_per_periode(conn, retailer_id, caps, rs,
+                                        tijdlijn_periodes, settings, historie)
+        if caps.get("winkel"):
+            ruw_sets: dict = defaultdict(set)
+            for r in rs:
+                if r["winkel_id"] and r["omzet"]:
+                    ruw_sets[r["periode"]].add(r["winkel_id"])
+            ruwe_tellingen = {p: len(w) or None for p, w in ruw_sets.items()}
+        else:
+            # Zonder winkelniveau is er geen venster: ruw == gladgestreken.
+            ruwe_tellingen = {p: v[0] for p, v in tellingen.items()}
+        omzet, winkels, per_winkel, bron = [], [], [], []
+        winkels_ruw, per_winkel_ruw = [], []
+        for i, p in enumerate(tijdlijn_periodes):
+            aantal, herkomst = tellingen.get(p, (None, "aangenomen"))
+            o = omzet_p.get(p, 0.0)
+            omzet.append(round(o, 2))
+            winkels.append(aantal)
+            # Bij een voortschrijdend winkelaantal hoort een voortschrijdende
+            # omzet: 1 maand omzet delen door 3 maanden winkels zou het
+            # gemiddelde kunstmatig omlaag halen (in de proef 31 -> 21).
+            venster = tijdlijn_periodes[max(0, i - n_venster + 1):i + 1]
+            o_venster = sum(omzet_p.get(v, 0.0) for v in venster) / len(venster)
+            per_winkel.append(round(o_venster / aantal, 2) if aantal else None)
+            bron.append(herkomst)
+            # Ongewogen naast de gladgestreken reeks: de decompositie moet
+            # exact opgaan (omzet = winkels x omzet/winkel), en dat kan alleen
+            # als teller en noemer over dezelfde periode gaan.
+            ruw = ruwe_tellingen.get(p)
+            winkels_ruw.append(ruw)
+            per_winkel_ruw.append(round(o / ruw, 2) if ruw else None)
+        return {"omzet": omzet, "winkels": winkels,
+                "per_winkel": per_winkel, "bron": bron,
+                "winkels_ruw": winkels_ruw, "per_winkel_ruw": per_winkel_ruw}
+
+    per_merk_reeks = []
+    for m in sorted({r["merk"] for r in rows}, key=lambda x: (x is None, x or "")):
+        rs = [r for r in rows if r["merk"] == m]
+        per_merk_reeks.append({"merk": m or "ONBEKEND", **reeks(rs)})
+    totaal_reeks = reeks(rows)
+
+    def decomponeer(serie: dict, nu_i: int, toen_i: int) -> dict | None:
+        """omzet_t/omzet_0 = (winkels_t/winkels_0) x (perwinkel_t/perwinkel_0).
+        Exact multiplicatief, dus de drie percentages sluiten op elkaar aan."""
+        if nu_i < 0 or toen_i < 0:
+            return None
+        o_nu, o_toen = serie["omzet"][nu_i], serie["omzet"][toen_i]
+        w_nu, w_toen = serie["winkels_ruw"][nu_i], serie["winkels_ruw"][toen_i]
+        p_nu, p_toen = serie["per_winkel_ruw"][nu_i], serie["per_winkel_ruw"][toen_i]
+        if not (o_toen and w_nu and w_toen and p_nu and p_toen):
+            return None
+        pct = lambda a, b: round((a / b - 1) * 100, 1)  # noqa: E731
+        return {"omzet_pct": pct(o_nu, o_toen), "winkels_pct": pct(w_nu, w_toen),
+                "per_winkel_pct": pct(p_nu, p_toen),
+                "winkels_nu": w_nu, "winkels_toen": w_toen}
+
+    # Laatste AFGESLOTEN periode tegen dezelfde periode vorig jaar.
+    ref = ytd_ref if ytd_ref in tijdlijn_periodes else tijdlijn_periodes[-1]
+    nu_i = tijdlijn_periodes.index(ref)
+    vorig_label = (f"{period_year(ref) - 1}-W{period_number(ref):02d}"
+                   if caps["periode"] == "week"
+                   else f"{period_year(ref) - 1}-{period_number(ref):02d}")
+    toen_i = tijdlijn_periodes.index(vorig_label) if vorig_label in tijdlijn_periodes else -1
+    tijdlijn = {
+        "periodes": tijdlijn_periodes,
+        "venster": n_venster,
+        "per_merk": per_merk_reeks,
+        "totaal": totaal_reeks,
+        "vergelijking": {"nu": ref, "vorig": vorig_label if toen_i >= 0 else None},
+        "decompositie": {
+            "totaal": decomponeer(totaal_reeks, nu_i, toen_i),
+            "per_merk": [{"merk": r["merk"], **(decomponeer(r, nu_i, toen_i) or {})}
+                         for r in per_merk_reeks
+                         if decomponeer(r, nu_i, toen_i)],
+        },
+    }
+
     return {
         "available": True, "empty": False, "capabilities": caps,
         "resolution": res.as_dict(), "labels": labels,
@@ -457,6 +646,7 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
                 "schatting": not (facts_now and facts_prior)},
         },
         "trend": trend,
+        "tijdlijn": tijdlijn,
         "winkelanalyse": winkelanalyse(rows, caps, y_now),
         "filters": filters,
     }
