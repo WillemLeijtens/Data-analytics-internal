@@ -613,6 +613,37 @@ def healthz():
 # In the container the built SPA sits in backend/static; in local dev it is
 # absent and Vite serves the frontend on :5173 instead.
 
+@app.middleware("http")
+async def cache_headers(request, call_next):
+    """Expliciete cache-regels per soort verzoek.
+
+    Zonder Cache-Control mag een browser zelf een bewaartermijn verzinnen
+    (heuristisch, op basis van Last-Modified). Voor index.html is dat
+    gevaarlijk: die verwijst naar een bestandsnaam met een inhoudshash, en na
+    een nieuwe build bestaat die naam niet meer. De browser laadt dan een oude
+    index.html, vraagt een script op dat 404 geeft, en toont een lege pagina —
+    precies het beeld waarbij incognito het wél doet.
+
+      /assets/*  namen bevatten een hash, dus de inhoud wijzigt nooit: een
+                 jaar bewaren, en bij een nieuwe build hoort er een nieuwe
+                 naam bij. Dit scheelt het opnieuw ophalen van de bundle bij
+                 elke schermwissel.
+      /api/*     nooit bewaren; verkoopcijfers uit de cache zijn erger dan
+                 een verzoek extra.
+      overige    (index.html) altijd even navragen; met de ETag kost dat een
+                 304 en geen nieuwe download.
+    """
+    response = await call_next(request)
+    pad = request.url.path
+    if pad.startswith("/assets/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif pad.startswith("/api/") or pad in HEALTH_PATHS:
+        response.headers["Cache-Control"] = "no-store"
+    else:
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
+
 STATIC = Path(__file__).resolve().parent / "static"
 if STATIC.is_dir():
     app.mount("/assets", StaticFiles(directory=STATIC / "assets"), name="assets")

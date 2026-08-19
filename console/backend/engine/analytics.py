@@ -187,13 +187,22 @@ def winkels_per_periode(conn, retailer_id: str, caps: dict, rows, periodes: list
             per_scope[scope] = max(per_scope.get(scope, 0), waarde)
         return (sum(per_scope.values()) or None), gemeten
 
+    terugval: tuple | None = None
     out = {}
     for p in periodes:
         aantal, gemeten = totaal_op(periode_einddatum(p))
         if aantal is None:
             # Geen historie: val terug op de huidige instelling, en wees
             # eerlijk dat dat een aanname is voor het verleden.
-            aantal = store_count(conn, retailer_id, caps, rows, p, settings)[0]
+            #
+            # Eén keer berekenen, niet per periode: zonder winkelniveau in de
+            # feed kijkt store_count helemaal niet naar `peil`, dus komt er
+            # voor elke periode hetzelfde getal uit. Wél elke keer aanroepen
+            # kostte bij Kruidvat honderden volledige scans over alle rijen
+            # per dashboard (1674 in een meting van drie aanroepen).
+            if terugval is None:
+                terugval = store_count(conn, retailer_id, caps, rows, p, settings)
+            aantal = terugval[0]
             gemeten = False
         out[p] = (aantal, "gemeten" if gemeten else "aangenomen")
     return out
