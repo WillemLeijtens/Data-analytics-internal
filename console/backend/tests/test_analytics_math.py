@@ -216,7 +216,7 @@ def test_ytd_delta_alleen_op_vergelijkbare_merken(client):
     # Het venster is nu een bereik: beide jaren beginnen bij week 5, en de
     # 2026-feed stopt op week 10.
     assert y["basis"]["vergelijkbaar"] == [
-        {"merk": "TWEEZERMAN", "van_periode": 5, "tot_periode": 10}]
+        {"merk": "TWEEZERMAN", "van_periode": 5, "tot_periode": 10, "ontbrekend": []}]
     assert y["basis"]["niet_vergelijkbaar"] == ["ALESSANDRO"]
 
     # De trend meldt dat de TWEEZERMAN-feed eerder stopt dan de rest.
@@ -677,7 +677,7 @@ def test_ytd_zonder_overlap_is_niet_vergelijkbaar(client):
     assert y["dekking"]["2026"] == {"van": 1, "tot": 33}
     regel = y["per_merk"][0]
     assert regel["vergelijkbaar"] is False
-    assert "week 40 t/m 52" in regel["reden"] and "geen overlap" in regel["reden"]
+    assert "week 40 t/m 52" in regel["reden"] and "geen gedeelde week" in regel["reden"]
 
 
 def test_ytd_gedeeltelijke_overlap_knipt_beide_jaren_bij(client):
@@ -689,7 +689,7 @@ def test_ytd_gedeeltelijke_overlap_knipt_beide_jaren_bij(client):
 
     y = client.get("/api/kruidvat/dashboard").json()["ytd"]
     assert y["basis"]["vergelijkbaar"] == [
-        {"merk": "ALESSANDRO", "van_periode": 26, "tot_periode": 31}]
+        {"merk": "ALESSANDRO", "van_periode": 26, "tot_periode": 31, "ontbrekend": []}]
     # Zes gedeelde weken: 6 x 1200 tegen 6 x 1000.
     assert y["omzet"]["delta_pct"] == pytest.approx(20.0)
     assert y["basis"]["volledig"] is False
@@ -704,7 +704,7 @@ def test_ytd_volledige_overlap_verandert_niet(client):
     y = client.get("/api/kruidvat/dashboard").json()["ytd"]
     assert y["basis"]["volledig"] is True
     assert y["basis"]["vergelijkbaar"] == [
-        {"merk": "ALESSANDRO", "van_periode": 1, "tot_periode": 31}]
+        {"merk": "ALESSANDRO", "van_periode": 1, "tot_periode": 31, "ontbrekend": []}]
     assert y["omzet"]["delta_pct"] == pytest.approx(20.0)
 
 

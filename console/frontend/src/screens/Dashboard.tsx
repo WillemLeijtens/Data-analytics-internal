@@ -50,12 +50,31 @@ function geenOverlap(y: any) {
   return y.basis && !y.basis.vergelijkbaar.length && y.per_merk?.length > 0;
 }
 
-/** "week 26 t/m 31" of "t/m week 31" als het bij het begin aansluit. */
+/** [17,18,19,25] -> "17 t/m 19 en 25" — compact, zoals je het zou zeggen. */
+function reeks(nummers: number[]) {
+  const delen: string[] = [];
+  for (let i = 0; i < nummers.length; i++) {
+    let j = i;
+    while (j + 1 < nummers.length && nummers[j + 1] === nummers[j] + 1) j++;
+    delen.push(j > i ? `${nummers[i]} t/m ${nummers[j]}` : `${nummers[i]}`);
+    i = j;
+  }
+  return delen.length > 1
+    ? `${delen.slice(0, -1).join(", ")} en ${delen[delen.length - 1]}`
+    : delen[0] ?? "";
+}
+
+/** "week 26 t/m 31" of "t/m week 31" als het bij het begin aansluit; mist er
+ *  binnen het venster iets (een niet-geladen kwartaal), dan staat dat erbij —
+ *  die periodes tellen in geen van beide jaren mee. */
 function venster(v: any, pWord: string) {
   const p = pWord.toLowerCase();
-  return v.van_periode > 1
+  const basis = v.van_periode > 1
     ? `${p} ${v.van_periode} t/m ${v.tot_periode}`
     : `t/m ${p} ${v.tot_periode}`;
+  return v.ontbrekend?.length
+    ? `${basis}, zonder ${p} ${reeks(v.ontbrekend)}`
+    : basis;
 }
 
 /** De "vorig jaar"-regel onder een YTD-kaart. Zonder overlap staat er geen
@@ -413,7 +432,8 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
                 <tr key={m.merk ?? "ONBEKEND"}>
                   <td>
                     <BrandDot merk={m.merk} />{m.merk ?? "ONBEKEND"}
-                    {m.vergelijkbaar && (m.van_periode > 1 || m.tot_periode !== y.tot_periode) && (
+                    {m.vergelijkbaar && (m.van_periode > 1 || m.tot_periode !== y.tot_periode
+                      || m.ontbrekend?.length > 0) && (
                       <span className="sub"> · {venster(m, pWord)}</span>
                     )}
                   </td>
@@ -444,10 +464,14 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
         <p className="sub" style={{ marginTop: 8 }}>
           {y.basis.vergelijkbaar.length
             ? <>Δ% op vergelijkbare basis: {y.basis.vergelijkbaar.map((v: any) =>
-                v.van_periode === 1 && v.tot_periode === y.tot_periode
+                v.van_periode === 1 && v.tot_periode === y.tot_periode && !v.ontbrekend?.length
                   ? (v.merk ?? "ONBEKEND")
                   : `${v.merk ?? "ONBEKEND"} ${venster(v, pWord)}`
-              ).join(", ")}.</>
+              ).join(", ")}.
+              {/* Het Δ% is op deze basis gerekend en wijkt dan af van de twee
+                  volledige totalen hierboven — noem de bedragen, anders is
+                  het percentage niet na te rekenen. */}
+              {y.basis.omzet && <> Op die basis: {fmtEur(y.basis.omzet.nu)} vs {fmtEur(y.basis.omzet.vorig)}.</>}</>
             : <>Geen Δ%: er is geen {pWord.toLowerCase()} die {y.jaar} en {y.jaar - 1} allebei hebben
                 {y.dekking?.[y.jaar - 1] && y.dekking?.[y.jaar] &&
                   ` — ${y.jaar - 1} loopt van ${pWord.toLowerCase()} ${y.dekking[y.jaar - 1].van} t/m ${y.dekking[y.jaar - 1].tot}, ${y.jaar} van ${pWord.toLowerCase()} ${y.dekking[y.jaar].van} t/m ${y.dekking[y.jaar].tot}`}.

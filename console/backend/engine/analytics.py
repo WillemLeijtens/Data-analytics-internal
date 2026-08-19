@@ -469,33 +469,44 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         if b:
             dekking[jaar] = {"van": b[0], "tot": b[1]}
 
+    def nummers(rs):
+        """De periodenummers (t/m upto) waarin een reeks daadwerkelijk data heeft."""
+        return {period_number(r["periode"]) for r in rs
+                if period_number(r["periode"]) <= upto}
+
+    # Het venster waarin BEIDE jaren data hebben, als DOORSNEDE van de
+    # geleverde periodenummers — niet als bereik. Een bereik ziet binnengaten
+    # niet: laadt iemand van 2025 alleen Q1 en Q4, dan telt "week 19 t/m 52"
+    # de ontbrekende kwartalen als nul omzet en meldt het dashboard -46%
+    # terwijl er niets gedaald is (gereproduceerd op de echte Etos-bestanden).
     vergelijkbaar, niet_vergelijkbaar = [], []
+    venster_per_merk: dict = {}                  # merk -> set periodenummers
     for m in sorted({m for m, _ in per_merk_jaar}, key=lambda x: (x is None, x or "")):
         nu_r = per_merk_jaar.get((m, y_now), [])
         vorig_r = per_merk_jaar.get((m, y_now - 1), [])
-        nu_b, vorig_b = bereik(nu_r), bereik(vorig_r)
-        if nu_b and vorig_b:
-            # Het venster waarin BEIDE jaren data hebben. Alleen kijken of een
-            # merk in allebei de jaren voorkomt is niet genoeg: staat 2025 pas
-            # vanaf week 40 in de feed en loopt 2026 tot week 33, dan raken die
-            # weken elkaar nergens en levert "week 1 t/m 33 in beide jaren"
-            # een vergelijking van 33 weken met nul weken op — een lege kolom
-            # met een streepje, of (bij gedeeltelijke overlap) een percentage
-            # van honderden procenten.
-            van_m = max(nu_b[0], vorig_b[0])
-            tot_m = min(upto, nu_b[1], vorig_b[1])
-            if van_m <= tot_m:
-                vergelijkbaar.append({"merk": m, "van_periode": van_m,
-                                      "tot_periode": tot_m})
-                continue
-        if nu_r or (vorig_b and vorig_b[0] <= upto):
+        nu_n, vorig_n = nummers(nu_r), nummers(vorig_r)
+        gedeeld = nu_n & vorig_n
+        if gedeeld:
+            van_m, tot_m = min(gedeeld), max(gedeeld)
+            vergelijkbaar.append({
+                "merk": m, "van_periode": van_m, "tot_periode": tot_m,
+                # Wat er bínnen het venster ontbreekt: periodes die één van
+                # beide jaren wél heeft maar de ander niet — die tellen in de
+                # vergelijking niet mee en het scherm hoort dat te melden.
+                # Periodes die geen van beide jaren levert zijn geen gat.
+                "ontbrekend": sorted(n for n in (nu_n | vorig_n) - gedeeld
+                                     if van_m <= n <= tot_m)})
+            venster_per_merk[m] = gedeeld
+            continue
+        if nu_r or (vorig_r and min(nummers(vorig_r), default=upto + 1) <= upto):
             niet_vergelijkbaar.append(m)
 
     def comp_rows(year):
         out = []
         for v in vergelijkbaar:
+            sel = venster_per_merk[v["merk"]]
             out.extend(r for r in per_merk_jaar.get((v["merk"], year), [])
-                       if v["van_periode"] <= period_number(r["periode"]) <= v["tot_periode"])
+                       if period_number(r["periode"]) in sel)
         return out
 
     comp_now, comp_prior = comp_rows(y_now), comp_rows(y_now - 1)
@@ -505,12 +516,12 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
 
         Niet afmeten aan periode 1: een feed die in beide jaren pas in juni
         begint (ICI) vergelijkt juni-juli met juni-juli en verzwijgt niets.
-        Het gaat erom of er iets van dit jaar buiten de boot valt."""
-        nu_b = bereik([r for r in per_merk_jaar.get((v["merk"], y_now), [])
-                       if period_number(r["periode"]) <= upto])
-        if not nu_b:
-            return True
-        return v["van_periode"] <= nu_b[0] and v["tot_periode"] >= nu_b[1]
+        Het gaat erom of er iets van dit jaar buiten de boot valt — of dat er
+        bínnen het venster periodes ontbreken (een niet-geladen kwartaal):
+        ook dan wijkt de vergelijkingsbasis af en hoort de voetnoot te staan."""
+        return not v["ontbrekend"] and \
+            nummers(per_merk_jaar.get((v["merk"], y_now), [])) \
+            <= venster_per_merk[v["merk"]]
 
     basis_volledig = not niet_vergelijkbaar and all(dekt_alles(v) for v in vergelijkbaar)
 
@@ -539,33 +550,36 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
     # dat merk (1..tot_periode, op beide jaren toegepast) zodat de regel
     # intern appels-met-appels is; een merk zonder vorig jaar krijgt geen
     # delta maar een reden.
-    venster_per_merk = {v["merk"]: (v["van_periode"], v["tot_periode"])
-                        for v in vergelijkbaar}
+    randen_per_merk = {v["merk"]: (v["van_periode"], v["tot_periode"])
+                       for v in vergelijkbaar}
+    ontbrekend_per_merk = {v["merk"]: v["ontbrekend"] for v in vergelijkbaar}
     ytd_per_merk = []
     for m in sorted({m for m, _ in per_merk_jaar}, key=lambda x: (x is None, x or "")):
-        van_m, tot_m = venster_per_merk.get(m, (1, upto))
-        def merk_agg(year, _m=m, _van=van_m, _tot=tot_m):
+        van_m, tot_m = randen_per_merk.get(m, (1, upto))
+        sel = venster_per_merk.get(m) or set(range(1, upto + 1))
+        def merk_agg(year, _m=m, _sel=sel):
             return agg([r for r in per_merk_jaar.get((_m, year), [])
-                        if _van <= period_number(r["periode"]) <= _tot])
+                        if period_number(r["periode"]) in _sel])
         nu_m, vorig_m = merk_agg(y_now), merk_agg(y_now - 1)
         if not nu_m["omzet"] and not nu_m["volume"] \
                 and not vorig_m["omzet"] and not vorig_m["volume"]:
             continue
-        heeft_basis = m in venster_per_merk
+        heeft_basis = m in randen_per_merk
         reden = None
         if not heeft_basis:
             nu_b = bereik(per_merk_jaar.get((m, y_now), []))
             vorig_b = bereik(per_merk_jaar.get((m, y_now - 1), []))
             if nu_b and vorig_b:
-                # Wél beide jaren, maar de weken raken elkaar niet. Noem de
+                # Wél beide jaren, maar geen enkele gedeelde periode. Noem de
                 # feiten, anders leest een leeg vakje als "niets verkocht".
-                reden = (f"{y_now - 1} loopt van {pWoord} {vorig_b[0]} t/m "
-                         f"{vorig_b[1]} — geen overlap met {pWoord} "
-                         f"{nu_b[0]} t/m {min(upto, nu_b[1])}")
+                reden = (f"{y_now - 1} dekt {pWoord} {vorig_b[0]} t/m "
+                         f"{vorig_b[1]}, {y_now} {pWoord} {nu_b[0]} t/m "
+                         f"{min(upto, nu_b[1])} — geen gedeelde {pWoord}")
             else:
                 reden = (f"geen {y_now - 1}" if nu_b else f"geen {y_now}")
         ytd_per_merk.append({
             "merk": m, "van_periode": van_m, "tot_periode": tot_m,
+            "ontbrekend": ontbrekend_per_merk.get(m, []),
             "vergelijkbaar": heeft_basis, "reden": reden,
             "dekking": {str(j): bereik(per_merk_jaar.get((m, j), []))
                         for j in (y_now, y_now - 1)
@@ -731,9 +745,15 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         "dimensies": dimensies,
         "ytd": {
             "jaar": y_now, "tot_periode": upto,
+            # De comp-bedragen staan erbij: het Δ% is op deze basis gerekend
+            # en hoort naast de volledige totalen narekenbaar te zijn.
             "basis": {"volledig": basis_volledig,
                       "vergelijkbaar": vergelijkbaar,
-                      "niet_vergelijkbaar": niet_vergelijkbaar},
+                      "niet_vergelijkbaar": niet_vergelijkbaar,
+                      "omzet": {"nu": comp_now_agg["omzet"],
+                                "vorig": comp_prior_agg["omzet"]},
+                      "volume": {"nu": comp_now_agg["volume"],
+                                 "vorig": comp_prior_agg["volume"]}},
             # Wat elk jaar feitelijk dekt. Zonder dit kan het scherm alleen
             # "€ 0" tonen waar het "dit jaar loopt niet over die weken" moet
             # zeggen — en dat leest als "niets verkocht".
@@ -773,7 +793,8 @@ RECENT_PERIODES = 13          # weken; bij een maandfeed 3 maanden
 MIN_OMZET_PER_WINKEL_PER_WEEK = 0.10
 
 
-def _artikel_status(tot, ltot, recent_omzet, n_recent, n_stores, periode_type, jaar):
+def _artikel_status(tot, ltot, recent_omzet, n_recent, n_stores, periode_type, jaar,
+                    merk_heeft_vorig_jaar=True, merk_heeft_dit_jaar=True):
     """(status, reden, omzet per winkel per week) voor één artikel.
 
     nieuw     — dit jaar omzet, vorig jaar niet: nieuw in het schap.
@@ -781,10 +802,21 @@ def _artikel_status(tot, ltot, recent_omzet, n_recent, n_stores, periode_type, j
     delisted? — twijfel: dit jaar wel gestart maar recent stilgevallen, of
                 nog wel omzet maar zo weinig dat het bij dit winkelbestand
                 niet meer op distributie kan wijzen.
+
+    De twee guards zijn dezelfde les als `winkelanalyse.met_historie`: zit
+    het MERK zelf niet in een van beide jaren, dan is "geen omzet" daar een
+    gat in de data en geen waarneming. Zonder guard kreeg elk artikel van
+    een merk zonder geladen vorig jaar het label NIEUW (156 stuks op de
+    echte Kruidvat-bestanden), en elk artikel van een merk waarvan de feed
+    dit jaar nog niets leverde het label DELISTED.
     """
     if tot["omzet"] and not ltot["omzet"]:
+        if not merk_heeft_vorig_jaar:
+            return None, None, None
         return "nieuw", f"geen omzet in {jaar - 1}, dit jaar wel", None
     if ltot["omzet"] and not tot["omzet"]:
+        if not merk_heeft_dit_jaar:
+            return None, None, None
         return "delisted", f"wel omzet in {jaar - 1}, dit jaar niets", None
 
     weken = n_recent * (52 / 12) if periode_type == "maand" else n_recent
@@ -822,12 +854,35 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
                 "labels": base_labels + res.labels, "resolution": res.as_dict()}
     periods = sorted({r["periode"] for r in rows}, key=sort_key)
     latest = periods[-1]
-    y_now, upto = period_year(latest), period_number(latest)
+    # Dezelfde regel als het dashboard: YTD en de statusoordelen rekenen t/m
+    # de laatste AFGESLOTEN periode. Een lopende week meetellen laat elk
+    # artikel "dalen" en maakt de YoY-vergelijking oneerlijk.
+    afgesloten = [p for p in periods if is_afgesloten(p)]
+    ytd_ref = afgesloten[-1] if afgesloten else latest
+    y_now, upto = period_year(ytd_ref), period_number(ytd_ref)
 
-    # Het "recente venster": ongeveer drie maanden, in de korrel van de feed.
-    recent = set(periods[-RECENT_PERIODES:] if caps["periode"] == "week"
-                 else periods[-3:])
-    n_recent = len(recent)
+    # Alles wat over "de feed" gaat, gaat per MERK: merken komen in aparte
+    # bestanden binnen en lopen onafhankelijk voor of achter. Eén gedeelde as
+    # gaf artikelen van een achterlopend merk valse DELISTED?-labels en
+    # YTD-delta's tot -100% (TWEEZERMAN liep 15 weken achter op de echte
+    # Kruidvat-bestanden).
+    merk_periodes: dict = defaultdict(set)
+    for r in rows:
+        merk_periodes[r["merk"]].add(r["periode"])
+    n_terug = RECENT_PERIODES if caps["periode"] == "week" else 3
+    merk_recent, merk_lytd, merk_dit_jaar, merk_venster = {}, {}, {}, {}
+    for m, ps in merk_periodes.items():
+        eigen_as = sorted(ps, key=sort_key)
+        # Het "recente venster": ongeveer drie maanden, in de korrel van de
+        # feed — gemeten op de as van het merk zelf.
+        merk_recent[m] = set(eigen_as[-n_terug:])
+        merk_lytd[m] = any(period_year(q) == y_now - 1 for q in ps)
+        merk_dit_jaar[m] = any(period_year(q) == y_now for q in ps)
+        # Vergelijkingsvenster: de periodenummers die BEIDE jaren hebben,
+        # dezelfde doorsnede-regel als het dashboard.
+        per_jaar = lambda j: {period_number(q) for q in ps
+                              if period_year(q) == j and period_number(q) <= upto}
+        merk_venster[m] = per_jaar(y_now) & per_jaar(y_now - 1)
 
     per_art: dict = {}
     for r in rows:
@@ -845,7 +900,7 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
         if bucket is not None and p <= upto:
             bucket[p]["volume"] += r["volume"]
             bucket[p]["omzet"] += r["omzet"]
-        if r["periode"] in recent:
+        if r["periode"] in merk_recent.get(r["merk"], ()):
             a["recent_omzet"] += r["omzet"]
         if r["periode"] == latest:
             a["laatste"]["volume"] += r["volume"]
@@ -864,9 +919,25 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
     for a in per_art.values():
         tot = {k: sum(v[k] for v in a["ytd"].values()) for k in ("volume", "omzet")}
         ltot = {k: sum(v[k] for v in a["lytd"].values()) for k in ("volume", "omzet")}
+        # De "verdwijnt uit het schap"-drempel deelt door de winkels van de
+        # EIGEN scope van dit artikel; het retailer-brede totaal telt ook
+        # landen en formules mee waar het artikel helemaal niet ligt.
+        art_stores, _ = store_count(conn, retailer_id, caps, a["rijen"],
+                                    latest, settings)
         status, reden, per_winkel_week = _artikel_status(
-            tot, ltot, a["recent_omzet"], n_recent, n_stores,
-            caps["periode"], y_now)
+            tot, ltot, a["recent_omzet"], len(merk_recent.get(a["merk"], ())),
+            art_stores or n_stores, caps["periode"], y_now,
+            merk_heeft_vorig_jaar=merk_lytd.get(a["merk"], False),
+            merk_heeft_dit_jaar=merk_dit_jaar.get(a["merk"], False))
+        # Delta op de vergelijkbare basis van het merk (doorsnede van beide
+        # jaren): een feed die korter of later loopt is geen omzetdaling.
+        sel = merk_venster.get(a["merk"]) or None
+        delta = None
+        if sel:
+            nu_v = sum(v["omzet"] for q, v in a["ytd"].items() if q in sel)
+            vorig_v = sum(v["omzet"] for q, v in a["lytd"].items() if q in sel)
+            if vorig_v:
+                delta = round((nu_v - vorig_v) / vorig_v * 100, 1)
         out.append({
             "ean": a["ean"], "naam": a["naam"], "merk": a["merk"],
             "sparkline": {"ytd": {p: dict(v) for p, v in sorted(a["ytd"].items())},
@@ -875,8 +946,7 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
             "status": status, "status_reden": reden,
             "dekking": dekking_mod.per_artikel(alle_gaten, a["rijen"], caps),
             "omzet_per_winkel_per_week": per_winkel_week,
-            "ytd_delta_pct": round((tot["omzet"] - ltot["omzet"]) / ltot["omzet"] * 100, 1)
-                             if ltot["omzet"] else None})
+            "ytd_delta_pct": delta})
     out.sort(key=lambda x: -x["totaal_ytd"]["omzet"])
     return {"available": True, "artikelen": out, "laatste_periode": latest,
             "filters": filters, "dekking": alle_gaten,
@@ -1013,12 +1083,18 @@ def promotions(conn, retailer_id: str) -> dict:
         if promo_rev is None:
             continue
         jaar = period_year(periode)
+        # Alleen afgesloten periodes: een halve week in de basislijn drukt de
+        # mediaan, en een actie in een lopende week heeft nog geen uplift.
         baseline_revs = [agg["omzet"] for (s, p), agg in per_scope_period.items()
                          if s == scope and period_year(p) == jaar
-                         and (merk, land, banner, p) not in confirmed]
+                         and (merk, land, banner, p) not in confirmed
+                         and is_afgesloten(p)]
         regel = {"merk": merk, "land": land, "banner": banner, "periode": periode,
                  "jaar": jaar, "omzet": promo_rev, "basisperiodes": len(baseline_revs)}
-        if len(baseline_revs) < MIN_BASISPERIODES:
+        if not is_afgesloten(periode):
+            regel.update({"basislijn": None, "uplift_pct": None,
+                          "reden": "periode loopt nog"})
+        elif len(baseline_revs) < MIN_BASISPERIODES:
             # Eén of twee referentieperiodes is geen basislijn maar toeval.
             regel.update({"basislijn": None, "uplift_pct": None,
                           "reden": "te weinig basisperiodes"})
@@ -1056,7 +1132,8 @@ def assortment(conn, retailer_id: str) -> dict:
     # push healthy items toward a false 'delist' as history grows.
     latest_year = max(period_year(r["periode"]) for r in all_rows)
     rows = [r for r in all_rows if period_year(r["periode"]) == latest_year]
-    n_stores, from_facts = store_count(conn, retailer_id, caps, rows, None)
+    settings = manual_store_settings(conn, retailer_id)
+    n_stores, from_facts = store_count(conn, retailer_id, caps, rows, None, settings)
     if not from_facts and fallback.LABEL_SCHATTING not in labels:
         labels.append(fallback.LABEL_SCHATTING)
     periods = {r["periode"] for r in rows}
@@ -1093,10 +1170,14 @@ def assortment(conn, retailer_id: str) -> dict:
         eerste = min(a["periodes"], key=sort_key) if a["periodes"] else None
         actief = len([p for p in geordend if sort_key(p) >= sort_key(eerste)]) if eerste else 0
         actieve_weken = (actief * 52 / 12) if caps["periode"] == "maand" else actief
-        # En door de winkels die dít artikel voerden, niet door het hele
-        # filiaalnet van het merk.
-        art_stores, art_uit_feiten = store_count(conn, retailer_id, caps, a["rijen"], None)
-        noemer_winkels = art_stores if art_uit_feiten else n_stores
+        # En door de winkels van de EIGEN scope: uit de feiten als de feed
+        # winkelniveau levert, anders het handmatige aantal van de eigen
+        # merk/land/formule-combinatie. Het retailer-brede totaal is pas de
+        # terugval als er voor deze scope niets is ingesteld — dat totaal
+        # telt ook landen mee waar dit artikel niet ligt, en drukte op de
+        # echte Kruidvat-data elke rotatie met ~30-45% (valse delists).
+        art_stores, _ = store_count(conn, retailer_id, caps, a["rijen"], None, settings)
+        noemer_winkels = art_stores or n_stores
         rotatie = (a["volume"] / actieve_weken / noemer_winkels
                    if actieve_weken and noemer_winkels else None)
         target = targets.get(a["merk"])

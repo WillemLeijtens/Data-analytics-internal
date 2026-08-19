@@ -127,8 +127,9 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
                       </b>
                     ) : (
                       <span className="sub" style={{ fontSize: 10.5 }}
-                        title={`Maar ${u.basisperiodes} ${pw.toLowerCase()}(en) zonder actie in ${u.jaar}`}>
-                        te weinig basis
+                        title={u.reden === "periode loopt nog" ? undefined
+                          : `Maar ${u.basisperiodes} ${pw.toLowerCase()}(en) zonder actie in ${u.jaar}`}>
+                        {u.reden ?? "te weinig basis"}
                       </span>
                     )}
                   </div>
