@@ -55,7 +55,7 @@ export default function Overzicht({ ctx }: { ctx: ShellCtx }) {
               <CapChip on={!!c.capabilities?.merk} label="merk" />
               <CapChip on={!!c.capabilities?.artikel} label="artikel" />
               <CapChip on={!!c.capabilities?.winkel} label="winkel" />
-              <CapChip on={!!c.capabilities?.banner} label="banner" />
+              <CapChip on={!!c.capabilities?.banner} label="formule" />
             </div>
             <a style={{ cursor: "pointer", fontSize: 12 }} onClick={() => openRetailer(c)}>
               {c.profiel ? "Open dashboard" : "Parser bekijken"}
@@ -134,7 +134,7 @@ export default function Overzicht({ ctx }: { ctx: ShellCtx }) {
       <table className="data">
         <thead><tr>
           <th>Retailer</th><th>Periodiciteit</th><th>Merk</th><th>Artikel/EAN</th>
-          <th>Winkel</th><th>Banner</th><th>Promo-uplift</th><th>Profiel</th>
+          <th>Winkel</th><th>Formule</th><th>Promo-uplift</th><th>Profiel</th>
         </tr></thead>
         <tbody>
           {data.retailers.map((c) => {

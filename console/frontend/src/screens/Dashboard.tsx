@@ -3,9 +3,14 @@ import { fmtEur, fmtNum, merkKleur } from "../api";
 import { ShellCtx } from "../App";
 import { BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, TijdlijnPanelen, TrendChart, useApi } from "../components/shared";
 
+export type Verdeling = {
+  label: string; merk?: string; waarde: number;
+  winkels?: number | null; target?: number | null;
+};
+
 function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
   label: string; tag: string; tagAccent?: boolean; value: string; sub?: string;
-  breakdown?: { merk: string; waarde: number; winkels?: number; target?: number | null }[]; isEuro?: boolean;
+  breakdown?: Verdeling[]; isEuro?: boolean;
 }) {
   const max = Math.max(1, ...(breakdown ?? []).map((b) => b.waarde));
   return (
@@ -14,9 +19,9 @@ function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
       <div className="kpi-value">{value}</div>
       {sub && <div className="kpi-sub">{sub}</div>}
       {breakdown?.map((b) => (
-        <div key={b.merk} style={{ marginTop: 8 }}>
+        <div key={b.label} style={{ marginTop: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
-            <span>{b.merk}{b.winkels ? ` · ${b.winkels} winkels` : ""}</span>
+            <span>{b.label}{b.winkels ? ` · ${b.winkels} winkels` : ""}</span>
             <span>
               {isEuro ? fmtEur(b.waarde) : fmtNum(b.waarde)}
               {b.target != null && (
@@ -29,7 +34,7 @@ function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
             </span>
           </div>
           <div className="bar-track">
-            <div className="bar-fill" style={{ width: `${(b.waarde / max) * 100}%`, background: merkKleur(b.merk) }} />
+            <div className="bar-fill" style={{ width: `${(b.waarde / max) * 100}%`, background: merkKleur(b.label) }} />
           </div>
         </div>
       ))}
@@ -226,10 +231,13 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
   const [land, setLand] = useState<string[]>([]);
   const [banner, setBanner] = useState<string[]>([]);
   const [metric, setMetric] = useState<"omzet" | "volume" | "per_winkel">("omzet");
+  // Uitsplitsing van de tegels: totaal (per merk, zoals altijd), per formule
+  // of per land. Zie DIM_LABEL hieronder voor de naamgeving.
+  const [dim, setDim] = useState<"merk" | "banner" | "land">("merk");
 
   // Filters horen bij één retailer: bij het wisselen van tab zou een merk
   // dat de nieuwe retailer niet voert anders een leeg dashboard opleveren.
-  useEffect(() => { setMerk([]); setLand([]); setBanner([]); }, [ctx.retailer]);
+  useEffect(() => { setMerk([]); setLand([]); setBanner([]); setDim("merk"); }, [ctx.retailer]);
 
   const q = new URLSearchParams();
   if (merk.length) q.set("merk", merk.join(","));
@@ -252,10 +260,10 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
         <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap", margin: "16px 0 4px" }}>
           {f.merk.length > 0 && (<span><span className="eyebrow">Merk </span><MultiChips all={f.merk} sel={merk} onChange={setMerk} /></span>)}
           {f.land.length > 0 && (<span><span className="eyebrow">Land </span><MultiChips all={f.land} sel={land} onChange={setLand} /></span>)}
-          {f.banner.length > 0 && (<span><span className="eyebrow">Banner </span><MultiChips all={f.banner} sel={banner} onChange={setBanner} /></span>)}
+          {f.banner.length > 0 && (<span><span className="eyebrow">Formule </span><MultiChips all={f.banner} sel={banner} onChange={setBanner} /></span>)}
         </div>
         <div className="card empty-card">
-          <p className="sub">Geen data voor deze filterkeuze — deze combinatie van merk, land en banner komt niet voor.</p>
+          <p className="sub">Geen data voor deze filterkeuze — deze combinatie van merk, land en formule komt niet voor.</p>
           <button className="btn ghost" onClick={() => { setMerk([]); setLand([]); setBanner([]); }}>Filters wissen</button>
         </div>
       </>) : (
@@ -265,6 +273,12 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
   }
 
   const k = data.kpi, y = data.ytd;
+  // De backend vertelt welke uitsplitsingen deze retailer echt kan leveren;
+  // een knop voor een lege dimensie zou alleen "ONBEKEND" tonen.
+  const dims: string[] = data.dimensies ?? ["merk"];
+  const effDim = dims.includes(dim) ? dim : "merk";
+  const verdeling = (kpi: any): Verdeling[] =>
+    kpi.breakdowns?.[effDim] ?? kpi.breakdown;
   const filters = data.filters;
   const hasVolume = data.capabilities?.volume !== false;
   const effMetric = !hasVolume && metric === "volume" ? "omzet" : metric;
@@ -277,7 +291,7 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap", margin: "16px 0 4px" }}>
         {filters.merk.length > 0 && (<span><span className="eyebrow">Merk </span><MultiChips all={filters.merk} sel={merk} onChange={setMerk} /></span>)}
         {filters.land.length > 0 && (<span><span className="eyebrow">Land </span><MultiChips all={filters.land} sel={land} onChange={setLand} /></span>)}
-        {filters.banner.length > 0 && (<span><span className="eyebrow">Banner </span><MultiChips all={filters.banner} sel={banner} onChange={setBanner} /></span>)}
+        {filters.banner.length > 0 && (<span><span className="eyebrow">Formule </span><MultiChips all={filters.banner} sel={banner} onChange={setBanner} /></span>)}
         <span className="sub" style={{ marginLeft: "auto" }}>
           {(merk.length || filters.merk.length)} van {filters.merk.length} merken
         </span>
@@ -293,18 +307,29 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           {" " + pWord.toLowerCase()} {data.ytd.tot_periode}.
         </p>
       )}
+      {dims.length > 1 && (
+        <div className="seg" style={{ margin: "10px 0 14px" }}>
+          <button className={effDim === "merk" ? "on" : ""} onClick={() => setDim("merk")}>Totaal</button>
+          {dims.includes("banner") && (
+            <button className={effDim === "banner" ? "on" : ""} onClick={() => setDim("banner")}>Per formule</button>
+          )}
+          {dims.includes("land") && (
+            <button className={effDim === "land" ? "on" : ""} onClick={() => setDim("land")}>Per land</button>
+          )}
+        </div>
+      )}
       <div className="grid kpi">
         <KpiCard label="Omzet" tag={data.laatste_periode_compleet === false ? "LOPEND" : pWord.toUpperCase()}
           tagAccent={data.laatste_periode_compleet === false} isEuro
-          value={fmtEur(k.omzet.waarde)} breakdown={k.omzet.breakdown} />
+          value={fmtEur(k.omzet.waarde)} breakdown={verdeling(k.omzet)} />
         {hasVolume && <KpiCard label="Volume"
           tag={data.laatste_periode_compleet === false ? "LOPEND" : pWord.toUpperCase()}
           tagAccent={data.laatste_periode_compleet === false}
-          value={fmtNum(k.volume.waarde)} breakdown={k.volume.breakdown} />}
+          value={fmtNum(k.volume.waarde)} breakdown={verdeling(k.volume)} />}
         <KpiCard label="Omzet per winkel" tag={k.omzet_per_winkel.schatting ? "SCHATTING" : "WINKEL"}
           tagAccent={k.omzet_per_winkel.schatting}
           value={fmtEur(k.omzet_per_winkel.waarde)} isEuro
-          breakdown={k.omzet_per_winkel.breakdown}
+          breakdown={verdeling(k.omzet_per_winkel)}
           sub={k.omzet_per_winkel.winkels
             ? `${k.omzet_per_winkel.winkels} winkels met omzet in ${y.jaar}`
             : "Geen winkelaantal ingesteld"} />

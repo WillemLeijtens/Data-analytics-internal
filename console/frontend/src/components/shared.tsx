@@ -76,7 +76,7 @@ export function EmptyProfileCard({ retailer, go }:
   );
 }
 
-/** Filterchips (merk/land/banner). Leeg = alles; klikken zet aan/uit. */
+/** Filterchips (merk/land/formule). Leeg = alles; klikken zet aan/uit. */
 export function MultiChips({ all, sel, onChange }:
   { all: string[]; sel: string[]; onChange: (v: string[]) => void }) {
   return (

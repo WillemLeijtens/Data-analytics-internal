@@ -61,7 +61,7 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
           <table className="data">
             <thead><tr>
               <th>Merk</th><th>Land</th>
-              {data.capabilities.banner && <th>Banner</th>}
+              {data.capabilities.banner && <th>Formule</th>}
               <th>{pw}</th><th>Suggestie</th><th>Promotie</th>
             </tr></thead>
             <tbody>
@@ -153,7 +153,7 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
             <>
               <p className="sub">De prijs wordt <b>per artikel</b> gevolgd en met een vaste mix opgeteld
                 tot één prijsindex per {pw.toLowerCase()}, per merk
-                {data.capabilities.banner ? " per banner" : " per land"}.</p>
+                {data.capabilities.banner ? " per formule" : " per land"}.</p>
               <p className="sub">Dat is bewust niet de gemiddelde stukprijs van het hele merk: verkoopt
                 een goedkoop artikel een {pw.toLowerCase()} wat meer, dan daalt dat gemiddelde zonder dat
                 er iets is afgeprijsd.</p>

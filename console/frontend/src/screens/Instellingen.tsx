@@ -61,7 +61,7 @@ function MetingenBeheer({ retailer, rij, metingen, herlaad }:
   );
 }
 
-/** Handmatig een merk/land/banner-rij toevoegen, voor combinaties die (nog)
+/** Handmatig een merk/land/formule-rij toevoegen, voor combinaties die (nog)
  *  niet in de feed zitten. */
 function HandmatigeRij({ onAdd }: { onAdd: (m: string, l: string | null, b: string | null) => void }) {
   const [open, setOpen] = useState(false);
@@ -77,7 +77,7 @@ function HandmatigeRij({ onAdd }: { onAdd: (m: string, l: string | null, b: stri
         value={merk} onChange={(e) => setMerk(e.target.value.toUpperCase())} />
       <input type="text" placeholder="Land" size={4} aria-label="Land"
         value={land} onChange={(e) => setLand(e.target.value.toUpperCase())} />
-      <input type="text" placeholder="Banner" size={6} aria-label="Banner (optioneel)"
+      <input type="text" placeholder="Formule" size={6} aria-label="Formule (optioneel)"
         value={banner} onChange={(e) => setBanner(e.target.value.toUpperCase())} />
       <button className="btn ghost" disabled={!merk.trim()}
         onClick={() => {
@@ -200,7 +200,7 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
 
       <h2>Winkelaantallen en targets</h2>
       <table className="data">
-        <thead><tr><th>Merk</th><th>Land</th><th>Banner</th><th>Aantal winkels</th><th>Target € / winkel / {pWord}</th><th></th></tr></thead>
+        <thead><tr><th>Merk</th><th>Land</th><th>Formule</th><th>Aantal winkels</th><th>Target € / winkel / {pWord}</th><th></th></tr></thead>
         <tbody>
           {wt.map((s, i) => (
             <tr key={`${s.merk}${s.land}${s.banner}`}>

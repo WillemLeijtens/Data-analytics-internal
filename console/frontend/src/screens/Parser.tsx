@@ -55,7 +55,7 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
 
   const levert: [string, boolean][] = [
     ["Merk", !!caps?.merk], ["Artikel (EAN)", !!caps?.artikel],
-    ["Winkel", !!caps?.winkel], ["Banner", !!caps?.banner],
+    ["Winkel", !!caps?.winkel], ["Formule", !!caps?.banner],
     ["Land", !!caps?.land], ["Volume (stuks)", !!caps?.volume],
   ];
   const builtin = sel.definition?.builtin;

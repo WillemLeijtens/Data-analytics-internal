@@ -347,16 +347,29 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         return {"omzet": sum(r["omzet"] for r in rs),
                 "volume": sum(r["volume"] for r in rs)}
 
-    def brand_breakdown(rs, key):
+    def dim_breakdown(rs, key, dim="merk"):
+        """Verdeling van een KPI over een dimensie (merk / land / banner).
+
+        `label` is wat het scherm toont; bij merk staat `merk` er nog naast
+        zodat de merkkleuren en bestaande consumenten blijven werken. Een
+        samengestelde bannerwaarde als "KV;TP" blijft één categorie: die
+        omzet is in de feiten niet over formules te splitsen, dus splitsen
+        zou een verdeling verzinnen die de bron niet levert."""
         per = defaultdict(float)
         for r in rs:
-            per[r["merk"] or "ONBEKEND"] += r[key]
-        return sorted(({"merk": m, "waarde": v} for m, v in per.items()),
-                      key=lambda x: -x["waarde"])
+            per[r[dim] or "ONBEKEND"] += r[key]
+        out = [{"label": k, "waarde": v} for k, v in per.items()]
+        if dim == "merk":
+            for o in out:
+                o["merk"] = o["label"]
+        return sorted(out, key=lambda x: -x["waarde"])
 
-    def store_breakdown(periode):
-        """Omzet van die periode per winkel, PER MERK — gedeeld door de
-        winkels die dat merk dít jaar omzet gaven. Eén gedeeld winkelaantal
+    def brand_breakdown(rs, key):
+        return dim_breakdown(rs, key, "merk")
+
+    def store_breakdown(periode, dim="merk"):
+        """Omzet van die periode per winkel, per groep (merk / land /
+        formule) — gedeeld door de winkels die die groep dít jaar omzet gaven. Eén gedeeld winkelaantal
         voor alle merken samen deelt de omzet van het ene merk door het
         winkelbestand van het andere; bij ICI scheelt dat een factor: DEPEND
         verkoopt in ~100 winkels, TWEEZERMAN in ~142.
@@ -364,24 +377,45 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         De noemer komt uit álle rijen van het merk (het jaarfilter zit in
         store_count): een winkel die deze maand toevallig niets verkocht
         hoort er nog steeds bij."""
-        per_brand: dict[str, list] = defaultdict(list)
+        per_groep: dict[str, list] = defaultdict(list)
         for r in rows:
-            per_brand[r["merk"] or "ONBEKEND"].append(r)
+            per_groep[r[dim] or "ONBEKEND"].append(r)
         # Ingestelde target per merk (€ per winkel per periode) uit
         # Instellingen — vóór deze koppeling werd dat veld nergens gebruikt.
+        # Targets zijn per merk vastgelegd, dus alleen op die dimensie
+        # zinvol; over land of formule zou optellen een target verzinnen.
         targets_per_merk: dict = {}
         for s in settings:
             t = s.get("target_per_winkel")
             if t:
                 targets_per_merk[s["merk"]] = max(targets_per_merk.get(s["merk"], 0), t)
         out = []
-        for merk, brows in per_brand.items():
+        for sleutel, brows in per_groep.items():
             n, uit_feiten = store_count(conn, retailer_id, caps, brows, periode, settings)
             rev = sum(r["omzet"] for r in brows if r["periode"] == periode)
-            out.append({"merk": merk, "winkels": n, "schatting": not uit_feiten,
-                        "waarde": (rev / n) if n else None,
-                        "target": targets_per_merk.get(merk)})
+            item = {"label": sleutel, "winkels": n, "schatting": not uit_feiten,
+                    "waarde": (rev / n) if n else None,
+                    "target": targets_per_merk.get(sleutel) if dim == "merk" else None}
+            if dim == "merk":
+                item["merk"] = sleutel
+            out.append(item)
         return sorted(out, key=lambda x: -(x["waarde"] or 0))
+
+    # Welke uitsplitsingen kán deze retailer tonen? Alleen dimensies die de
+    # feed levert én die in de laatste periode daadwerkelijk gevuld zijn —
+    # anders krijgt de gebruiker een knop die één balk "ONBEKEND" laat zien.
+    # Twee of meer waarden: bij één waarde (Etos levert alleen NL) is de
+    # "verdeling" één balk ter grootte van het totaal — een knop die niets
+    # toevoegt. Filtert de gebruiker terug naar één land, dan verdwijnt de
+    # knop om dezelfde reden.
+    #
+    # Gemeten over álle periodes, niet alleen de laatste: bij Kruidvat loopt
+    # de BE-feed een week achter op NL, en dan zou de knop wekelijks komen en
+    # gaan. De verdeling zelf gaat wél over de laatste periode; ontbreekt een
+    # land daarin, dan staat het er niet bij (een balk van € 0 zou "niets
+    # verkocht" suggereren terwijl de feed simpelweg nog niet geleverd heeft).
+    dimensies = ["merk"] + [d for d in ("land", "banner")
+                            if caps.get(d) and len({r[d] for r in rows if r[d]}) > 1]
 
     kpi = agg(latest_rows)
     n_stores, from_facts = store_count(conn, retailer_id, caps, rows, latest, settings)
@@ -623,12 +657,21 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         "periode_type": caps["periode"], "laatste_periode": latest,
         "laatste_periode_compleet": latest_compleet,
         "kpi": {
-            "omzet": {"waarde": kpi["omzet"], "breakdown": brand_breakdown(latest_rows, "omzet")},
-            "volume": {"waarde": kpi["volume"], "breakdown": brand_breakdown(latest_rows, "volume")},
+            "omzet": {"waarde": kpi["omzet"],
+                      "breakdown": brand_breakdown(latest_rows, "omzet"),
+                      "breakdowns": {d: dim_breakdown(latest_rows, "omzet", d)
+                                     for d in dimensies}},
+            "volume": {"waarde": kpi["volume"],
+                       "breakdown": brand_breakdown(latest_rows, "volume"),
+                       "breakdowns": {d: dim_breakdown(latest_rows, "volume", d)
+                                      for d in dimensies}},
             "omzet_per_winkel": {"waarde": per_store, "winkels": n_stores,
                                  "schatting": not from_facts,
-                                 "breakdown": store_breakdown(latest)},
+                                 "breakdown": store_breakdown(latest),
+                                 "breakdowns": {d: store_breakdown(latest, d)
+                                                for d in dimensies}},
         },
+        "dimensies": dimensies,
         "ytd": {
             "jaar": y_now, "tot_periode": upto,
             "basis": {"volledig": basis_volledig,
