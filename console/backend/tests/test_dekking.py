@@ -56,9 +56,9 @@ def test_land_dat_stopt_wordt_gemeld_bij_de_juiste_artikelen(client):
         ["vanaf week 3 geen data voor België"]
 
     per_ean = {a["ean"]: a for a in data["artikelen"]}
-    assert _teksten(per_ean["404946907111"]) == ["vanaf week 3 geen data voor België"]
+    assert _teksten(per_ean["111"]) == ["vanaf week 3 geen data voor België"]
     # Dit artikel is nooit in BE verkocht; een BE-melding zegt er niets over.
-    assert _teksten(per_ean["404946907222"]) == []
+    assert _teksten(per_ean["222"]) == []
 
 
 def test_land_dat_later_begint(client):
@@ -157,9 +157,9 @@ def test_merkfeed_die_achterloopt_wordt_gemeld(client):
         ["vanaf week 5 geen data voor TWEEZERMAN in Nederland"]
     per_ean = {a["ean"]: a for a in data["artikelen"]}
     # Alleen het artikel van het achterlopende merk draagt de melding.
-    assert _teksten(per_ean["404946907222"]) == \
+    assert _teksten(per_ean["222"]) == \
         ["vanaf week 5 geen data voor TWEEZERMAN in Nederland"]
-    assert _teksten(per_ean["404946907111"]) == []
+    assert _teksten(per_ean["111"]) == []
 
 
 def test_een_periode_achterstand_is_normale_cadans(client):

@@ -45,7 +45,7 @@ def test_generated_dwh_file_imports(client):
     art = client.get("/api/kruidvat/artikelen").json()
     assert art["available"] and len(art["artikelen"]) == 3
     eans = {a["ean"] for a in art["artikelen"]}
-    assert "4049469072773" in eans  # GTIN uit het bestand, niet het SKU-nummer
+    assert "31210001" in eans  # GTIN uit het bestand, niet het SKU-nummer
 
     status = client.get("/api/import-status?retailer_id=kruidvat").json()[0]
     assert status["feeds"], "import status moet de feed tonen"
@@ -57,7 +57,7 @@ def test_old_flat_handoff_format_is_no_longer_recognised(client):
     DWH-parser."""
     from test_parser_flow import make_xlsx
     flat = make_xlsx(["Weeknummer", "EAN", "Merk", "Aantal", "Omzet excl BTW"],
-                     [["202632", "4049469072773", "TWEEZERMAN", 10, 130.0]],
+                     [["202632", "31210001", "TWEEZERMAN", 10, 130.0]],
                      sheet="Sellout", meta_rows=8)
     r = upload(client, "DWH_sellout_TWEEZERMAN_NL_wk32.xlsx", flat)
     assert r["status"] in ("profiel_nodig", "error")
@@ -185,9 +185,9 @@ def test_correction_for_one_brand_leaves_other_brands_untouched(client):
             "brand": brand, "weeks": {week: (vol, omzet)}}])
 
     assert upload(client, "DWH__Sales_Tweezerman_KVNL_a.xlsx",
-                  kv("TWEEZERMAN", "4049469072773", "31210001", "202632", 10, 100.0))["status"] == "ingelezen"
+                  kv("TWEEZERMAN", "31210001", "31210001", "202632", 10, 100.0))["status"] == "ingelezen"
     assert upload(client, "DWH__Sales_Alessandro_KVNL_b.xlsx",
-                  kv("ALESSANDRO", "4064089040111", "31210003", "202632", 5, 50.0))["status"] == "ingelezen"
+                  kv("ALESSANDRO", "31210003", "31210003", "202632", 5, 50.0))["status"] == "ingelezen"
 
     per_merk = {b["merk"]: b["waarde"] for b in
                 client.get("/api/kruidvat/dashboard").json()["kpi"]["omzet"]["breakdown"]}
@@ -195,7 +195,7 @@ def test_correction_for_one_brand_leaves_other_brands_untouched(client):
 
     # Correctie op alleen TWEEZERMAN: ALESSANDRO blijft ongewijzigd staan.
     assert upload(client, "DWH__Sales_Tweezerman_KVNL_a-correctie.xlsx",
-                  kv("TWEEZERMAN", "4049469072773", "31210001", "202632", 10, 300.0))["status"] == "ingelezen"
+                  kv("TWEEZERMAN", "31210001", "31210001", "202632", 10, 300.0))["status"] == "ingelezen"
     per_merk = {b["merk"]: b["waarde"] for b in
                 client.get("/api/kruidvat/dashboard").json()["kpi"]["omzet"]["breakdown"]}
     assert per_merk == pytest.approx({"TWEEZERMAN": 300.0, "ALESSANDRO": 50.0})

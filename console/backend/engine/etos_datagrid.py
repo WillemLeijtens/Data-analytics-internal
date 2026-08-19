@@ -64,8 +64,17 @@ def _num(raw):
     s = str(raw).strip().replace("€", "").replace(" ", "").replace(" ", "")
     if not s:
         return None
-    # "1,234.56": komma is hier duizendtal.
-    s = s.replace(",", "")
+    # Deze export levert punt-decimaal ("1,234.56": komma is duizendtal),
+    # maar een cel in Europese notatie ("1.234,56") zou met alleen komma's
+    # strippen stil een factor duizend misgaan. Staan beide tekens erin,
+    # dan is de laatste het decimaalteken — zelfde regel als de
+    # Kruidvat-parser hanteert.
+    if "," in s and "." in s:
+        decimaal = "," if s.rfind(",") > s.rfind(".") else "."
+        duizend = "." if decimaal == "," else ","
+        s = s.replace(duizend, "").replace(decimaal, ".")
+    else:
+        s = s.replace(",", "")
     number = float(s)
     return number if math.isfinite(number) else None
 

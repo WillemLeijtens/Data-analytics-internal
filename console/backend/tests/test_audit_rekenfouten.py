@@ -90,9 +90,9 @@ def test_merk_zonder_vorig_jaar_maakt_artikelen_niet_nieuw(client):
              {f"2026{w:02d}": (10, 100.0) for w in range(1, 9)}),
     ]))
     per = {a["ean"]: a for a in client.get("/api/kruidvat/artikelen").json()["artikelen"]}
-    assert per["4049469072780"]["status"] == "nieuw"      # merk mét historie
-    assert per["4049469072797"]["status"] is None         # merk zonder 2025
-    assert per["4049469072797"]["ytd_delta_pct"] is None
+    assert per["31210002"]["status"] == "nieuw"      # merk mét historie
+    assert per["41210001"]["status"] is None         # merk zonder 2025
+    assert per["41210001"]["ytd_delta_pct"] is None
 
 
 def test_achterlopende_merkfeed_geeft_geen_valse_delisted(client):
@@ -111,13 +111,13 @@ def test_achterlopende_merkfeed_geeft_geen_valse_delisted(client):
               **{f"2026{w:02d}": (10, 100.0) for w in range(1, 11)}}),
     ]))
     per = {a["ean"]: a for a in client.get("/api/kruidvat/artikelen").json()["artikelen"]}
-    tw = per["4049469072773"]
+    tw = per["31210001"]
     # Binnen de eigen feed verkoopt dit artikel elke week: geen twijfelvlag,
     # en geen -66% omdat 2025 verder doorloopt dan de feed van 2026.
     assert tw["status"] is None
     assert tw["ytd_delta_pct"] == 0.0
     # Een artikel dat binnen de geleverde weken stilvalt, blijft wél vlaggen.
-    assert per["4049469072797"]["status"] is None
+    assert per["41210001"]["status"] is None
 
 
 def test_stilgevallen_artikel_blijft_delisted_vraagteken(client):
@@ -132,7 +132,7 @@ def test_stilgevallen_artikel_blijft_delisted_vraagteken(client):
               **{f"2026{w:02d}": (20, 400.0) for w in range(1, 11)}}),
     ]))
     per = {a["ean"]: a for a in client.get("/api/kruidvat/artikelen").json()["artikelen"]}
-    assert per["4049469072803"]["status"] == "delisted?"
+    assert per["31210004"]["status"] == "delisted?"
 
 
 # ------------------------------------------------ assortiment: eigen noemer
@@ -158,7 +158,7 @@ def test_rotatie_deelt_door_de_eigen_scope(client):
         {"merk": "DEPEND", "stuks_per_winkel_per_week": 0.5}]})
 
     per = {a["ean"]: a for a in client.get("/api/kruidvat/assortiment").json()["artikelen"]}
-    tw, dep = per["4049469072773"], per["4049469072810"]
+    tw, dep = per["31210001"], per["51210001"]
     assert tw["winkels"] == 900
     assert dep["winkels"] == 1300                       # verkoopt écht in beide
     # 450 st/week over 900 winkels = 0,5 = precies op target.

@@ -198,12 +198,12 @@ def test_ytd_delta_alleen_op_vergelijkbare_merken(client):
 
     # TWEEZERMAN: beide jaren, maar de 2026-feed stopt op week 10.
     upload(client, "DWH__Sales_Tweezerman_KVNL_a.xlsx",
-           kv("TWEEZERMAN", "4049469072773", "31210001",
+           kv("TWEEZERMAN", "31210001", "31210001",
               {"202505": (10, 100.0), "202510": (10, 100.0), "202515": (10, 300.0),
                "202605": (10, 150.0), "202610": (10, 150.0)}))
     # ALESSANDRO: alleen 2026, t/m week 20.
     upload(client, "DWH__Sales_Alessandro_KVNL_b.xlsx",
-           kv("ALESSANDRO", "4064089040111", "31210003",
+           kv("ALESSANDRO", "31210003", "31210003",
               {"202605": (5, 500.0), "202620": (5, 500.0)}))
 
     y = client.get("/api/kruidvat/dashboard").json()["ytd"]
@@ -251,11 +251,11 @@ def test_ytd_per_merk_op_regelniveau(client):
                                     "brand": brand, "weeks": weeks}])
 
     upload(client, "DWH__Sales_Tweezerman_KVNL_a.xlsx",
-           kv("TWEEZERMAN", "4049469072773", "31210001",
+           kv("TWEEZERMAN", "31210001", "31210001",
               {"202505": (10, 100.0), "202510": (10, 100.0), "202515": (10, 300.0),
                "202605": (10, 150.0), "202610": (10, 150.0)}))
     upload(client, "DWH__Sales_Alessandro_KVNL_b.xlsx",
-           kv("ALESSANDRO", "4064089040111", "31210003",
+           kv("ALESSANDRO", "31210003", "31210003",
               {"202605": (5, 500.0), "202620": (5, 500.0)}))
 
     per = {m["merk"]: m for m in client.get("/api/kruidvat/dashboard").json()["ytd"]["per_merk"]}
@@ -312,13 +312,13 @@ def test_artikelstatus_nieuw_delisted_en_twijfel(client):
     # loper: beide jaren; nieuw: alleen 2026; weg: alleen 2025;
     # stil: 2026 t/m week 10, daarna niets; schrale: hele jaar EUR 50/week.
     upload(client, "DWH__Sales_Tweezerman_KVNL_status.xlsx", seed.make_dwh_xlsx([
-        art("31210001", "4049469072773", {**vorig, **dit}),
-        art("31210002", "4049469072780", dit),
-        art("31210003", "4049469072797", vorig),
-        art("31210004", "4049469072803",
+        art("31210001", "31210001", {**vorig, **dit}),
+        art("31210002", "31210002", dit),
+        art("31210003", "31210003", vorig),
+        art("31210004", "31210004",
             {**{f"2025{w:02d}": (20, 400.0) for w in range(1, 33)},
              **{f"2026{w:02d}": (20, 400.0) for w in range(1, 11)}}),
-        art("31210005", "4049469072810",
+        art("31210005", "31210005",
             {**{f"2025{w:02d}": (2, 50.0) for w in range(1, 33)},
              **{f"2026{w:02d}": (2, 50.0) for w in range(1, 33)}}),
     ]))
@@ -328,13 +328,13 @@ def test_artikelstatus_nieuw_delisted_en_twijfel(client):
         {"merk": "TWEEZERMAN", "land": "NL", "banner": "KV", "aantal_winkels": 530}]})
 
     per = {a["ean"]: a for a in client.get("/api/kruidvat/artikelen").json()["artikelen"]}
-    assert per["4049469072773"]["status"] is None            # gewone loper
-    assert per["4049469072780"]["status"] == "nieuw"
-    assert "2025" in per["4049469072780"]["status_reden"]
-    assert per["4049469072797"]["status"] == "delisted"
-    assert per["4049469072803"]["status"] == "delisted?"
-    assert "laatste 13 weken" in per["4049469072803"]["status_reden"]
-    schraal = per["4049469072810"]
+    assert per["31210001"]["status"] is None            # gewone loper
+    assert per["31210002"]["status"] == "nieuw"
+    assert "2025" in per["31210002"]["status_reden"]
+    assert per["31210003"]["status"] == "delisted"
+    assert per["31210004"]["status"] == "delisted?"
+    assert "laatste 13 weken" in per["31210004"]["status_reden"]
+    schraal = per["31210005"]
     assert schraal["status"] == "delisted?"
     assert "per winkel per week" in schraal["status_reden"]
     assert schraal["omzet_per_winkel_per_week"] == pytest.approx(50 / 530, abs=0.01)
@@ -615,11 +615,11 @@ def test_nieuw_artikel_is_geen_delist_kandidaat(client):
                              "aantal_winkels": 10, "target_per_winkel": 45.0}],
         "rotatie_targets": [{"merk": "TWEEZERMAN", "stuks_per_winkel_per_week": 10.0}]})
     per_ean = {a["ean"]: a for a in client.get("/api/kruidvat/assortiment").json()["artikelen"]}
-    nieuw = per_ean["4049469072780"]
+    nieuw = per_ean["31210009"]
     assert nieuw["advies"] == "Te kort geleden geïntroduceerd"
     assert nieuw["score"] is None
     # De loper wordt gewoon beoordeeld: 100 stuks / 10 winkels = 10 per week.
-    loper = per_ean["4049469072773"]
+    loper = per_ean["31210001"]
     assert loper["rotatie"] == pytest.approx(10.0)
     assert loper["advies"] == "Op target"
 

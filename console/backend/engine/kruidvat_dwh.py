@@ -293,14 +293,15 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
     weeks = _week_columns(ws, header_row1, header_row2, ws.max_column)
     if not weeks:
         raise ValueError("geen jaarweek-kolommen (yyyyww) gevonden boven de kopregel")
-    # A week label appearing twice would make the second column silently
-    # overwrite the first on upsert (same primary key) — surface it.
+    # Een week die twee keer als kolom voorkomt is een kapotte export: de
+    # parser kan niet weten of de waarden elkaar aanvullen of herhalen. De
+    # bridge in parser.py breekt de import af op de dubbele sleutels; deze
+    # melding geeft de oorzaak een naam.
     week_labels = [w for w, _, _ in weeks]
     dupes = sorted({w for w in week_labels if week_labels.count(w) > 1})
     if dupes:
         result.warnings.append(
-            f"Dubbele weekkolom(men) in werkblad {ws.title!r}: {', '.join(dupes)} — "
-            "de laatste kolom overschrijft de eerdere voor dezelfde week."
+            f"Dubbele weekkolom(men) in werkblad {ws.title!r}: {', '.join(dupes)}."
         )
     first_week_col = weeks[0][1]
     attr_cols = _attribute_columns(ws, header_row1, header_row2, first_week_col)

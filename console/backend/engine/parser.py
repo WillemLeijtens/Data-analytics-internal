@@ -313,13 +313,31 @@ def _parse_builtin_kruidvat(filename: str, content: bytes) -> dict:
             "land": f["country"], "banner": f["banner"],
             "winkel_id": None, "winkel_naam": None,
             "merk": f["brand"],
-            "artikel_ean": info.get("gtin") or f["unit"],
+            # De SKU is de identiteit, niet de GTIN. Geen enkel echt
+            # DWH-bestand levert de GTIN-kolom, dus alle opgeslagen feiten
+            # zijn al op SKU gekeyd (het per-winkel-gereedschap ook). Een
+            # "GTIN als hij er is"-voorkeur zou bij één toekomstige export
+            # mét die kolom elk artikel een nieuwe identiteit geven: alles
+            # tegelijk NIEUW én DELISTED, en dubbeltellingen omdat de
+            # hersleveringsvervanging de oude rijen niet meer herkent.
+            "artikel_ean": f["unit"],
             "artikel_naam": info.get("article_description"),
             "volume": int(round(f["sales_volume"] or 0)),
             "omzet": float(f["sales_value"] or 0),
         })
     if not facts:
         raise ParseError("bestand bevat geen datarijen")
+    # Eén rij per natuurlijke sleutel, fail-closed — zoals de Etos- en
+    # ICI-parsers dat al doen. Dubbele weekkolommen zouden anders stil
+    # dubbel tellen: de importer vervangt alleen wat er al STOND, niet
+    # dubbelingen binnen dezelfde batch.
+    keys = [(x["merk"], x["land"], x["banner"], x["artikel_ean"], x["periode"])
+            for x in facts]
+    if len(keys) != len(set(keys)):
+        dubbel = sorted({k for k in keys if keys.count(k) > 1})[:5]
+        raise ParseError(
+            f"dubbele merk/artikel/week-combinaties in het bestand (o.a. "
+            f"{dubbel}); import afgebroken om dubbeltelling te voorkomen")
     return {"facts": facts, "periode_type": "week",
             "periodes": sorted({x["periode"] for x in facts}),
             "warnings": parsed.warnings}
