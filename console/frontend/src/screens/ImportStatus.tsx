@@ -23,9 +23,12 @@ export default function ImportStatus({ ctx }: { ctx: ShellCtx }) {
           </div>
           {r.feeds.map((f: any) => (
             <div key={f.feed + f.scope} style={{ display: "grid", gridTemplateColumns: "10px 1fr 1fr 160px 80px", gap: 12, alignItems: "center", padding: "8px 0", borderTop: "1px solid var(--t-card2)", marginTop: 8 }}>
-              <span className={`brand-dot dot-${r.signaal}`} style={{ margin: 0 }} />
+              {/* Eigen kleur per feed: één merk dat weken achterloopt hoort
+                  hier op te vallen, ook als de rest actueel is. */}
+              <span className={`brand-dot dot-${f.signaal ?? r.signaal}`} style={{ margin: 0 }}
+                title={f.achter > 1 ? `${f.achter} periode(s) achter` : "actueel"} />
               <span>{f.feed}</span>
-              <span className="sub">{f.scope}</span>
+              <span className="sub">{f.scope}{f.achter > 1 ? ` · ${f.achter} achter` : ""}</span>
               <span className="mono" style={{ whiteSpace: "nowrap" }}>
                 {/* De database slaat UTC op; toon Nederlandse tijd. */}
                 {f.periode} · {f.ts

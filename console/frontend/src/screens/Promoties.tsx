@@ -34,6 +34,9 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
   // Promoties zonder genoeg basisperiodes hebben géén percentage; die mogen
   // het gemiddelde en de uitersten niet als nul omlaag trekken.
   const metPct = uplift.filter((u) => u.uplift_pct != null);
+  // Jaarkleuren ankeren op het nieuwste jaar in de dáta, niet op een
+  // hardgecodeerd kalenderjaar dat elk jaar zou verschuiven.
+  const maxJaar = Math.max(...(data.uplift as any[]).map((u) => u.jaar), 0);
   const maxAbs = Math.max(1, ...metPct.map((u) => Math.abs(u.uplift_pct)));
   const avg = metPct.length ? metPct.reduce((a, u) => a + u.uplift_pct, 0) / metPct.length : null;
 
@@ -118,7 +121,7 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
                         height: 8,
                         width: `${(Math.abs(u.uplift_pct) / maxAbs) * 100}%`,
                         background: u.uplift_pct < 0 ? "var(--neg)"
-                          : YEAR_COLORS[2026 - u.jaar] ?? "var(--t-fg3)",
+                          : YEAR_COLORS[maxJaar - u.jaar] ?? "var(--t-fg3)",
                       }} />}
                     </div>
                     {u.uplift_pct != null ? (

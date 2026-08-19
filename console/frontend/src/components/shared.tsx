@@ -186,8 +186,9 @@ export function TrendChart({ series, years, isEuro, periodWord }:
 
 /* ------------------------------------------------------------ Sparkline */
 
-export function Sparkline({ ytd, lytd, isEuro, periodWord }:
-  { ytd: Record<number, number>; lytd: Record<number, number>; isEuro: boolean; periodWord: string }) {
+export function Sparkline({ ytd, lytd, isEuro, periodWord, jaar }:
+  { ytd: Record<number, number>; lytd: Record<number, number>; isEuro: boolean;
+    periodWord: string; jaar: number }) {
   const W = 150, H = 34;
   const [hover, setHover] = useState<number | null>(null);
   const ref = useRef<SVGSVGElement>(null);
@@ -218,7 +219,7 @@ export function Sparkline({ ytd, lytd, isEuro, periodWord }:
       {hover != null && (
         <span className="tooltip" style={{ left: x(hover), top: -46 }}>
           <b>{periodWord} {hover}</b><br />
-          2026: {fmt(ytd[hover])} · 2025: {fmt(lytd[hover])}
+          {jaar}: {fmt(ytd[hover])} · {jaar - 1}: {fmt(lytd[hover])}
         </span>
       )}
     </span>

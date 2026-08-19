@@ -5,10 +5,14 @@ artikel- en assortimentsanalyse telden die weken gewoon als nul mee, dus een
 artikel dat in BE prima liep zag eruit als een artikel dat instortte — en de
 rotatie per winkel zakte mee. Nergens stond dat er data ontbrak.
 
-Een retailer levert per scope: een land, en bij Kruidvat ook per formule.
-Stopt zo'n scope eerder dan de rest, begint hij later, of zit er een gat in,
-dan is elk artikel dat daar verkocht wordt vertekend. Deze module vindt die
-gaten; de analyses hangen ze aan de artikelen die het aangaat.
+Een retailer levert per scope: een merk (feeds komen per merk of merkgroep
+binnen, in eigen bestanden met een eigen ritme), een land, en bij Kruidvat
+ook per formule. Stopt zo'n scope eerder dan de rest, begint hij later, of
+zit er een gat in, dan is elk artikel dat daar verkocht wordt vertekend.
+Deze module vindt die gaten; de analyses hangen ze aan de artikelen die het
+aangaat. Zonder de merk-dimensie was een merk-feed die 15 weken achterliep
+(TWEEZERMAN op de echte Kruidvat-bestanden) volstrekt onzichtbaar zolang een
+ánder merk het land wel vulde.
 
 Bewust NIET aan alle artikelen: een artikel dat nooit in België verkocht is
 heeft aan een BE-melding niets, en een waarschuwing die overal staat leest
@@ -52,16 +56,21 @@ def _opsomming(nummers: list[int]) -> str:
 
 
 def scope_van(rij, caps: dict) -> tuple:
-    """De eenheid waarin deze retailer aanlevert. Zonder formuleniveau is dat
-    alleen het land — anders zou elke rij zijn eigen scope worden."""
-    return (rij["land"], rij["banner"] if caps.get("banner") else None)
+    """De eenheid waarin deze retailer aanlevert: merk x land (x formule).
+    Zonder formuleniveau blijft de formule buiten de sleutel — anders zou
+    elke rij zijn eigen scope worden."""
+    return (rij["merk"], rij["land"], rij["banner"] if caps.get("banner") else None)
 
 
-def _naam(scope: tuple, meerdere_formules: bool) -> str:
-    land, banner = scope
-    if banner and meerdere_formules:
-        return f"{banner} in {_land(land)}"
-    return _land(land)
+def _naam(scope: tuple, meerdere_formules: bool, meerdere_merken: bool) -> str:
+    """Alleen de dimensies noemen die onderscheiden: bij één merk is
+    "TWEEZERMAN in Nederland" ruis, bij meerdere is het de kern."""
+    merk, land, banner = scope
+    plek = f"{banner} in {_land(land)}" if banner and meerdere_formules else _land(land)
+    if merk and meerdere_merken:
+        return f"{merk} in {plek}" if not (banner and meerdere_formules) \
+            else f"{merk} ({plek})"
+    return plek
 
 
 def gaten(rows, caps: dict) -> list[dict]:
@@ -86,7 +95,8 @@ def gaten(rows, caps: dict) -> list[dict]:
     for r in dit_jaar:
         per_scope[scope_van(r, caps)].add(r["periode"])
 
-    meerdere_formules = len({s[1] for s in per_scope if s[1]}) > 1
+    meerdere_formules = len({s[2] for s in per_scope if s[2]}) > 1
+    meerdere_merken = len({s[0] for s in per_scope if s[0]}) > 1
     # Eén scope kan per definitie niet achterlopen op zichzelf.
     if len(per_scope) < 2:
         return []
@@ -96,18 +106,24 @@ def gaten(rows, caps: dict) -> list[dict]:
     for scope, periodes in sorted(per_scope.items(), key=lambda kv: str(kv[0])):
         eigen = sorted(periodes, key=sort_key)
         eerste, laatste = nummer[eigen[0]], nummer[eigen[-1]]
-        naam = _naam(scope, meerdere_formules)
+        naam = _naam(scope, meerdere_formules, meerdere_merken)
 
-        if laatste < len(as_periodes) - 1:
+        # Eén periode achterlopen is normale levercadans (de Belgische feed
+        # komt structureel een week na de Nederlandse); dat elke week als
+        # rood gat melden went de gebruiker aan het negeren van de driehoek.
+        # Vanaf twee periodes is het een gat.
+        if laatste < len(as_periodes) - 2:
             volgende = as_periodes[laatste + 1]
             uit.append({
-                "soort": "stopt", "land": scope[0], "banner": scope[1],
+                "soort": "stopt", "merk": scope[0], "land": scope[1],
+                "banner": scope[2],
                 "vanaf": volgende,
                 "tekst": f"vanaf {pWoord} {_nr(volgende)} geen data voor {naam}",
             })
         if eerste > 0:
             uit.append({
-                "soort": "begint_later", "land": scope[0], "banner": scope[1],
+                "soort": "begint_later", "merk": scope[0], "land": scope[1],
+                "banner": scope[2],
                 "vanaf": eigen[0],
                 "tekst": f"geen data voor {naam} vóór {pWoord} {_nr(eigen[0])}",
             })
@@ -115,7 +131,8 @@ def gaten(rows, caps: dict) -> list[dict]:
         ontbreekt = [p for p in as_periodes[eerste:laatste + 1] if p not in periodes]
         if ontbreekt:
             uit.append({
-                "soort": "onderbroken", "land": scope[0], "banner": scope[1],
+                "soort": "onderbroken", "merk": scope[0], "land": scope[1],
+                "banner": scope[2],
                 "periodes": ontbreekt,
                 "tekst": f"geen data voor {naam} in {pWoord} "
                          f"{_opsomming([_nr(p) for p in ontbreekt])}",
@@ -129,4 +146,4 @@ def per_artikel(alle_gaten: list[dict], rijen, caps: dict) -> list[dict]:
     if not alle_gaten:
         return []
     eigen = {scope_van(r, caps) for r in rijen}
-    return [g for g in alle_gaten if (g["land"], g["banner"]) in eigen]
+    return [g for g in alle_gaten if (g["merk"], g["land"], g["banner"]) in eigen]

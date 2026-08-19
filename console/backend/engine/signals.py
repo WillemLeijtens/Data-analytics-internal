@@ -71,26 +71,31 @@ def data_signal(conn, retailer_id: str) -> tuple[str, str]:
     period. <=1 behind = green, <=4 = orange, more = red."""
     prof = active_profile(conn, retailer_id)
     statuses = ("ingelezen", "test") if prof and prof.status == "test" else ("ingelezen",)
-    # Alleen de nieuwste periode is nodig; élke feitregel ophalen om er in
-    # Python een max over te doen, laadt de hele historie in voor één string.
-    # Kan als MAX(periode) omdat het periodeformaat ('2026-W07', '2026-07')
-    # met vaste breedte is en dus lexicografisch gelijkloopt met sort_key.
-    row = conn.execute(
-        "SELECT MAX(f.periode) AS periode, MAX(f.periode_type) AS periode_type "
+    # Per merk-feed de nieuwste periode: één achterlopend merk hoort het
+    # signaal te kleuren. Met alleen MAX(periode) over alles bleef een feed
+    # die 15 weken achterliep groen zolang een ander merk actueel was
+    # (TWEEZERMAN op de echte Kruidvat-bestanden). MAX(periode) per merk kan
+    # lexicografisch: het periodeformaat ('2026-W07', '2026-07') heeft vaste
+    # breedte en loopt gelijk met sort_key.
+    rows = conn.execute(
+        "SELECT f.merk, MAX(f.periode) AS periode, MAX(f.periode_type) AS periode_type "
         "FROM sellout_facts f "
         f"JOIN imports im ON im.id=f.import_id AND im.status IN ({','.join('?' * len(statuses))}) "
-        "WHERE f.retailer_id=? ", (*statuses, retailer_id)).fetchone()
-    if not row or not row["periode"]:
+        "WHERE f.retailer_id=? GROUP BY f.merk", (*statuses, retailer_id)).fetchall()
+    if not rows:
         return "grey", "Nog geen data"
-    latest = row["periode"]
-    ptype = row["periode_type"]
+    ptype = rows[0]["periode_type"]
     unit = "week" if ptype == "week" else "maand"
-    behind = periods_behind(latest, ptype)
+    per_feed = [(r["merk"], r["periode"], periods_behind(r["periode"], ptype))
+                for r in rows]
+    merk, _periode, behind = max(per_feed, key=lambda f: f[2])
+    nieuwste = max(p for _, p, _b in per_feed)
     if behind <= 1:
-        return "green", f"Actueel t/m {latest}"
+        return "green", f"Actueel t/m {nieuwste}"
+    wie = f"{merk or 'feed'} " if len(per_feed) > 1 else ""
     if behind <= 4:
-        return "orange", f"{behind} {unit}(en) achter"
-    return "red", f"Feed {behind} {unit}(en) achter"
+        return "orange", f"{wie}{behind} {unit}(en) achter"
+    return "red", f"{wie}{behind} {unit}(en) achter"
 
 
 def assortment_signal(conn, retailer_id: str) -> tuple[str, str]:

@@ -383,7 +383,11 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           value={fmtEur(k.omzet_per_winkel.waarde)} isEuro
           breakdown={verdeling(k.omzet_per_winkel)}
           sub={k.omzet_per_winkel.winkels
-            ? `${k.omzet_per_winkel.winkels} winkels met omzet in ${y.jaar}`
+            // Bij een SCHATTING komt het aantal uit Instellingen; "met omzet"
+            // zou dan een telling suggereren die er niet is.
+            ? k.omzet_per_winkel.schatting
+              ? `${k.omzet_per_winkel.winkels} winkels (handmatig ingesteld)`
+              : `${k.omzet_per_winkel.winkels} winkels met omzet in ${y.jaar}`
             : "Geen winkelaantal ingesteld"} />
       </div>
 

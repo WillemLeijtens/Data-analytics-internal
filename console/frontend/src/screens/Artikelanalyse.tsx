@@ -88,7 +88,7 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
               <td><BrandDot merk={a.merk} />{a.merk}</td>
               <td>
                 <Sparkline ytd={toSeries(a.sparkline.ytd, metric)} lytd={toSeries(a.sparkline.lytd, metric)}
-                  isEuro={isEuro} periodWord={pWord} />
+                  isEuro={isEuro} periodWord={pWord} jaar={data.jaar} />
               </td>
               <td><DeltaTag pct={a.ytd_delta_pct} /></td>
               <td>{fmt(a.laatste_periode[metric])}</td>

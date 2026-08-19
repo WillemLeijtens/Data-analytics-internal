@@ -375,9 +375,15 @@ def import_status(retailer_id: str | None = None):
                 latest_rows = [row for row in feed_rows if row["periode"] == latest]
                 scope = "per winkel" if caps and caps["winkel"] and not caps["banner"] else \
                     "/".join(x for x in (land, banner) if x) or "—"
+                # Versheid per feed, niet alleen per retailer: één merk dat
+                # weken achterloopt hoort hier rood te staan, ook als de rest
+                # actueel is. Zelfde drempels als signals.data_signal.
+                achter = signals.periods_behind(latest, caps["periode"]) if caps else 0
                 feeds.append({"feed": merk or "—", "scope": scope, "periode": latest,
                               "ts": max(row["ts"] for row in latest_rows),
-                              "rijen": len(latest_rows)})
+                              "rijen": len(latest_rows), "achter": achter,
+                              "signaal": ("green" if achter <= 1 else
+                                          "orange" if achter <= 4 else "red")})
             out.append({"retailer": r["id"], "naam": r["naam"],
                         "profiel": {"versie": prof.version, "status": prof.status} if prof else None,
                         "periode_type": caps["periode"] if caps else None,

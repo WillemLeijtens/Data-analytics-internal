@@ -228,7 +228,10 @@ def parse_workbook(path: str, filename: str) -> ParsedFile:
     wb = openpyxl.load_workbook(path, data_only=True)
     candidates = _sheet_candidates(wb)
     if not candidates:
-        raise ValueError("No parseable sheet found in workbook")
+        raise ValueError(
+            "Geen werkblad met het DWH-weekformaat gevonden (metadatablok + "
+            "weekkolommen). Is dit een export per wínkel? Die laadt niet via "
+            "het scherm maar eenmalig via tools/eenmalig_winkelbestand.py.")
 
     # Group sheets by the feed their own metadata block describes.
     feeds: dict[tuple, list] = {}
@@ -255,19 +258,19 @@ def parse_workbook(path: str, filename: str) -> ParsedFile:
         primary_country = _country_to_iso2(primary_country3)
         if fn_info["country"] != primary_country:
             result.warnings.append(
-                f"Filename country '{fn_info['country']}' does not match "
-                f"in-file country '{primary_country}' ({primary_country3})."
+                f"Land in de bestandsnaam ({fn_info['country']}) wijkt af van "
+                f"het land in het bestand ({primary_country}, {primary_country3})."
             )
         if fn_info["banner"] != primary_banner:
             result.warnings.append(
-                f"Filename banner '{fn_info['banner']}' does not match "
-                f"in-file formula '{primary_banner}'."
+                f"Formule in de bestandsnaam ({fn_info['banner']}) wijkt af van "
+                f"de formule in het bestand ({primary_banner})."
             )
 
     if len(feeds) > 1:
         listed = ", ".join(f"{b}/{_country_to_iso2(c)}/{bn}" for b, c, bn in feeds)
         result.warnings.append(
-            f"Workbook contains {len(feeds)} feeds — all imported: {listed}."
+            f"Bestand bevat {len(feeds)} feeds — allemaal ingelezen: {listed}."
         )
 
     for (brand, country3, banner), group in feeds.items():
@@ -289,7 +292,7 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
 
     weeks = _week_columns(ws, header_row1, header_row2, ws.max_column)
     if not weeks:
-        raise ValueError("No year-week columns detected")
+        raise ValueError("geen jaarweek-kolommen (yyyyww) gevonden boven de kopregel")
     # A week label appearing twice would make the second column silently
     # overwrite the first on upsert (same primary key) — surface it.
     week_labels = [w for w, _, _ in weeks]
@@ -334,7 +337,7 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
         try:
             sku = str(int(sku))
         except (TypeError, ValueError):
-            result.warnings.append(f"Row {r}: non-numeric SKU '{sku}', skipped.")
+            result.warnings.append(f"Rij {r}: SKU {sku!r} is geen nummer — overgeslagen.")
             continue
 
         row_brand = brand
@@ -389,8 +392,8 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
 
     if duplicate_rows:
         result.warnings.append(
-            f"Skipped {duplicate_rows} duplicate SKU row(s) found after the "
-            "first occurrence (same SKU repeated, e.g. differing GTIN)."
+            f"{duplicate_rows} dubbele SKU-rij(en) overgeslagen (zelfde SKU "
+            "nogmaals, bijvoorbeeld per GTIN-variant; de eerste telt)."
         )
     if non_numeric_cells:
         result.warnings.append(

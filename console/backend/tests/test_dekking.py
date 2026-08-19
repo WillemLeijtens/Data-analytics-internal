@@ -110,24 +110,24 @@ def test_assortiment_meldt_hetzelfde(client):
 
 def test_maandfeed_zegt_maand():
     caps = {"periode": "maand", "banner": False}
-    rows = [{"land": "NL", "banner": None, "periode": f"2026-{m:02d}"} for m in range(1, 8)]
-    rows += [{"land": "BE", "banner": None, "periode": f"2026-{m:02d}"} for m in (1, 2)]
+    rows = [{"merk": "DEPEND", "land": "NL", "banner": None, "periode": f"2026-{m:02d}"} for m in range(1, 8)]
+    rows += [{"merk": "DEPEND", "land": "BE", "banner": None, "periode": f"2026-{m:02d}"} for m in (1, 2)]
     assert [g["tekst"] for g in dekking.gaten(rows, caps)] == \
         ["vanaf maand 3 geen data voor België"]
 
 
 def test_formule_wordt_genoemd_als_er_meer_zijn():
     caps = {"periode": "week", "banner": True}
-    rows = [{"land": "NL", "banner": "KV", "periode": f"2026-W{w:02d}"} for w in range(1, 6)]
-    rows += [{"land": "NL", "banner": "TP", "periode": f"2026-W{w:02d}"} for w in (1, 2)]
+    rows = [{"merk": "DEPEND", "land": "NL", "banner": "KV", "periode": f"2026-W{w:02d}"} for w in range(1, 6)]
+    rows += [{"merk": "DEPEND", "land": "NL", "banner": "TP", "periode": f"2026-W{w:02d}"} for w in (1, 2)]
     assert [g["tekst"] for g in dekking.gaten(rows, caps)] == \
         ["vanaf week 3 geen data voor TP in Nederland"]
 
 
 def test_onbekende_landcode_blijft_staan():
     caps = {"periode": "week", "banner": False}
-    rows = [{"land": "NL", "banner": None, "periode": f"2026-W{w:02d}"} for w in range(1, 6)]
-    rows += [{"land": "XX", "banner": None, "periode": "2026-W01"}]
+    rows = [{"merk": "DEPEND", "land": "NL", "banner": None, "periode": f"2026-W{w:02d}"} for w in range(1, 6)]
+    rows += [{"merk": "DEPEND", "land": "XX", "banner": None, "periode": "2026-W01"}]
     tekst = [g["tekst"] for g in dekking.gaten(rows, caps)]
     assert tekst == ["vanaf week 2 geen data voor XX"]
 
@@ -136,7 +136,62 @@ def test_alleen_het_laatste_jaar_telt():
     """Een land dat vorig jaar anders liep zegt niets over de cijfers van nu;
     de analyses rekenen over het laatste jaar."""
     caps = {"periode": "week", "banner": False}
-    rows = [{"land": "NL", "banner": None, "periode": f"2025-W{w:02d}"} for w in range(1, 6)]
-    rows += [{"land": "NL", "banner": None, "periode": f"2026-W{w:02d}"} for w in range(1, 6)]
-    rows += [{"land": "BE", "banner": None, "periode": f"2026-W{w:02d}"} for w in range(1, 6)]
+    rows = [{"merk": "DEPEND", "land": "NL", "banner": None, "periode": f"2025-W{w:02d}"} for w in range(1, 6)]
+    rows += [{"merk": "DEPEND", "land": "NL", "banner": None, "periode": f"2026-W{w:02d}"} for w in range(1, 6)]
+    rows += [{"merk": "DEPEND", "land": "BE", "banner": None, "periode": f"2026-W{w:02d}"} for w in range(1, 6)]
     assert dekking.gaten(rows, caps) == []
+
+
+# ------------------------------------------------------- merk-dimensie
+
+def test_merkfeed_die_achterloopt_wordt_gemeld(client):
+    """Merken komen in aparte bestanden met een eigen ritme binnen. Een
+    merk-feed die weken achterloopt was onzichtbaar zolang een ander merk
+    hetzelfde land vulde (TWEEZERMAN liep 15 weken achter op de echte
+    Kruidvat-bestanden, zonder één melding)."""
+    _kv(client, "al.xlsx", "NLD", range(1, 11), sku="111", merk="ALESSANDRO")
+    _kv(client, "tw.xlsx", "NLD", range(1, 5), sku="222", merk="TWEEZERMAN")
+
+    data = client.get("/api/kruidvat/artikelen").json()
+    assert [g["tekst"] for g in data["dekking"]] == \
+        ["vanaf week 5 geen data voor TWEEZERMAN in Nederland"]
+    per_ean = {a["ean"]: a for a in data["artikelen"]}
+    # Alleen het artikel van het achterlopende merk draagt de melding.
+    assert _teksten(per_ean["404946907222"]) == \
+        ["vanaf week 5 geen data voor TWEEZERMAN in Nederland"]
+    assert _teksten(per_ean["404946907111"]) == []
+
+
+def test_een_periode_achterstand_is_normale_cadans(client):
+    """België levert structureel één week na Nederland. Dat elke week als
+    rood gat melden went de gebruiker aan het negeren van de driehoek."""
+    _kv(client, "nl.xlsx", "NLD", range(1, 11), sku="111")
+    _kv(client, "be.xlsx", "BEL", range(1, 10), sku="111")   # één week achter
+
+    data = client.get("/api/kruidvat/artikelen").json()
+    assert data["dekking"] == []
+
+
+def test_twee_periodes_achterstand_wordt_wel_gemeld(client):
+    _kv(client, "nl.xlsx", "NLD", range(1, 11), sku="111")
+    _kv(client, "be.xlsx", "BEL", range(1, 9), sku="111")    # twee weken achter
+
+    data = client.get("/api/kruidvat/artikelen").json()
+    assert [g["tekst"] for g in data["dekking"]] == \
+        ["vanaf week 9 geen data voor België"]
+
+
+# ------------------------------------------------------- per-feed versheid
+
+def test_import_status_toont_achterstand_per_feed(client):
+    """Eén merk dat weken achterloopt hoort op Import status rood te staan,
+    ook als een ander merk actueel is."""
+    _kv(client, "al.xlsx", "NLD", range(1, 11), sku="111", merk="ALESSANDRO")
+    _kv(client, "tw.xlsx", "NLD", range(1, 5), sku="222", merk="TWEEZERMAN")
+
+    feeds = {f["feed"]: f for r in client.get("/api/import-status").json()
+             for f in r["feeds"]}
+    # Absolute achterstand hangt van de kalender af; het verschíl niet.
+    assert feeds["TWEEZERMAN"]["achter"] - feeds["ALESSANDRO"]["achter"] == 6
+    assert feeds["TWEEZERMAN"]["achter"] > 4
+    assert feeds["TWEEZERMAN"]["signaal"] == "red"

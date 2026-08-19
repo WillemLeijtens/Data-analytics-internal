@@ -1186,6 +1186,14 @@ def assortment(conn, retailer_id: str) -> dict:
             # Te vers om over te oordelen: één zwakke startweek is geen bewijs.
             advies = "Te kort geleden geïntroduceerd"
             score = None
+        elif not actief:
+            # Rijen zonder één verkochte periode dit jaar. "Geen target" zou
+            # hier liegen: het target kan gewoon ingesteld staan.
+            advies = "Geen verkoop dit jaar"
+            score = None
+        elif rotatie is None:
+            advies = "Geen winkelaantal ingesteld"
+            score = None
         elif score is None:
             advies = "Geen rotatie-target ingesteld"
         elif score >= 115:
