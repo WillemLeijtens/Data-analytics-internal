@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import os
+import re
 import secrets
 import sys
 from ipaddress import ip_address
@@ -272,6 +273,33 @@ async def import_preview(files: list[UploadFile]):
     return {"results": out}
 
 
+# Bestanden die GEEN parser aankan worden bewaard, naast de database.
+# Reden: de droplet is voor sommige beheerders alleen via een webconsole
+# bereikbaar, en dan is er geen scp om een bestand naartoe te kopieren. Zonder
+# deze map is een bestand dat de parser afwijst dus onbereikbaar voor het
+# eenmalige inleesgereedschap in tools/. Geslaagde imports worden niet
+# bewaard: die zitten al in de feiten.
+INBOX = db.DB_PATH.parent / "inbox"
+_VEILIG = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _bewaar_in_inbox(filename: str, content: bytes) -> str | None:
+    """Schrijf het bestand weg en geef het pad terug (None bij mislukken).
+
+    De naam wordt gestript tot letters, cijfers, punt, streepje en liggend
+    streepje: een bestandsnaam uit een upload mag nooit uit de map kunnen
+    stappen of aan een shell ontsnappen."""
+    naam = _VEILIG.sub("_", filename).strip("._") or "upload.xlsx"
+    try:
+        INBOX.mkdir(parents=True, exist_ok=True)
+        doel = INBOX / naam
+        doel.write_bytes(content)
+    except OSError as e:  # noqa: BLE001 - volle schijf mag de import niet slopen
+        print(f"[console] kon {naam} niet in de inbox bewaren: {e}", flush=True)
+        return None
+    return str(doel)
+
+
 @app.post("/api/import")
 async def do_import(files: list[UploadFile]):
     # One transaction PER FILE: a crash halfway through file 3 must not roll
@@ -282,7 +310,14 @@ async def do_import(files: list[UploadFile]):
         try:
             content = await _read_upload_limited(f)
             with db.get_conn() as conn:
-                results.append(importer.run_import(conn, filename, content))
+                uitkomst = importer.run_import(conn, filename, content)
+            if uitkomst.get("status") in ("profiel_nodig", "error"):
+                pad = _bewaar_in_inbox(filename, content)
+                if pad:
+                    uitkomst["bewaard_als"] = pad
+                    uitkomst["detail"] = ((uitkomst.get("detail") or "") +
+                                          f" — bewaard als {pad}").strip(" —")
+            results.append(uitkomst)
         except Exception as e:  # noqa: BLE001 - one bad file must not kill the batch
             results.append({"filename": filename, "status": "error",
                             "rows": 0, "retailer_id": None, "detail": str(e)})

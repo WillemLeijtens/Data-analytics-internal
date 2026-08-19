@@ -132,10 +132,18 @@ def lees_bestand(pad: str) -> tuple[list[dict], dict]:
     if not bron.is_file():
         raise Afgebroken(
             f"bestand niet gevonden: {pad}\n"
-            "  Staat het al op de droplet? Kopieer het eerst VANAF je eigen "
-            "computer:\n"
-            "    scp <bestand>.xlsx root@<droplet>:~/analytics/console/data/\n"
-            "  en controleer met: ls -la ~/analytics/console/data/")
+            "  Staat het al op de droplet? Twee manieren om het daar te "
+            "krijgen:\n"
+            "   1. upload het via het IMPORTSCHERM van de console. De parser "
+            "wijst het af,\n"
+            "      maar het bestand wordt bewaard in /srv/data/inbox/ — het "
+            "pad staat in de\n"
+            "      melding op het scherm. Alleen dit werkt vanuit een "
+            "webconsole.\n"
+            "   2. vanaf een eigen terminal: "
+            "scp <bestand>.xlsx root@<droplet>:~/analytics/console/data/\n"
+            "  Kijken wat er staat: ls -la ~/analytics/console/data/ "
+            "~/analytics/console/data/inbox/")
     try:
         wb = openpyxl.load_workbook(pad, read_only=True, data_only=True)
     except Exception as e:  # noqa: BLE001 - alles wat openpyxl niet lust
