@@ -16,7 +16,13 @@ DOEL=/backups
 maak_backup() {
     bron="$1"
     naam="$2"
-    [ -f "$bron" ] || return 0
+    if [ ! -f "$bron" ]; then
+        # LUID melden, niet stilzwijgend overslaan. Deze regel stond er eerst
+        # als `|| return 0`, en daardoor bleef een verkeerd pad maandenlang
+        # onopgemerkt: er kwam geen fout, er kwam alleen geen back-up.
+        echo "[backup] WAARSCHUWING: $bron bestaat niet — GEEN back-up van $naam" >&2
+        return 0
+    fi
     stempel=$(date -u +%Y%m%d)
     uit="$DOEL/$naam-$stempel.db"
     [ -f "$uit" ] && return 0                     # vandaag al gedaan
@@ -44,6 +50,6 @@ maak_backup() {
 mkdir -p "$DOEL"
 while true; do
     maak_backup /data/console/console.db console || true
-    maak_backup /data/streamlit/sellout.db sellout || true
+    maak_backup /data/streamlit/analytics.db analytics || true
     sleep 3600
 done

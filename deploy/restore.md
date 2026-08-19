@@ -7,7 +7,7 @@ elk uur of de back-up van vandaag er al is en maakt hem anders alsnog.
 | wat | waar in de container | back-upnaam |
 |---|---|---|
 | Retailer Console | `console/data/console.db` | `backups/console-JJJJMMDD.db` |
-| Streamlit-app | `data/sellout.db` | `backups/sellout-JJJJMMDD.db` |
+| Streamlit-app | `data/analytics.db` | `backups/analytics-JJJJMMDD.db` |
 
 - **Bewaartermijn**: 14 dagen (`BACKUP_KEEP_DAYS` in `.env` om af te wijken).
 - **Methode**: `sqlite3 .backup`, geen `cp`. Een `cp` tijdens een lopende
@@ -40,7 +40,7 @@ curl -fsS "http://$(docker compose port console 8000)/healthz"   # {"status":"ok
 ```
 
 Zelfde procedure voor de Streamlit-app met `app`/`poller` en
-`data/sellout.db`.
+`data/analytics.db`.
 
 Gooi `*.kapot` pas weg als het dashboard de verwachte cijfers laat zien: soms
 zit er in het beschadigde bestand nog data die nieuwer is dan de laatste

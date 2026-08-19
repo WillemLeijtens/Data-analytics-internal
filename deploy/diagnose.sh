@@ -148,7 +148,7 @@ else
         GEVONDEN=0
         while IFS=$'\t' read -r _naam dir; do
             [ -n "${dir:-}" ] || continue
-            for db in "$dir/console/data/console.db" "$dir/data/sellout.db"; do
+            for db in "$dir/console/data/console.db" "$dir/data/analytics.db"; do
                 if [ -f "$db" ]; then
                     printf '   %s  %s\n' "$(date -r "$db" '+%Y-%m-%d %H:%M')" "$db"
                     GEVONDEN=1
