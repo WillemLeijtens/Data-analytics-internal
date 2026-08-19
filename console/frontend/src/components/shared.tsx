@@ -371,9 +371,6 @@ export function TijdlijnPanelen({ periodes, reeksen, isMaand }:
 
 
 
-/** Rode driehoek met uitroepteken: de cijfers van dit artikel zijn vertekend
- *  doordat een land of formule niet volledig is aangeleverd. Bij hover (en
- *  voor een schermlezer) staat er wát er ontbreekt. */
 /** De driehoek zelf. Kleur bepaalt de betekenis: rood = er ontbreekt data,
     amber = aandachtspunt in de cijfers die er wél zijn. */
 function Driehoek({ kleur }: { kleur: string }) {

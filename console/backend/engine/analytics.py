@@ -93,8 +93,12 @@ def store_count(conn, retailer_id: str, caps: dict, rows, peil: str | None,
             return len(stores), True
     if settings is None:
         settings = manual_store_settings(conn, retailer_id)
-    selected = {(r["merk"], r["land"], r["banner"] if caps.get("banner") else None)
-                for r in rows}
+    # De banner-vraag buiten de lus: deze setcomp loopt over álle rijen en is
+    # met tienduizenden rijen de duurste regel van het dashboardprofiel.
+    if caps.get("banner"):
+        selected = {(r["merk"], r["land"], r["banner"]) for r in rows}
+    else:
+        selected = {(r["merk"], r["land"], None) for r in rows}
     per_scope: dict[tuple, int] = {}
     for s in settings:
         if not s["aantal_winkels"] or s["aantal_winkels"] <= 0:
@@ -166,8 +170,10 @@ def winkels_per_periode(conn, retailer_id: str, caps: dict, rows, periodes: list
     # Alleen de scopes die in deze (gefilterde) rijen voorkomen tellen mee,
     # en per land/banner het grootste aantal — zelfde regel als store_count,
     # zodat merken elkaar niet vermenigvuldigen.
-    selected = {(r["merk"], r["land"], r["banner"] if caps.get("banner") else None)
-                for r in rows}
+    if caps.get("banner"):
+        selected = {(r["merk"], r["land"], r["banner"]) for r in rows}
+    else:
+        selected = {(r["merk"], r["land"], None) for r in rows}
 
     def totaal_op(datum: dt.date | None) -> tuple[int | None, bool]:
         per_scope: dict[tuple, int] = {}
@@ -716,9 +722,9 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         "vergelijking": {"nu": ref, "vorig": vorig_label if toen_i >= 0 else None},
         "decompositie": {
             "totaal": decomponeer(totaal_reeks, nu_i, toen_i),
-            "per_merk": [{"merk": r["merk"], **(decomponeer(r, nu_i, toen_i) or {})}
-                         for r in per_merk_reeks
-                         if decomponeer(r, nu_i, toen_i)],
+            "per_merk": [{"merk": r["merk"], **d}
+                         for r, d in ((r, decomponeer(r, nu_i, toen_i))
+                                      for r in per_merk_reeks) if d],
         },
     }
 

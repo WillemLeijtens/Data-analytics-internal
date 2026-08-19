@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+from functools import lru_cache
 
 
 class PeriodError(ValueError):
@@ -65,28 +66,31 @@ def parse_period(value, fmt: str) -> str:
     raise PeriodError(f"onbekend periodeformaat {fmt!r}")
 
 
+# Gememoiseerd: de analyses roepen deze functies honderdduizenden keren per
+# dashboard aan (237k in het auditprofiel) over hooguit een paar honderd
+# verschillende periodestrings. De cache mag onbegrensd zijn: het aantal
+# onderscheiden periodes is klein en groeit met hooguit ~52 per jaar.
+
+@lru_cache(maxsize=None)
 def period_year(period: str) -> int:
     return int(period[:4])
 
 
+@lru_cache(maxsize=None)
 def period_number(period: str) -> int:
     """Week number 1-53 or month number 1-12."""
     tail = period.split("-", 1)[1]
     return int(tail.lstrip("Ww"))
 
 
+@lru_cache(maxsize=None)
 def period_type_of(period: str) -> str:
     return "week" if "W" in period.upper() else "maand"
 
 
+@lru_cache(maxsize=None)
 def sort_key(period: str) -> tuple[int, int]:
     return (period_year(period), period_number(period))
-
-
-def in_ytd_window(period: str, upto_number: int) -> bool:
-    """True when the period's week/month number falls in 1..upto_number —
-    the YTD vs LYTD comparison window."""
-    return period_number(period) <= upto_number
 
 
 def _vandaag_nl() -> dt.date:
