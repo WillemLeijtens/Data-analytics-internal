@@ -454,29 +454,64 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
     per_merk_jaar: dict[tuple, list] = defaultdict(list)
     for r in rows:
         per_merk_jaar[(r["merk"], period_year(r["periode"]))].append(r)
+    pWoord = "maand" if caps.get("periode") == "maand" else "week"
+
+    def bereik(rs):
+        """(eerste, laatste) periodenummer van een reeks rijen."""
+        nummers = [period_number(r["periode"]) for r in rs]
+        return (min(nummers), max(nummers)) if nummers else None
+
+    dekking = {}
+    for jaar in (y_now, y_now - 1):
+        jaar_rijen = [r for r in rows if period_year(r["periode"]) == jaar]
+        b = bereik(jaar_rijen)
+        if b:
+            dekking[jaar] = {"van": b[0], "tot": b[1]}
+
     vergelijkbaar, niet_vergelijkbaar = [], []
     for m in sorted({m for m, _ in per_merk_jaar}, key=lambda x: (x is None, x or "")):
         nu_r = per_merk_jaar.get((m, y_now), [])
         vorig_r = per_merk_jaar.get((m, y_now - 1), [])
-        if nu_r and vorig_r:
-            # Stopt de feed van dit merk eerder dan de algemene YTD-grens,
-            # dan telt voor dit merk ook vorig jaar maar tot daar.
-            upto_m = min(upto, max(period_number(r["periode"]) for r in nu_r))
-            vergelijkbaar.append({"merk": m, "tot_periode": upto_m})
-        elif nu_r or any(period_number(r["periode"]) <= upto for r in vorig_r):
+        nu_b, vorig_b = bereik(nu_r), bereik(vorig_r)
+        if nu_b and vorig_b:
+            # Het venster waarin BEIDE jaren data hebben. Alleen kijken of een
+            # merk in allebei de jaren voorkomt is niet genoeg: staat 2025 pas
+            # vanaf week 40 in de feed en loopt 2026 tot week 33, dan raken die
+            # weken elkaar nergens en levert "week 1 t/m 33 in beide jaren"
+            # een vergelijking van 33 weken met nul weken op — een lege kolom
+            # met een streepje, of (bij gedeeltelijke overlap) een percentage
+            # van honderden procenten.
+            van_m = max(nu_b[0], vorig_b[0])
+            tot_m = min(upto, nu_b[1], vorig_b[1])
+            if van_m <= tot_m:
+                vergelijkbaar.append({"merk": m, "van_periode": van_m,
+                                      "tot_periode": tot_m})
+                continue
+        if nu_r or (vorig_b and vorig_b[0] <= upto):
             niet_vergelijkbaar.append(m)
 
     def comp_rows(year):
         out = []
         for v in vergelijkbaar:
             out.extend(r for r in per_merk_jaar.get((v["merk"], year), [])
-                       if period_number(r["periode"]) <= v["tot_periode"])
+                       if v["van_periode"] <= period_number(r["periode"]) <= v["tot_periode"])
         return out
 
     comp_now, comp_prior = comp_rows(y_now), comp_rows(y_now - 1)
     comp_now_agg, comp_prior_agg = agg(comp_now), agg(comp_prior)
-    basis_volledig = (not niet_vergelijkbaar
-                      and all(v["tot_periode"] == upto for v in vergelijkbaar))
+    def dekt_alles(v):
+        """Valt er omzet van DIT jaar buiten het vergelijkingsvenster?
+
+        Niet afmeten aan periode 1: een feed die in beide jaren pas in juni
+        begint (ICI) vergelijkt juni-juli met juni-juli en verzwijgt niets.
+        Het gaat erom of er iets van dit jaar buiten de boot valt."""
+        nu_b = bereik([r for r in per_merk_jaar.get((v["merk"], y_now), [])
+                       if period_number(r["periode"]) <= upto])
+        if not nu_b:
+            return True
+        return v["van_periode"] <= nu_b[0] and v["tot_periode"] >= nu_b[1]
+
+    basis_volledig = not niet_vergelijkbaar and all(dekt_alles(v) for v in vergelijkbaar)
 
     def stores_for(year_rows):
         # Per jaar het winkelbestand van de laatste periode in dat jaar:
@@ -503,13 +538,14 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
     # dat merk (1..tot_periode, op beide jaren toegepast) zodat de regel
     # intern appels-met-appels is; een merk zonder vorig jaar krijgt geen
     # delta maar een reden.
-    venster_per_merk = {v["merk"]: v["tot_periode"] for v in vergelijkbaar}
+    venster_per_merk = {v["merk"]: (v["van_periode"], v["tot_periode"])
+                        for v in vergelijkbaar}
     ytd_per_merk = []
     for m in sorted({m for m, _ in per_merk_jaar}, key=lambda x: (x is None, x or "")):
-        tot_m = venster_per_merk.get(m, upto)
-        def merk_agg(year, _m=m, _tot=tot_m):
+        van_m, tot_m = venster_per_merk.get(m, (1, upto))
+        def merk_agg(year, _m=m, _van=van_m, _tot=tot_m):
             return agg([r for r in per_merk_jaar.get((_m, year), [])
-                        if period_number(r["periode"]) <= _tot])
+                        if _van <= period_number(r["periode"]) <= _tot])
         nu_m, vorig_m = merk_agg(y_now), merk_agg(y_now - 1)
         if not nu_m["omzet"] and not nu_m["volume"] \
                 and not vorig_m["omzet"] and not vorig_m["volume"]:
@@ -517,11 +553,22 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         heeft_basis = m in venster_per_merk
         reden = None
         if not heeft_basis:
-            reden = (f"geen {y_now - 1}" if per_merk_jaar.get((m, y_now))
-                     else f"geen {y_now}")
+            nu_b = bereik(per_merk_jaar.get((m, y_now), []))
+            vorig_b = bereik(per_merk_jaar.get((m, y_now - 1), []))
+            if nu_b and vorig_b:
+                # Wél beide jaren, maar de weken raken elkaar niet. Noem de
+                # feiten, anders leest een leeg vakje als "niets verkocht".
+                reden = (f"{y_now - 1} loopt van {pWoord} {vorig_b[0]} t/m "
+                         f"{vorig_b[1]} — geen overlap met {pWoord} "
+                         f"{nu_b[0]} t/m {min(upto, nu_b[1])}")
+            else:
+                reden = (f"geen {y_now - 1}" if nu_b else f"geen {y_now}")
         ytd_per_merk.append({
-            "merk": m, "tot_periode": tot_m, "vergelijkbaar": heeft_basis,
-            "reden": reden,
+            "merk": m, "van_periode": van_m, "tot_periode": tot_m,
+            "vergelijkbaar": heeft_basis, "reden": reden,
+            "dekking": {str(j): bereik(per_merk_jaar.get((m, j), []))
+                        for j in (y_now, y_now - 1)
+                        if per_merk_jaar.get((m, j))},
             "omzet": {"nu": nu_m["omzet"], "vorig": vorig_m["omzet"],
                       "delta_pct": delta(nu_m["omzet"], vorig_m["omzet"])
                       if heeft_basis else None},
@@ -686,6 +733,10 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
             "basis": {"volledig": basis_volledig,
                       "vergelijkbaar": vergelijkbaar,
                       "niet_vergelijkbaar": niet_vergelijkbaar},
+            # Wat elk jaar feitelijk dekt. Zonder dit kan het scherm alleen
+            # "€ 0" tonen waar het "dit jaar loopt niet over die weken" moet
+            # zeggen — en dat leest als "niets verkocht".
+            "dekking": dekking,
             "per_merk": ytd_per_merk,
             "omzet": {"nu": ytd_now["omzet"], "vorig": ytd_prior["omzet"],
                       "delta_pct": delta(comp_now_agg["omzet"], comp_prior_agg["omzet"])},

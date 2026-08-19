@@ -42,6 +42,39 @@ function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
   );
 }
 
+
+/** Heeft dit jaar geen enkele periode gemeen met vorig jaar? Dan is elk
+ *  "vorig jaar"-getal in het YTD-venster nul, en zou "€ 0" lezen als "niets
+ *  verkocht" terwijl de data er wel is, alleen in andere weken. */
+function geenOverlap(y: any) {
+  return y.basis && !y.basis.vergelijkbaar.length && y.per_merk?.length > 0;
+}
+
+/** "week 26 t/m 31" of "t/m week 31" als het bij het begin aansluit. */
+function venster(v: any, pWord: string) {
+  const p = pWord.toLowerCase();
+  return v.van_periode > 1
+    ? `${p} ${v.van_periode} t/m ${v.tot_periode}`
+    : `t/m ${p} ${v.tot_periode}`;
+}
+
+/** De "vorig jaar"-regel onder een YTD-kaart. Zonder overlap staat er geen
+ *  nul maar wat vorig jaar wél dekt — de vraag die een lege kolom oproept. */
+function VorigJaar({ y, veld, fmt, pWord }:
+  { y: any; veld: "omzet" | "volume"; fmt: (v: any) => string; pWord: string }) {
+  const vorig = y.jaar - 1;
+  if (!geenOverlap(y)) {
+    return <div className="kpi-sub">{vorig}: {fmt(y[veld].vorig)}</div>;
+  }
+  const d = y.dekking?.[vorig];
+  return (
+    <div className="kpi-sub">
+      {vorig}: —
+      {d && <> · dekt {pWord.toLowerCase()} {d.van} t/m {d.tot}, buiten dit venster</>}
+    </div>
+  );
+}
+
 const MAANDEN = ["", "jan", "feb", "mrt", "apr", "mei", "jun",
   "jul", "aug", "sep", "okt", "nov", "dec"];
 
@@ -341,12 +374,12 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
         <div className="card">
           <div className="kpi-label">Omzet YTD<DeltaTag pct={y.omzet.delta_pct} /></div>
           <div className="kpi-value">{fmtEur(y.omzet.nu)}</div>
-          <div className="kpi-sub">{y.jaar - 1}: {fmtEur(y.omzet.vorig)}</div>
+          <VorigJaar y={y} veld="omzet" fmt={fmtEur} pWord={pWord} />
         </div>
         {hasVolume && <div className="card">
           <div className="kpi-label">Volume YTD<DeltaTag pct={y.volume.delta_pct} /></div>
           <div className="kpi-value">{fmtNum(y.volume.nu)}</div>
-          <div className="kpi-sub">{y.jaar - 1}: {fmtNum(y.volume.vorig)}</div>
+          <VorigJaar y={y} veld="volume" fmt={fmtNum} pWord={pWord} />
         </div>}
         <div className="card">
           <div className="kpi-label">Omzet / winkel YTD
@@ -356,7 +389,7 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
             </span>
           </div>
           <div className="kpi-value">{fmtEur(y.omzet_per_winkel.nu)}</div>
-          <div className="kpi-sub">{y.jaar - 1}: {fmtEur(y.omzet_per_winkel.vorig)}</div>
+          <div className="kpi-sub">{y.jaar - 1}: {geenOverlap(y) ? "—" : fmtEur(y.omzet_per_winkel.vorig)}</div>
         </div>
       </div>
       {y.per_merk?.length > 0 && (
@@ -380,18 +413,20 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
                 <tr key={m.merk ?? "ONBEKEND"}>
                   <td>
                     <BrandDot merk={m.merk} />{m.merk ?? "ONBEKEND"}
-                    {m.tot_periode !== y.tot_periode && (
-                      <span className="sub"> · t/m {pWord.toLowerCase()} {m.tot_periode}</span>
+                    {m.vergelijkbaar && (m.van_periode > 1 || m.tot_periode !== y.tot_periode) && (
+                      <span className="sub"> · {venster(m, pWord)}</span>
                     )}
                   </td>
                   <td style={{ textAlign: "right" }}>{fmtEur(m.omzet.nu)}</td>
-                  <td style={{ textAlign: "right" }}>{fmtEur(m.omzet.vorig)}</td>
+                  <td style={{ textAlign: "right" }}>
+                    {m.vergelijkbaar || m.omzet.vorig ? fmtEur(m.omzet.vorig) : "—"}</td>
                   <td>{m.vergelijkbaar
                     ? <DeltaTag pct={m.omzet.delta_pct} />
                     : <span className="tag" title={`Niet te vergelijken: ${m.reden}`}>{m.reden}</span>}</td>
                   {hasVolume && <>
                     <td style={{ textAlign: "right" }}>{fmtNum(m.volume.nu)}</td>
-                    <td style={{ textAlign: "right" }}>{fmtNum(m.volume.vorig)}</td>
+                    <td style={{ textAlign: "right" }}>
+                      {m.vergelijkbaar || m.volume.vorig ? fmtNum(m.volume.vorig) : "—"}</td>
                     <td>{m.vergelijkbaar
                       ? <DeltaTag pct={m.volume.delta_pct} />
                       : <span className="tag">—</span>}</td>
@@ -409,16 +444,29 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
         <p className="sub" style={{ marginTop: 8 }}>
           {y.basis.vergelijkbaar.length
             ? <>Δ% op vergelijkbare basis: {y.basis.vergelijkbaar.map((v: any) =>
-                v.tot_periode === y.tot_periode ? (v.merk ?? "ONBEKEND")
-                  : `${v.merk ?? "ONBEKEND"} t/m ${pWord.toLowerCase()} ${v.tot_periode}`
+                v.van_periode === 1 && v.tot_periode === y.tot_periode
+                  ? (v.merk ?? "ONBEKEND")
+                  : `${v.merk ?? "ONBEKEND"} ${venster(v, pWord)}`
               ).join(", ")}.</>
-            : <>Geen Δ%: geen enkel merk heeft data in zowel {y.jaar} als {y.jaar - 1}.</>}
-          {y.basis.niet_vergelijkbaar.length > 0 && (
-            y.basis.niet_vergelijkbaar.length === 1
-              ? <> {y.basis.niet_vergelijkbaar[0] ?? "ONBEKEND"} ontbreekt in {y.jaar - 1} en telt daarom niet mee in het percentage — de absolute totalen tellen wél alles.</>
-              : <> {(() => { const n = y.basis.niet_vergelijkbaar.map((m: string) => m ?? "ONBEKEND");
-                    return `${n.slice(0, -1).join(", ")} en ${n[n.length - 1]}`; })()} ontbreken in {y.jaar - 1} en tellen daarom niet mee in het percentage — de absolute totalen tellen wél alles.</>
-          )}
+            : <>Geen Δ%: er is geen {pWord.toLowerCase()} die {y.jaar} en {y.jaar - 1} allebei hebben
+                {y.dekking?.[y.jaar - 1] && y.dekking?.[y.jaar] &&
+                  ` — ${y.jaar - 1} loopt van ${pWord.toLowerCase()} ${y.dekking[y.jaar - 1].van} t/m ${y.dekking[y.jaar - 1].tot}, ${y.jaar} van ${pWord.toLowerCase()} ${y.dekking[y.jaar].van} t/m ${y.dekking[y.jaar].tot}`}.
+              </>}
+          {(() => {
+            // Onderscheid maken tussen "dit merk is er vorig jaar niet" en
+            // "het is er wel, maar in andere weken". Die tweede groep is al
+            // uitgelegd in de zin hierboven; er nog eens "ontbreekt in 2025"
+            // achteraan plakken is simpelweg onwaar.
+            const ontbreekt = y.basis.niet_vergelijkbaar.filter((m: string) =>
+              (y.per_merk ?? []).some((r: any) => r.merk === m && /^geen \d{4}$/.test(r.reden ?? "")));
+            if (!ontbreekt.length) return null;
+            const n = ontbreekt.map((m: string) => m ?? "ONBEKEND");
+            const namen = n.length === 1 ? n[0]
+              : `${n.slice(0, -1).join(", ")} en ${n[n.length - 1]}`;
+            return <> {namen} {n.length === 1 ? "ontbreekt" : "ontbreken"} in {y.jaar - 1} en
+              {n.length === 1 ? " telt" : " tellen"} daarom niet mee in het percentage — de
+              absolute totalen tellen wél alles.</>;
+          })()}
         </p>
       )}
 

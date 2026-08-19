@@ -213,7 +213,10 @@ def test_ytd_delta_alleen_op_vergelijkbare_merken(client):
     # 2026 (300) vs 2025 wk<=10 (200) = +50% — niet +160% over alles.
     assert y["omzet"]["delta_pct"] == pytest.approx(50.0)
     assert y["basis"]["volledig"] is False
-    assert y["basis"]["vergelijkbaar"] == [{"merk": "TWEEZERMAN", "tot_periode": 10}]
+    # Het venster is nu een bereik: beide jaren beginnen bij week 5, en de
+    # 2026-feed stopt op week 10.
+    assert y["basis"]["vergelijkbaar"] == [
+        {"merk": "TWEEZERMAN", "van_periode": 5, "tot_periode": 10}]
     assert y["basis"]["niet_vergelijkbaar"] == ["ALESSANDRO"]
 
     # De trend meldt dat de TWEEZERMAN-feed eerder stopt dan de rest.
@@ -644,3 +647,73 @@ def test_mock_contracten_alleen_met_expliciete_schakelaar(client, monkeypatch):
     r = client.post("/api/ici-paris-xl/sharepoint",
                     json={"map_url": "https://voorbeeld.sharepoint.com/contracten"}).json()
     assert r["bron"] == "mock" and len(r["documenten"]) == 2
+
+
+# --------------------------------------------------------------- YTD-overlap
+
+def _kv_jaar(client, naam, jaar, weken, merk="ALESSANDRO", omzet=1000.0):
+    import seed
+    from test_parser_flow import upload as _up
+    _up(client, naam, seed.make_dwh_xlsx(
+        [{"sku": "6369354", "gtin": "4049469072773", "desc": "STRIPLAC",
+          "brand": merk, "weeks": {f"{jaar}{w:02d}": (100, omzet) for w in weken}}],
+        country3="BEL", formula="KV"))
+
+
+def test_ytd_zonder_overlap_is_niet_vergelijkbaar(client):
+    """2025 begint pas in week 40, 2026 loopt tot week 33 — die weken raken
+    elkaar nergens. Vroeger heette dat 'vergelijkbaar' omdat het merk in beide
+    jaren voorkwam, en toonde het scherm '€ 0' zonder enige melding."""
+    _kv_jaar(client, "a.xlsx", 2025, range(40, 53))
+    _kv_jaar(client, "b.xlsx", 2026, range(1, 34), omzet=1200.0)
+
+    y = client.get("/api/kruidvat/dashboard").json()["ytd"]
+    assert y["basis"]["volledig"] is False
+    assert y["basis"]["vergelijkbaar"] == []
+    assert y["basis"]["niet_vergelijkbaar"] == ["ALESSANDRO"]
+    assert y["omzet"]["delta_pct"] is None
+    # De dekking maakt zichtbaar waar de data wél zit.
+    assert y["dekking"]["2025"] == {"van": 40, "tot": 52}
+    assert y["dekking"]["2026"] == {"van": 1, "tot": 33}
+    regel = y["per_merk"][0]
+    assert regel["vergelijkbaar"] is False
+    assert "week 40 t/m 52" in regel["reden"] and "geen overlap" in regel["reden"]
+
+
+def test_ytd_gedeeltelijke_overlap_knipt_beide_jaren_bij(client):
+    """2025 vanaf week 26, 2026 t/m week 31: vergelijk week 26 t/m 31 in
+    beide jaren. Vroeger werd 31 weken tegen 6 weken afgezet — op de echte
+    Belgische data gaf dat +886,9%."""
+    _kv_jaar(client, "a.xlsx", 2025, range(26, 53), omzet=1000.0)
+    _kv_jaar(client, "b.xlsx", 2026, range(1, 32), omzet=1200.0)
+
+    y = client.get("/api/kruidvat/dashboard").json()["ytd"]
+    assert y["basis"]["vergelijkbaar"] == [
+        {"merk": "ALESSANDRO", "van_periode": 26, "tot_periode": 31}]
+    # Zes gedeelde weken: 6 x 1200 tegen 6 x 1000.
+    assert y["omzet"]["delta_pct"] == pytest.approx(20.0)
+    assert y["basis"]["volledig"] is False
+
+
+def test_ytd_volledige_overlap_verandert_niet(client):
+    """De gewone situatie moet zich gedragen als voorheen: venster 1..upto,
+    basis volledig, en hetzelfde percentage."""
+    _kv_jaar(client, "a.xlsx", 2025, range(1, 32), omzet=1000.0)
+    _kv_jaar(client, "b.xlsx", 2026, range(1, 32), omzet=1200.0)
+
+    y = client.get("/api/kruidvat/dashboard").json()["ytd"]
+    assert y["basis"]["volledig"] is True
+    assert y["basis"]["vergelijkbaar"] == [
+        {"merk": "ALESSANDRO", "van_periode": 1, "tot_periode": 31}]
+    assert y["omzet"]["delta_pct"] == pytest.approx(20.0)
+
+
+def test_merk_zonder_vorig_jaar_blijft_niet_vergelijkbaar(client):
+    _kv_jaar(client, "a.xlsx", 2025, range(1, 32), merk="ALESSANDRO")
+    _kv_jaar(client, "b.xlsx", 2026, range(1, 32), merk="ALESSANDRO", omzet=1200.0)
+    _kv_jaar(client, "c.xlsx", 2026, range(1, 32), merk="TWEEZERMAN", omzet=500.0)
+
+    y = client.get("/api/kruidvat/dashboard").json()["ytd"]
+    assert y["basis"]["niet_vergelijkbaar"] == ["TWEEZERMAN"]
+    regel = next(r for r in y["per_merk"] if r["merk"] == "TWEEZERMAN")
+    assert regel["reden"] == "geen 2025"
