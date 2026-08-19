@@ -20,13 +20,12 @@ make dev    # backend :8000 + frontend :5173
 ## Deployen op de droplet
 
 De console draait als **één extra container** naast de bestaande
-Streamlit-app (eigen image, eigen database in `console/data/`), met een eigen
-hostnaam via Caddy. De bestaande app blijft ongewijzigd op de root staan.
+Streamlit-app: eigen image, eigen database in `console/data/`, eigen poort.
 
 Toegang loopt via het **portaal** (privé-adres + firewallregel voor de
-gateway + forward-auth), net als bij de andere apps. De console wordt dus
-**niet** op het publieke IP gepubliceerd en staat bewust niet in de Caddy
-van deze repo.
+gateway + forward-auth), net als bij de andere apps. Niets van deze repo
+wordt op het publieke IP gepubliceerd; er zit ook geen eigen reverse proxy
+meer in — het portaal doet de TLS.
 
 Kerngegevens voor de gateway-registratie:
 
@@ -77,9 +76,8 @@ elkaar dus niet tegenspreken.
 
 Een eigen hostnaam in plaats van een subpad (`/console`) is bewust: de SPA
 verwijst naar absolute `/assets`- en `/api`-paden, die onder een prefix
-zouden breken. `sslip.io` resolvet elk voorvoegsel, dus dit werkt zonder
-DNS-registratie; Caddy haalt automatisch een certificaat op. Andere
-hostnaam? Zet `CONSOLE_ADDRESS` in `.env`.
+zouden breken. Registreer hem in het portaal dus op een eigen host, niet
+onder `/console`.
 
 Bij de **eerste start** laadt de console alleen de parser-profielen voor de
 retailers waarvan het aanleverformaat bekend is (Kruidvat DWH, ICI Paris XL

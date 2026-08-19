@@ -1,12 +1,12 @@
 #!/bin/bash
-# Waarom start de stack niet? — één read-only overzicht.
+# Waarom werkt de stack niet? — één read-only overzicht.
 #
-# Aanleiding: een deploy waarbij Caddy poort 443 niet kreeg ("port is already
-# allocated") en `curl localhost:8010/healthz` niets teruggaf. Dat tweede was
-# geen storing maar een verkeerd adres: de console publiceert op
-# ${CONSOLE_BIND}:${CONSOLE_PORT}, en staat daar een privé-adres, dan luistert
-# loopback terecht niet. Dit script kijkt daarom naar het ECHTE adres in
-# plaats van naar een aangenomen localhost.
+# Aanleiding: een deploy waarbij `curl localhost:8010/healthz` niets teruggaf.
+# Dat was geen storing maar een verkeerd adres: de diensten publiceren op
+# ${..._BIND}:${..._PORT}, en staat daar een privé-adres, dan luistert loopback
+# terecht niet. Dit script kijkt daarom naar het ECHTE adres in plaats van
+# naar een aangenomen localhost — en controleert meteen dat geen van onze
+# diensten publiek luistert, want alles hoort achter het portaal te staan.
 #
 # Dit script leest alleen; het start, stopt en wijzigt niets. De conclusies
 # staan onderaan, met per bevinding wat je eraan doet.
@@ -78,58 +78,6 @@ else
     meld "PROBLEEM er draait geen console-container in dit compose-project."
 fi
 
-# ------------------------------------------------------------- poorten 80/443 ---
-kop "Wie heeft poort 80 en 443?"
-if command -v ss >/dev/null 2>&1; then
-    # -p toont het proces alleen als root; anders blijven de kolommen leeg en
-    # lijkt het net of niemand luistert. Daarom expliciet melden.
-    POORTEN=$(ss -tlnp '( sport = :80 or sport = :443 )' 2>/dev/null | tail -n +2)
-    if [ -z "$POORTEN" ]; then
-        echo "Niemand luistert op 80 of 443."
-    else
-        echo "$POORTEN"
-        if [ "$(id -u)" -ne 0 ] && ! echo "$POORTEN" | grep -q 'users:'; then
-            echo
-            echo "(Procesnamen ontbreken omdat dit zonder root draait —"
-            echo " herhaal met: sudo bash deploy/diagnose.sh)"
-        fi
-    fi
-else
-    echo "'ss' niet gevonden; sla deze check over."
-    POORTEN=""
-fi
-
-# Welke containers claimen 443? Meer dan één betekent een conflict; nul terwijl
-# er wél iets luistert wijst op een hostproces (nginx) of een verweesde
-# docker-proxy na een halve herstart.
-CLAIMERS=$(docker ps --format '{{.Names}}\t{{.Status}}\t{{.Ports}}' | grep ':443->' )
-# Onze eigen caddy, om "van ons" van "van een ander project" te onderscheiden.
-ONZE_CADDY=$("${COMPOSE[@]}" ps --format '{{.Name}}' caddy 2>/dev/null | head -n1)
-echo
-if [ -n "$CLAIMERS" ]; then
-    echo "Draaiende containers die 443 claimen:"
-    echo "$CLAIMERS" | sed 's/^/   /'
-    VREEMD=$(echo "$CLAIMERS" | cut -f1 | grep -vx "${ONZE_CADDY:-__geen__}")
-    if [ -n "$VREEMD" ]; then
-        # Dit is de klassieke val: twee checkouts, twee projectnamen, en
-        # compose stopt de container van het andere project niet.
-        meld "PROBLEEM 443 is bezet door een container buiten dit project: $(echo "$VREEMD" | paste -sd', ' -). Daarom start onze caddy niet. Lees eerst de sectie 'Compose-projecten' hieronder — de andere map heeft zijn eigen database."
-    elif [ "$(echo "$CLAIMERS" | wc -l)" -gt 1 ]; then
-        meld "PROBLEEM meer dan één draaiende container claimt 443 — zie de lijst hierboven."
-    fi
-else
-    echo "Geen enkele container claimt 443."
-    if echo "$POORTEN" | grep -q ':443'; then
-        if echo "$POORTEN" | grep -q 'nginx'; then
-            meld "PROBLEEM nginx op de host houdt 443 vast; Caddy kan er daarom niet bij. Dit raakt de andere app op deze droplet — overleg vóór je nginx verzet."
-        elif echo "$POORTEN" | grep -q 'docker-proxy'; then
-            meld "PROBLEEM een docker-proxy houdt 443 vast zonder container erachter (verweesd). Fix: docker compose down && docker compose up -d; helpt dat niet, dan sudo systemctl restart docker."
-        else
-            meld "PROBLEEM iets op de host houdt 443 vast, geen container. Zie de ss-uitvoer hierboven."
-        fi
-    fi
-fi
-
 # ------------------------------------------------- meerdere compose-projecten ---
 # De val: deploy/bootstrap.sh checkt uit naar /opt/Data-analytics-internal,
 # terwijl er ook een kopie in ~/analytics kan staan. Twee projectnamen ⇒
@@ -165,62 +113,49 @@ else
     fi
 fi
 
-# ----------------------------------------------------------- console-adres ---
-kop "Console: het echte adres"
-ADRES=$("${COMPOSE[@]}" port console 8000 2>/dev/null | head -n1)
-if [ -z "$ADRES" ]; then
-    echo "Compose meldt geen gepubliceerde poort voor console:8000."
-else
-    echo "Gepubliceerd op: $ADRES"
-    BIND=$(grep -E '^CONSOLE_BIND=' .env 2>/dev/null | cut -d= -f2-)
-    [ -n "${BIND:-}" ] && echo "CONSOLE_BIND in .env: $BIND"
-    case "$ADRES" in
-        127.0.0.1:*|localhost:*) : ;;
-        *) meld "LET OP  de console luistert op $ADRES, niet op localhost. Gebruik dat adres in curl-commando's en in de gateway-registratie." ;;
+# ------------------------------------------------------------- bindingen ---
+# Alles loopt via het portaal, dus GEEN van onze diensten hoort op een
+# publiek adres te luisteren. Een binding op 0.0.0.0 of op het publieke IP is
+# daarom een bevinding, geen detail: dan staan de verkoopcijfers open.
+kop "Waar luisteren onze diensten?"
+for dienst in console app; do
+    case "$dienst" in
+        console) poort=8000; pad="/healthz" ;;
+        app)     poort=8501; pad="/" ;;
+    esac
+    ADRES=$("${COMPOSE[@]}" port "$dienst" "$poort" 2>/dev/null | head -n1)
+    if [ -z "$ADRES" ]; then
+        echo "$dienst: geen gepubliceerde poort"
+        continue
+    fi
+    HOST=${ADRES%:*}
+    echo "$dienst: $ADRES"
+    case "$HOST" in
+        127.0.0.1|localhost|::1) : ;;
+        10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|169.254.*)
+            # Prive-adres: precies de bedoeling, de gateway komt hier langs.
+            : ;;
+        0.0.0.0|::|\[::\])
+            meld "PROBLEEM $dienst luistert op $ADRES — dat is elk adres van deze host, dus ook het publieke IP. Zet APP_BIND/CONSOLE_BIND op het prive-adres." ;;
+        *)
+            meld "PROBLEEM $dienst luistert op $ADRES; dat lijkt geen prive-adres. Alles hoort achter het portaal te staan." ;;
     esac
     if command -v curl >/dev/null 2>&1; then
-        echo
-        # -sS in plaats van -s: geen voortgangsbalk, maar de FOUT wel tonen.
-        # Kaal `curl -s` was precies wat de verwarring veroorzaakte — een
-        # mislukte verbinding zag eruit als een leeg antwoord.
-        if ANTWOORD=$(curl -fsS --connect-timeout 3 --max-time 5 "http://$ADRES/healthz" 2>&1); then
-            echo "healthz: $ANTWOORD"
-            meld "OK      healthz antwoordt op http://$ADRES/healthz"
-        else
-            echo "healthz mislukt: $ANTWOORD"
-            meld "PROBLEEM healthz antwoordt niet op http://$ADRES/healthz — zie de console-log hierboven."
-        fi
-    else
-        echo "(curl niet gevonden; sla de healthcheck over)"
+        CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 8 "http://$ADRES$pad" 2>/dev/null)
+        echo "   http://$ADRES$pad -> $CODE"
+        case "$CODE" in
+            2*|3*) meld "OK      $dienst antwoordt op http://$ADRES$pad ($CODE)." ;;
+            000)   meld "PROBLEEM $dienst antwoordt niet op http://$ADRES$pad. Zie: docker compose logs $dienst" ;;
+            *)     meld "LET OP  $dienst antwoordt met $CODE op http://$ADRES$pad." ;;
+        esac
     fi
-fi
+done
 
-# --------------------------------------------------------- publieke site ---
-# Caddy beheert TLS voor de naam in SITE_ADDRESS. Staat daar een kaal IP,
-# dan kan Let's Encrypt geen certificaat uitgeven en valt Caddy terug op zijn
-# interne CA; elke browser krijgt dan een mislukte handshake in plaats van
-# een foutpagina. Zie de uitleg bovenin de Caddyfile.
-kop "Publieke site"
-SITE=$(grep -E '^SITE_ADDRESS=' .env 2>/dev/null | cut -d= -f2- | tr -d "\"' ")
-if [ -z "${SITE:-}" ]; then
-    SITE=$(grep -oE 'SITE_ADDRESS:-[^}]+' docker-compose.yml | head -n1 | sed 's/^SITE_ADDRESS:-//')
-    echo "SITE_ADDRESS staat niet in .env; compose valt terug op: ${SITE:-onbekend}"
-    meld "LET OP  SITE_ADDRESS ontbreekt in .env. Compose gebruikt dan zijn standaardwaarde (${SITE:-onbekend}) — leg de waarde vast in .env, dan staat hij niet in twee bestanden."
-else
-    echo "SITE_ADDRESS: $SITE"
-fi
-if echo "${SITE:-}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-    meld "PROBLEEM SITE_ADDRESS is een kaal IP ($SITE). Voor een IP-adres stuurt de browser geen SNI mee en geeft Let's Encrypt geen certificaat uit, dus mislukt elke HTTPS-verbinding. Gebruik de sslip-naam: $(echo "$SITE" | tr '.' '-').sslip.io"
-fi
-if [ -n "${SITE:-}" ] && command -v curl >/dev/null 2>&1; then
-    CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "https://$SITE/" 2>/dev/null)
-    echo "https://$SITE/ -> $CODE"
-    case "$CODE" in
-        000) meld "PROBLEEM https://$SITE/ komt niet tot stand: geen antwoord op de TLS-handshake. Meestal geen geldig certificaat voor deze naam (docker compose logs caddy); anders is de host of poort 443 niet bereikbaar van hier." ;;
-        2*|3*) meld "OK      de publieke site antwoordt ($CODE)." ;;
-        *) meld "LET OP  de publieke site antwoordt met $CODE." ;;
-    esac
-fi
+CONSOLE_ENV=$(grep -E '^CONSOLE_BIND=' .env 2>/dev/null | cut -d= -f2-)
+APP_ENV=$(grep -E '^APP_BIND=' .env 2>/dev/null | cut -d= -f2-)
+echo
+echo ".env: CONSOLE_BIND=${CONSOLE_ENV:-<niet gezet, valt terug op 127.0.0.1>}"
+echo ".env: APP_BIND=${APP_ENV:-<niet gezet, valt terug op 127.0.0.1>}"
 
 # -------------------------------------------------------------- back-ups ---
 # De back-up faalde dagenlang zonder dat iemand het zag: de fout stond alleen

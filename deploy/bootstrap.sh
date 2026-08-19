@@ -50,39 +50,14 @@ else
     echo "STREAMLIT_APP_PASSWORD already set in .env, leaving as-is."
 fi
 
-# Determine a resolvable hostname for TLS. Browsers/curl send no SNI for a
-# bare IP, so Caddy can't serve a cert for one — we use a free sslip.io
-# hostname (<ip-with-dashes>.sslip.io) that resolves to the droplet IP.
-ip_to_sslip() { echo "$(echo "$1" | tr '.' '-').sslip.io"; }
+# Geen TLS-instellingen meer: de app en de console staan achter het portaal
+# (prive-adres + firewallregel voor de gateway + forward-auth), dus er is geen
+# publieke ingang op deze droplet die een certificaat nodig heeft.
 
-CURRENT_SITE=$(grep '^SITE_ADDRESS=' .env | cut -d= -f2- || true)
-if echo "$CURRENT_SITE" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-    # Existing value is a bare IP from an earlier run — migrate it.
-    NEW_SITE=$(ip_to_sslip "$CURRENT_SITE")
-    sed -i "s|^SITE_ADDRESS=.*|SITE_ADDRESS=${NEW_SITE}|" .env
-    echo "Migrated SITE_ADDRESS from bare IP to ${NEW_SITE}."
-elif [ -z "$CURRENT_SITE" ]; then
-    if [ -n "${SITE_ADDRESS:-}" ]; then
-        NEW_SITE="${SITE_ADDRESS}"
-    else
-        DETECTED_IP=$(curl -s -4 --max-time 5 ifconfig.me || true)
-        if [ -n "$DETECTED_IP" ]; then
-            NEW_SITE=$(ip_to_sslip "$DETECTED_IP")
-        else
-            NEW_SITE=""
-        fi
-    fi
-    if [ -n "$NEW_SITE" ]; then
-        echo "SITE_ADDRESS=${NEW_SITE}" >> .env
-        echo "Wrote SITE_ADDRESS=${NEW_SITE}."
-    else
-        echo "Could not determine SITE_ADDRESS — set it manually in .env, then re-run."
-    fi
-else
-    echo "SITE_ADDRESS already set to a hostname (${CURRENT_SITE}), leaving as-is."
-fi
-
-echo "== 4/6: (TLS handled automatically by Caddy via Let's Encrypt) =="
+echo "== 4/6: Toegang =="
+echo "APP_BIND/CONSOLE_BIND bepalen waar de diensten luisteren; zonder"
+echo "instelling is dat 127.0.0.1. Moet de gateway erbij, zet ze dan op het"
+echo "prive-adres van deze droplet — nooit op 0.0.0.0."
 
 echo "== 5/6: Build and start =="
 docker compose up -d --build --force-recreate
@@ -95,9 +70,9 @@ docker ps -a
 echo "--- listening ports ---"
 ss -tlnp 2>/dev/null || sudo ss -tlnp
 
-FINAL_SITE=$(grep '^SITE_ADDRESS=' .env | cut -d= -f2- || true)
 echo ""
-echo "Done. App should be reachable at: https://${FINAL_SITE:-<site-address>}"
-echo "Caddy fetches a Let's Encrypt certificate on first request — the very"
-echo "first load may take 10-30s while that happens. After that the padlock"
-echo "should be green (trusted), no warning."
+echo "Klaar. De app en de console luisteren op hun eigen poort; het portaal"
+echo "zet ze door en doet de authenticatie. Het echte adres per dienst:"
+echo "  docker compose port app 8501"
+echo "  docker compose port console 8000"
+echo "Loopt er iets niet, draai dan: bash deploy/diagnose.sh"

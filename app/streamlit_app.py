@@ -15,6 +15,7 @@ import streamlit as st
 
 import db
 import retailers
+from auth import ConfiguratieFout, resolve_auth
 
 # Vega-Lite axis that prefixes every tick label with a euro sign, so money
 # charts are visually distinct from unit/volume charts.
@@ -316,6 +317,20 @@ def _check_password() -> bool:
     """Simple shared-password gate. The password is read from
     st.secrets['app_password'] (set via Render's environment/secrets, or
     .streamlit/secrets.toml locally) — never hardcoded in source."""
+    try:
+        modus = resolve_auth()
+    except ConfiguratieFout as e:
+        st.error(str(e))
+        return False
+    if modus == "gateway":
+        # Het portaal heeft de bezoeker al geauthenticeerd; een tweede
+        # inlogscherm zou alleen een wachtwoord toevoegen dat iedereen deelt.
+        if os.environ.get("STREAMLIT_APP_PASSWORD"):
+            print("[app] LET OP: STREAMLIT_APP_PASSWORD is gezet maar wordt "
+                  "genegeerd in gateway-modus. Haal hem uit .env, of kies "
+                  "APP_AUTH=password als je die laag wel wilt.", flush=True)
+        return True
+
     configured = os.environ.get("STREAMLIT_APP_PASSWORD")
     if not configured:
         try:

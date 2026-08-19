@@ -123,9 +123,11 @@ fails closed when it is missing or still set to the example value
 ## Deploying — current plan: a Droplet (interim), proper internal web app later
 
 **Now:** run this on a single DigitalOcean Droplet (or any VM you already
-have), reachable at `https://<droplet-ip>`. Storage lives on the droplet's
-own disk, so history persists across restarts as long as you don't destroy
-the droplet.
+have). Both apps (Streamlit and the Retailer Console) listen on the
+droplet's **private** address only and are reached through the internal
+portal, which terminates TLS and authenticates the visitor — nothing here is
+published on the public IP. Storage lives on the droplet's own disk, so
+history persists across restarts as long as you don't destroy the droplet.
 
 **Later:** once this is validated, move to a proper internal web app (real
 domain, likely SSO instead of a shared password, possibly the Render setup
@@ -133,15 +135,26 @@ below or similar) — not built yet, revisit when Phase 1 usage proves out.
 
 ### Droplet setup
 
-This repo ships `docker-compose.yml` + `Caddyfile` for this: Caddy
-terminates TLS with a **self-signed certificate** (via `tls internal`) and
-reverse-proxies to the Streamlit app. A bare IP address can't get a
-publicly-trusted certificate (Let's Encrypt requires a domain name), so
-your browser will show a one-time "not trusted" warning the first time you
-visit — click through (or install Caddy's local CA cert) — the connection
-is still encrypted, just not verified by a public authority. Swap in a
-real domain + Let's Encrypt later by pointing DNS at the droplet and
-replacing `tls internal` with your email/domain in the Caddyfile.
+This repo ships `docker-compose.yml` only — there is no reverse proxy of our
+own any more. The portal in front of the droplet does TLS and authentication
+for every app on it, so a Caddy here would be a second, publicly exposed
+entrance to the same data. It was removed once the firewall stopped allowing
+inbound 80/443 (Let's Encrypt could no longer reach the host either, which is
+what surfaced the change).
+
+Each service publishes on `${..._BIND}:${..._PORT}`, defaulting to
+`127.0.0.1`. Set `APP_BIND` and `CONSOLE_BIND` to the droplet's private
+address so the gateway can reach them — never `0.0.0.0`. Both apps refuse to
+run in gateway mode on a non-private bind; see `APP_AUTH` below and
+`CONSOLE_AUTH` in `console/README.md`.
+
+| service | internal port | portal notes |
+|---|---|---|
+| `app` (Streamlit) | 8501 | **needs WebSockets**; own host, not a sub-path |
+| `console` | 8000 | no WebSockets; own host; `POST /api/import` uploads up to 200 MB |
+
+`APP_AUTH=gateway` drops the shared password once the portal is in front of
+it; `APP_AUTH=password` (the default) keeps the existing sign-in screen.
 
 **One-shot setup:** `deploy/bootstrap.sh` does everything below in one
 idempotent run — installs Docker if missing, clones/pulls the repo,
@@ -182,12 +195,13 @@ git checkout claude/outlook-attachment-analytics-g14jvk
 cp .env.example .env
 nano .env   # set STREAMLIT_APP_PASSWORD to a real password
 
-# 4. Build and start (app + Caddy reverse proxy with TLS)
+# 4. Build and start
 docker compose up -d --build
 ```
-Then open `https://<droplet-ip>` (accept the self-signed cert warning
-once). Only port 443 is bound — port 80 is deliberately left alone since
-another app's nginx may already be using it on a shared droplet.
+Then reach the app through the portal. The real address per service:
+`docker compose port app 8501` and `docker compose port console 8000`.
+Nothing binds a public port, so the host's own nginx on :80 and whatever
+else runs on this shared droplet stays untouched.
 
 `docker-compose.yml` bind-mounts `./data` on the droplet's own disk into
 the container, so `analytics.db` survives container restarts and

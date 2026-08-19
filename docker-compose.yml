@@ -3,6 +3,12 @@ services:
     build: .
     restart: unless-stopped
     environment:
+      # Zelfde schakelaar als de console (CONSOLE_AUTH): 'gateway' = geen
+      # eigen inlog, het portaal authenticeert; 'password' (standaard) = het
+      # gedeelde wachtwoord in de app zelf. Gateway-modus mag alleen bij een
+      # prive binding; de app weigert anders te starten.
+      - APP_AUTH=${APP_AUTH:-password}
+      - APP_BIND=${APP_BIND:-127.0.0.1}
       - STREAMLIT_APP_PASSWORD=${STREAMLIT_APP_PASSWORD}
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
       - AZURE_TENANT_ID=${AZURE_TENANT_ID:-common}
@@ -13,8 +19,11 @@ services:
       - IMAP_FOLDER=${IMAP_FOLDER:-INBOX}
     volumes:
       - ./data:/app/data
-    expose:
-      - "8501"
+    ports:
+      # Net als de console: ALLEEN op het prive-adres, toegang loopt via het
+      # portaal (forward-auth op de gateway). Nooit 0.0.0.0 — dan staan de
+      # verkoopcijfers op het publieke IP.
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8501}:8501"
 
   # Polls Outlook for new sellout mails. Shares ./data with the app, so it
   # uses the same database and the same OAuth token cache — signing in once
@@ -68,28 +77,6 @@ services:
       # droplet — nooit op 0.0.0.0.
       - "${CONSOLE_BIND:-127.0.0.1}:${CONSOLE_PORT:-8010}:8000"
 
-  caddy:
-    image: caddy:2
-    restart: unless-stopped
-    environment:
-      # De standaardwaarde is de sslip-hostnaam, NIET het kale IP: voor een
-      # IP-literal stuurt de browser geen SNI mee en geeft Let's Encrypt geen
-      # certificaat uit, dus valt Caddy terug op zijn interne CA en mislukt
-      # elke handshake. De uitleg staat bovenin de Caddyfile. Compose levert
-      # altijd een waarde aan, dus de fallback in de Caddyfile zelf komt
-      # nooit aan bod — die twee moeten daarom gelijk zijn.
-      - SITE_ADDRESS=${SITE_ADDRESS:-188-166-88-105.sslip.io}
-    ports:
-      # Only 443: this droplet's host port 80 is already used by an
-      # existing nginx instance for another app — left untouched.
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - app
-
   # Dagelijkse back-up van BEIDE databases naar ./backups, 14 dagen bewaard.
   # Zonder deze service staat de volledige importhistorie op één droplet
   # zonder kopie. Leest de databases alleen; draait als eigen container zodat
@@ -111,7 +98,3 @@ services:
       - ./backups:/backups
       - ./deploy/backup.sh:/backup.sh:ro
     entrypoint: ["/bin/sh", "-c", "apk add --no-cache sqlite >/dev/null && exec /bin/sh /backup.sh"]
-
-volumes:
-  caddy_data:
-  caddy_config:
