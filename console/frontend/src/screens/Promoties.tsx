@@ -117,8 +117,8 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
                       {u.uplift_pct != null && <div className="bar-fill" style={{
                         height: 8,
                         width: `${(Math.abs(u.uplift_pct) / maxAbs) * 100}%`,
-                        background: u.uplift_pct < 0 ? "oklch(0.55 0.18 27)"
-                          : YEAR_COLORS[2026 - u.jaar] ?? "#BAC3C8",
+                        background: u.uplift_pct < 0 ? "var(--neg)"
+                          : YEAR_COLORS[2026 - u.jaar] ?? "var(--t-fg3)",
                       }} />}
                     </div>
                     {u.uplift_pct != null ? (

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { BRAND_COLORS, apiGet, fmtEur, fmtNum, merkKleur } from "../api";
+import { ThemaModus, bepaalThema, bewaarModus, leesModus, pasToe, volgSysteem } from "../theme";
 
 /** Uniform laden/fout-gedrag voor de leesschermen: elke API-fout wordt een
  * nette kaart met "Opnieuw proberen" in plaats van een eeuwig "Laden…". */
@@ -116,7 +117,8 @@ export function TrendChart({ series, years, isEuro, periodWord }:
   const maxY = Math.max(1, ...years.flatMap((y) => Object.values(series[y] ?? {})));
   const x = (p: number) => PAD + ((p - minX) / Math.max(1, maxX - minX)) * (W - 2 * PAD);
   const y = (v: number) => H - PAD - (v / maxY) * (H - 2 * PAD);
-  const colors = ["#BAC3C8", "#7E8D92", "#0E323B"]; // oldest -> newest
+  // oudste -> nieuwste; de jaartokens contrasteren in beide thema's.
+  const colors = ["var(--c-y1)", "var(--c-y2)", "var(--c-y3)"];
 
   const onMove = (e: React.MouseEvent) => {
     const rect = ref.current!.getBoundingClientRect();
@@ -136,14 +138,14 @@ export function TrendChart({ series, years, isEuro, periodWord }:
         onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
         <title>{`${isEuro ? "Omzet" : "Volume"} per ${periodWord.toLowerCase()}, jaar op jaar (${years.join(", ")})`}</title>
         {[0.25, 0.5, 0.75, 1].map((f) => (
-          <line key={f} x1={PAD} x2={W - PAD} y1={y(maxY * f)} y2={y(maxY * f)} stroke="#EAEFF1" />
+          <line key={f} x1={PAD} x2={W - PAD} y1={y(maxY * f)} y2={y(maxY * f)} stroke="var(--t-grid)" />
         ))}
-        <line x1={PAD} x2={W - PAD} y1={H - PAD} y2={H - PAD} stroke="#BAC3C8" />
+        <line x1={PAD} x2={W - PAD} y1={H - PAD} y2={H - PAD} stroke="var(--t-border)" />
         {nums.filter((_, i) => i % Math.ceil(nums.length / 12) === 0).map((p) => (
-          <text key={p} x={x(p)} y={H - PAD + 16} textAnchor="middle" fontSize="10.5" fill="#7E8D92">{p}</text>
+          <text key={p} x={x(p)} y={H - PAD + 16} textAnchor="middle" fontSize="10.5" fill="var(--t-fg3)">{p}</text>
         ))}
         {[maxY, maxY / 2].map((v, i) => (
-          <text key={i} x={PAD - 6} y={y(v) + 3} textAnchor="end" fontSize="10.5" fill="#7E8D92">
+          <text key={i} x={PAD - 6} y={y(v) + 3} textAnchor="end" fontSize="10.5" fill="var(--t-fg3)">
             {/* Onder de €10k hele euro's: "€0k" op de per-winkel-as zei niets. */}
             {isEuro ? (v >= 10000 ? "€" + Math.round(v / 1000) + "k" : fmtEur(v))
                     : fmtNum(Math.round(v))}
@@ -157,7 +159,7 @@ export function TrendChart({ series, years, isEuro, periodWord }:
         })}
         {hover != null && (
           <g>
-            <line x1={x(hover)} x2={x(hover)} y1={PAD} y2={H - PAD} stroke="#7E8D92" strokeDasharray="3 3" />
+            <line x1={x(hover)} x2={x(hover)} y1={PAD} y2={H - PAD} stroke="var(--t-fg3)" strokeDasharray="3 3" />
             {years.map((yr, i) => series[yr]?.[hover] != null && (
               <circle key={yr} cx={x(hover)} cy={y(series[yr][hover])} r={3.5}
                 fill={colors[colors.length - years.length + i]} />
@@ -209,9 +211,9 @@ export function Sparkline({ ytd, lytd, isEuro, periodWord }:
         }}
         onMouseLeave={() => setHover(null)}>
         <title>{`Verloop per ${periodWord.toLowerCase()}: doorgetrokken lijn dit jaar, stippellijn vorig jaar`}</title>
-        <path d={path(lytd)} fill="none" stroke="#BAC3C8" strokeWidth="1.2" strokeDasharray="3 3" />
-        <path d={path(ytd)} fill="none" stroke="#0E323B" strokeWidth="1.5" />
-        {hover != null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="#7E8D92" strokeDasharray="2 2" />}
+        <path d={path(lytd)} fill="none" stroke="var(--t-border)" strokeWidth="1.2" strokeDasharray="3 3" />
+        <path d={path(ytd)} fill="none" stroke="var(--t-fg)" strokeWidth="1.5" />
+        {hover != null && <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} stroke="var(--t-fg3)" strokeDasharray="2 2" />}
       </svg>
       {hover != null && (
         <span className="tooltip" style={{ left: x(hover), top: -46 }}>
@@ -287,20 +289,20 @@ export function TijdlijnPanelen({ periodes, reeksen, isMaand }:
         onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
         <title>Boven: omzet per winkel. Onder: aantal winkels. Zelfde tijdas, zelfde kleur per merk.</title>
 
-        <text x={PAD} y={12} fontSize="10.5" fill="#64777D" letterSpacing="0.12em">OMZET PER WINKEL</text>
+        <text x={PAD} y={12} fontSize="10.5" fill="var(--t-fg2)" letterSpacing="0.12em">OMZET PER WINKEL</text>
         {[0.5, 1].map((f) => (
-          <line key={f} x1={PAD} x2={W - 14} y1={yTop(maxTop * f)} y2={yTop(maxTop * f)} stroke="#EAEFF1" />
+          <line key={f} x1={PAD} x2={W - 14} y1={yTop(maxTop * f)} y2={yTop(maxTop * f)} stroke="var(--t-grid)" />
         ))}
         {[maxTop, maxTop / 2].map((v, i) => (
-          <text key={i} x={PAD - 6} y={yTop(v) + 3} textAnchor="end" fontSize="10.5" fill="#7E8D92">
+          <text key={i} x={PAD - 6} y={yTop(v) + 3} textAnchor="end" fontSize="10.5" fill="var(--t-fg3)">
             {v >= 10000 ? "€" + Math.round(v / 1000) + "k" : fmtEur(v)}
           </text>
         ))}
 
-        <text x={PAD} y={HB + GAP + 4} fontSize="10.5" fill="#64777D" letterSpacing="0.12em">AANTAL WINKELS</text>
-        <line x1={PAD} x2={W - 14} y1={yBot(minBot)} y2={yBot(minBot)} stroke="#EAEFF1" />
+        <text x={PAD} y={HB + GAP + 4} fontSize="10.5" fill="var(--t-fg2)" letterSpacing="0.12em">AANTAL WINKELS</text>
+        <line x1={PAD} x2={W - 14} y1={yBot(minBot)} y2={yBot(minBot)} stroke="var(--t-grid)" />
         {[maxBot, minBot].map((v, i) => (
-          <text key={i} x={PAD - 6} y={yBot(v) + 3} textAnchor="end" fontSize="10.5" fill="#7E8D92">
+          <text key={i} x={PAD - 6} y={yBot(v) + 3} textAnchor="end" fontSize="10.5" fill="var(--t-fg3)">
             {Math.round(v)}
           </text>
         ))}
@@ -330,10 +332,10 @@ export function TijdlijnPanelen({ periodes, reeksen, isMaand }:
 
         {hover != null && (
           <line x1={x(hover)} x2={x(hover)} y1={14} y2={HB + GAP + HO - 12}
-            stroke="#0E323B" strokeWidth={0.8} opacity={0.35} />
+            stroke="var(--t-fg)" strokeWidth={0.8} opacity={0.35} />
         )}
         {labelIdx.map((i) => (
-          <text key={i} x={x(i)} y={H - 6} textAnchor="middle" fontSize="10" fill="#7E8D92">
+          <text key={i} x={x(i)} y={H - 6} textAnchor="middle" fontSize="10" fill="var(--t-fg3)">
             {periodes[i]}
           </text>
         ))}
@@ -362,6 +364,66 @@ export function TijdlijnPanelen({ periodes, reeksen, isMaand }:
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+
+/* ---------------------------------------------------------------- thema */
+
+const THEMA_OPTIES: { modus: ThemaModus; label: string; titel: string; icoon: JSX.Element }[] = [
+  {
+    modus: "system", label: "Systeem", titel: "Volg de instelling van je computer",
+    icoon: (<><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="17" x2="12" y2="21" /></>),
+  },
+  {
+    modus: "light", label: "Licht", titel: "Altijd het lichte thema",
+    icoon: (<><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" /></>),
+  },
+  {
+    modus: "dark", label: "Donker", titel: "Altijd het donkere thema",
+    icoon: (<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />),
+  },
+];
+
+/** Licht/donker kiezen. De keuze staat in localStorage, dus hij geldt voor
+ *  dit apparaat en overleeft uitloggen en de browser sluiten. */
+export function ThemaKeuze() {
+  const [modus, setModus] = useState<ThemaModus>(leesModus);
+  const [thema, setThema] = useState(() => bepaalThema(leesModus()));
+
+  useEffect(() => {
+    setThema(pasToe(modus));
+    bewaarModus(modus);
+    // Alleen in 'systeem' hoeft er meegeluisterd te worden: wisselt de
+    // computer van licht naar donker, dan wisselt de app mee.
+    if (modus !== "system") return;
+    return volgSysteem(() => setThema(pasToe("system")));
+  }, [modus]);
+
+  return (
+    <div className="card">
+      <div className="kpi-label" style={{ marginBottom: 12 }}>Thema</div>
+      <div className="seg" role="group" aria-label="Thema">
+        {THEMA_OPTIES.map((o) => (
+          <button key={o.modus} title={o.titel} onClick={() => setModus(o.modus)}
+            className={modus === o.modus ? "on" : ""} aria-pressed={modus === o.modus}
+            style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              {o.icoon}
+            </svg>
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <p className="sub" style={{ marginTop: 10 }}>
+        {modus === "system"
+          ? `Volgt je computer — nu ${thema === "dark" ? "donker" : "licht"}.`
+          : "Vaste keuze, ongeacht wat je computer doet."}
+        {" "}Geldt voor deze browser en blijft staan na uitloggen.
+      </p>
     </div>
   );
 }

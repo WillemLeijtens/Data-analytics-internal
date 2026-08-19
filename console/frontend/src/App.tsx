@@ -160,7 +160,7 @@ function Shell() {
         </div>
         <main className="content">
           {apiDown && (
-            <div className="level-strip" style={{ borderLeft: "3px solid oklch(0.55 0.18 27)" }}>
+            <div className="level-strip" style={{ borderLeft: "3px solid var(--neg)" }}>
               <span className="sub">De server is op dit moment niet bereikbaar — gegevens kunnen verouderd zijn.</span>
               <a style={{ cursor: "pointer", marginLeft: "auto" }} onClick={refresh}>Opnieuw proberen</a>
             </div>

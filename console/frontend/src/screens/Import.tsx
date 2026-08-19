@@ -92,7 +92,7 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
         bevestigt daarna pas.</p>
 
       {error && (
-        <div className="level-strip" style={{ borderLeft: "3px solid oklch(0.55 0.18 27)" }}>
+        <div className="level-strip" style={{ borderLeft: "3px solid var(--neg)" }}>
           <span className="sub">{error}</span>
           <a style={{ cursor: "pointer", marginLeft: "auto" }} onClick={() => refresh()}>Opnieuw proberen</a>
         </div>
@@ -122,7 +122,7 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
                   Dit is een bestand voor <b>{p.retailer_naam ?? p.retailer_id}</b>. Klopt dat?
                 </p>
                 {anderTabblad && (
-                  <p className="sub" style={{ color: "#B4690E" }}>
+                  <p className="sub" style={{ color: "var(--warn)" }}>
                     Let op: je staat op het tabblad {ctx.card?.naam}. Bevestig je, dan komt het
                     bestand onder {p.retailer_naam ?? p.retailer_id} te staan — niet onder {ctx.card?.naam}.
                   </p>
@@ -138,7 +138,7 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
             )}
             {!p.herkend && p.detail && (
               // Onderscheid "parser nodig" van "bestand onleesbaar".
-              <p className="sub" style={{ color: "#B4690E" }}>{p.detail}</p>
+              <p className="sub" style={{ color: "var(--warn)" }}>{p.detail}</p>
             )}
             <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
               <button className="btn" disabled={busy} onClick={() => bevestig(item)}

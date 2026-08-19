@@ -3,7 +3,7 @@ import { ShellCtx } from "../App";
 import { LoadState, useApi } from "../components/shared";
 
 const SIG_BORDER: Record<Signaal, string> = {
-  green: "var(--pos)", orange: "#E08A2E", red: "oklch(0.55 0.18 27)", grey: "#BAC3C8",
+  green: "var(--pos)", orange: "var(--warn)", red: "var(--neg)", grey: "var(--t-fg3)",
 };
 const SIG_TEXT: Record<Signaal, string> = {
   green: "sig-green", orange: "sig-orange", red: "sig-red", grey: "sig-grey",
@@ -41,7 +41,7 @@ export default function Overzicht({ ctx }: { ctx: ShellCtx }) {
         {data.retailers.map((c, i) => (
           <div key={c.id} className="card">
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span className="mono" style={{ color: "#7E8D92" }}>{String(i + 1).padStart(2, "0")}</span>
+              <span className="mono" style={{ color: "var(--t-fg3)" }}>{String(i + 1).padStart(2, "0")}</span>
               <span className={`tag ${c.profiel?.status === "live" ? "" : "accent"}`}>
                 {c.profiel ? (c.profiel.status === "live" ? "Live" : c.profiel.status === "test" ? "Test" : "Concept") : "Nieuw"}
               </span>
@@ -68,13 +68,13 @@ export default function Overzicht({ ctx }: { ctx: ShellCtx }) {
       <div className="radar-wrap">
         <div className="radar">
           <svg width="680" height="680" viewBox="0 0 680 680" style={{ position: "absolute", inset: 0 }}>
-            <circle cx="340" cy="340" r="180" fill="none" stroke="#EAEFF1" strokeWidth="1.5" />
-            <circle cx="340" cy="340" r="270" fill="none" stroke="#EAEFF1" strokeWidth="1.5" />
-            <circle cx="340" cy="340" r="330" fill="none" stroke="#BAC3C8" strokeDasharray="3 6" />
+            <circle cx="340" cy="340" r="180" fill="none" stroke="var(--t-grid)" strokeWidth="1.5" />
+            <circle cx="340" cy="340" r="270" fill="none" stroke="var(--t-grid)" strokeWidth="1.5" />
+            <circle cx="340" cy="340" r="330" fill="none" stroke="var(--t-border)" strokeDasharray="3 6" />
             {[45, 135, 225, 315].map((a) => (
               <line key={a} x1="340" y1="340"
                 x2={340 + 330 * Math.cos((a * Math.PI) / 180)}
-                y2={340 + 330 * Math.sin((a * Math.PI) / 180)} stroke="#EAEFF1" />
+                y2={340 + 330 * Math.sin((a * Math.PI) / 180)} stroke="var(--t-grid)" />
             ))}
           </svg>
           <div className="radar-sweep" />
@@ -139,7 +139,7 @@ export default function Overzicht({ ctx }: { ctx: ShellCtx }) {
         <tbody>
           {data.retailers.map((c) => {
             const cell = (on?: boolean) =>
-              on ? <td>ja</td> : <td style={{ color: "#BAC3C8" }}>nee</td>;
+              on ? <td>ja</td> : <td style={{ color: "var(--t-fg3)" }}>nee</td>;
             return (
               <tr key={c.id}>
                 <td>{c.naam}</td>

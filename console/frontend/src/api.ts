@@ -22,25 +22,34 @@ export type RetailerCard = {
   };
 };
 
+// Kleuren komen uit het palet in ds/theme.css, niet uit losse hexwaarden:
+// zo blijft er één plek waar het beheerd wordt, en volgt een grafiek vanzelf
+// het thema. `var(--catN)` werkt ook in SVG-attributen (fill/stroke).
+//
+// Merken houden hun kleur in beide thema's — de categoriekleuren zijn
+// bewust thema-onafhankelijk, anders "verspringt" een merk bij het wisselen.
 export const BRAND_COLORS: Record<string, string> = {
-  TWEEZERMAN: "oklch(0.45 0.1 285)",
-  ALESSANDRO: "oklch(0.58 0.13 27)",
-  "DEPEND GEL IQ": "oklch(0.66 0.12 80)",
-  "OLIVIA GARDEN": "oklch(0.52 0.1 160)",
+  TWEEZERMAN: "var(--cat1)",
+  ALESSANDRO: "var(--cat5)",
+  "DEPEND GEL IQ": "var(--cat6)",
+  "OLIVIA GARDEN": "var(--cat2)",
 };
-export const YEAR_COLORS = ["#0E323B", "#7E8D92", "#BAC3C8"]; // current, -1, -2
 
-// Merken die niet in BRAND_COLORS staan (BJÖRN AXÉN, PATCHOLOGY, …) kregen
-// allemaal dezelfde donkere kleur; in een grafiek met meerdere lijnen zijn ze
-// dan niet uit elkaar te houden. Deze reservekleuren zijn stabiel per naam,
-// dus een merk houdt zijn kleur over schermen en sessies heen.
+// Jaren: apart van de categoriekleuren en WEL per thema, want ze moeten
+// onderling contrasteren op een lichte én een donkere ondergrond.
+// Volgorde: huidig jaar, -1, -2.
+export const YEAR_COLORS = ["var(--c-y3)", "var(--c-y2)", "var(--c-y1)"];
+
+// Merken die niet vast toegewezen zijn, krijgen een stabiele kleur uit de
+// rest van het palet: dezelfde naam geeft altijd dezelfde kleur, over
+// schermen en sessies heen.
 const RESERVE_COLORS = [
-  "oklch(0.42 0.09 230)", "oklch(0.55 0.11 145)", "oklch(0.50 0.12 330)",
-  "oklch(0.60 0.10 60)", "oklch(0.45 0.08 190)", "oklch(0.52 0.13 15)",
+  "var(--cat3)", "var(--cat4)", "var(--cat7)",
+  "var(--cat8)", "var(--cat10)", "var(--cat9)",
 ];
 
 export function merkKleur(merk: string | null | undefined): string {
-  if (!merk) return "#7E8D92";
+  if (!merk) return "var(--t-fg3)";
   if (BRAND_COLORS[merk]) return BRAND_COLORS[merk];
   let h = 0;
   for (const teken of merk) h = (h * 31 + teken.charCodeAt(0)) >>> 0;

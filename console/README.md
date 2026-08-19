@@ -57,6 +57,52 @@ proces een poort vasthoudt, of er per ongeluk twee compose-projecten naast
 elkaar staan (elk met een eigen database), en of de console gezond is. Het
 script leest alleen en wijzigt niets.
 
+## Thema en kleurpalet
+
+Licht of donker kiest de gebruiker bij **Instellingen → Weergave**: systeem,
+licht of donker. De keuze staat in `localStorage` onder `bl-theme` en geldt
+dus per browser — hij blijft staan na uitloggen en na het sluiten van de
+browser. Er is bewust geen serverkant: een voorkeur die pas na een
+API-antwoord toegepast wordt, laat de pagina eerst in het verkeerde thema
+opflitsen. In de stand *systeem* volgt de app `prefers-color-scheme` en
+wisselt hij live mee als de computer omschakelt.
+
+Het thema staat als `data-theme="light" | "dark"` op `<html>`. Dat gebeurt in
+een klein script in `index.html`, vóór de eerste verf; `src/theme.ts` doet
+daarna hetzelfde vanuit de app. Wijzig je het een, wijzig dan het ander mee.
+
+**Alle kleuren staan in `src/ds/theme.css`** — dat is de enige plek waar het
+palet beheerd wordt. De rest van de stylesheets en de componenten verwijzen
+naar variabelen (`var(--t-card)`, `var(--cat3)`), ook in SVG-attributen, zodat
+een grafiek vanzelf met het thema meekleurt. De oude merkaliassen uit
+`colors_and_type.css` (`--fg-1`, `--bg-page`, …) wijzen door naar de
+themavariabelen.
+
+| groep | tokens | waarvoor |
+|---|---|---|
+| vlakken | `--t-bg` `--t-card` `--t-card2` `--t-border` | pagina, kaart, verzonken vlak, haarlijn |
+| tekst | `--t-fg` `--t-fg2` `--t-meta` | primair, secundair, metadata |
+| zijbalk | `--t-sidebar*` | die blijft donker in beide thema's |
+| jaren | `--c-y1..3` | grafiekreeksen per jaar, per thema anders |
+| categorieën | `--cat1..10` | merken en retailers, in beide thema's gelijk |
+| signalen | `--pos` `--neg` `--warn` (+ `-text`) | vlakken/stippen, en de leesbare tekstvariant |
+| accent | `--accent` | **alleen** de targetlijn en één haarlijn per pagina |
+
+`--t-fg3`, `--pos`, `--neg` en `--warn` uit de handoff halen als kleine tekst
+de 4,5:1-norm niet. Ze blijven daarom voor stippen, lijnen en vlakken (norm
+3:1), en voor tekst staan er `--t-meta`, `--pos-text`, `--neg-text` en
+`--warn-text` naast — dezelfde tint, een stap donkerder of lichter.
+
+Kleur gewijzigd? Meet opnieuw:
+
+```bash
+cd console/frontend && node contrast.mjs
+```
+
+Dat leest `theme.css`, toetst tekst aan 4,5:1 en UI-elementen aan 3:1, en
+meldt reekskleuren die perceptueel (OKLab) te dicht bij elkaar liggen om in
+één grafiek uit elkaar te houden.
+
 **Toegangscontrole: één schakelaar, `CONSOLE_AUTH`.** Instellingen kunnen
 elkaar dus niet tegenspreken.
 

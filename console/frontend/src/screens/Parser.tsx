@@ -74,7 +74,7 @@ export default function Parser({ ctx }: { ctx: ShellCtx }) {
             onChange={(e) => { controleer(e.target.files?.[0] ?? null); e.target.value = ""; }} />
         </div>
       </div>
-      {msg && <p className="sub" style={{ color: "var(--main)" }}>{msg}</p>}
+      {msg && <p className="sub" style={{ color: "var(--t-fg)" }}>{msg}</p>}
 
       <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", marginTop: 18 }}>
         <div className="card">

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import "./ds/colors_and_type.css";
+import "./ds/theme.css";
 import "./styles.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

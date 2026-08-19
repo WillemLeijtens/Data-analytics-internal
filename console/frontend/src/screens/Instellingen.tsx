@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiSend } from "../api";
 import { ShellCtx } from "../App";
-import { EmptyProfileCard, LoadState } from "../components/shared";
+import { EmptyProfileCard, LoadState, ThemaKeuze } from "../components/shared";
 
 
 /** Winkelaantallen met terugwerkende kracht. Zonder datums wordt de hele
@@ -105,7 +105,17 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   useEffect(() => { setData(null); load(); setMsg(null); }, [ctx.retailer]);
 
   if (!data) return <LoadState error={error} reload={load} />;
-  if (!ctx.card?.profiel) return <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />;
+  if (!ctx.card?.profiel) {
+    // Het thema is een voorkeur van de gebruiker, niet van de retailer, en
+    // hoort dus ook bereikbaar te zijn zolang er nog geen profiel is.
+    return (<>
+      <h1>Instellingen</h1>
+      <h2>Weergave</h2>
+      <ThemaKeuze />
+      <hr className="hairline" />
+      <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />
+    </>);
+  }
 
   const caps = data.capabilities;
   const winkelsReadonly = !!caps?.winkel;   // ICI: store count comes from the facts
@@ -148,6 +158,9 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   return (
     <>
       <h1>Instellingen — {ctx.card?.naam}</h1>
+
+      <h2>Weergave</h2>
+      <ThemaKeuze />
 
       <h2>SharePoint koppeling</h2>
       {data.sharepoint ? (
@@ -288,7 +301,7 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
           )}
         </>
       ) : (
-        <div className="card" style={{ background: "var(--quiet)", boxShadow: "none" }}>
+        <div className="card" style={{ background: "var(--t-card2)", boxShadow: "none" }}>
           <span className="sub">Niet van toepassing: deze retailer levert geen artikelniveau.</span>
         </div>
       )}
@@ -296,7 +309,7 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
       <h2>Automatische import uit mail</h2>
       {/* Er draait nog geen poller voor de console: een klikbare ACTIEF-
           toggle zou beloven dat er iets gebeurt terwijl er niets gebeurt. */}
-      <div className="level-strip" style={{ borderLeft: "3px solid #B4690E" }}>
+      <div className="level-strip" style={{ borderLeft: "3px solid var(--warn)" }}>
         <span className="sub"><b>Nog niet actief.</b> Importeren gaat op dit moment handmatig
           via <a style={{ cursor: "pointer" }} onClick={() => ctx.go(ctx.retailer, "import")}>Import</a>.
           De regels hieronder worden bewaard en gaan werken zodra de mailkoppeling live is.</span>

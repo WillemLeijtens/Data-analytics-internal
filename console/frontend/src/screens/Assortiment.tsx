@@ -4,7 +4,7 @@ import { BrandDot, EmptyProfileCard, LevelStrip, LoadState, useApi } from "../co
 
 function Warn() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="oklch(0.45 0.14 27)"
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--neg)"
       strokeWidth="2" style={{ verticalAlign: "-2px", marginRight: 5 }}>
       <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
       <path d="M12 9v4" /><path d="M12 17h.01" />
@@ -38,9 +38,9 @@ export default function Assortiment({ ctx }: { ctx: ShellCtx }) {
       <div className="grid kpi" style={{ marginBottom: 22 }}>
         <div className="card"><div className="kpi-label">Op / boven target</div><div className="kpi-value">{s.op_target}</div></div>
         <div className="card"><div className="kpi-label">Onder target</div>
-          <div className="kpi-value" style={{ color: s.onder_target ? "oklch(0.45 0.14 27)" : undefined }}>{s.onder_target}</div></div>
+          <div className="kpi-value" style={{ color: s.onder_target ? "var(--neg)" : undefined }}>{s.onder_target}</div></div>
         <div className="card"><div className="kpi-label">Mogelijke delist</div>
-          <div className="kpi-value" style={{ color: s.delist ? "oklch(0.45 0.14 27)" : undefined }}>{s.delist}</div></div>
+          <div className="kpi-value" style={{ color: s.delist ? "var(--neg)" : undefined }}>{s.delist}</div></div>
       </div>
       <table className="data">
         <thead><tr><th>Artikel</th><th>Merk</th><th>Rotatie</th><th>Target</th><th>Score</th><th>Advies</th></tr></thead>

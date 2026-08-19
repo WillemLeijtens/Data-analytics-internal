@@ -10,7 +10,7 @@ function StatusBadge({ status, reden }: { status: string | null; reden: string |
   const stijl: Record<string, { tekst: string; kleur: string; rand: string }> = {
     nieuw: { tekst: "NIEUW", kleur: "var(--pos)", rand: "var(--pos)" },
     delisted: { tekst: "DELISTED", kleur: "var(--neg)", rand: "var(--neg)" },
-    "delisted?": { tekst: "DELISTED?", kleur: "#B4690E", rand: "#B4690E" },
+    "delisted?": { tekst: "DELISTED?", kleur: "var(--warn)", rand: "var(--warn)" },
   };
   const s = stijl[status];
   if (!s) return null;
