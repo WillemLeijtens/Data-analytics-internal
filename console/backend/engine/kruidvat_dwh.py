@@ -225,6 +225,12 @@ def parse_workbook(path: str, filename: str) -> ParsedFile:
         sheet, silently dropping the others (and their banner never reached
         the filters).
     """
+    # NB: bewust GEEN read_only=True — dit blad wordt eerst gescand via
+    # iter_rows() (kandidaat-detectie) en daarna met cell(row=, column=)
+    # random-access uitgelezen; die combinatie werkt niet op een read-only
+    # (streaming) werkblad en liep in de praktijk vast. Een echte fix
+    # vereist het herschrijven van de extractie naar iter_rows(), wat een
+    # grotere, risicovollere wijziging is dan hier passend.
     wb = openpyxl.load_workbook(path, data_only=True)
     candidates = _sheet_candidates(wb)
     if not candidates:
@@ -335,11 +341,21 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
         sku = ws.cell(row=r, column=sku_col).value
         if sku is None:
             continue
-        try:
-            sku = str(int(sku))
-        except (TypeError, ValueError):
-            result.warnings.append(f"Rij {r}: SKU {sku!r} is geen nummer — overgeslagen.")
-            continue
+        if isinstance(sku, str):
+            # Een tekstcel behoudt een echte leidende nul (Excel-getallen
+            # kunnen dat sowieso nooit, dus alleen tekst is hier het risico).
+            # str(int(...)) zou "007" stilzwijgend tot "7" maken.
+            sku = sku.strip()
+            if re.fullmatch(r"\d+\.0+", sku):
+                sku = sku.split(".", 1)[0]
+            if not sku:
+                continue
+        else:
+            try:
+                sku = str(int(sku))
+            except (TypeError, ValueError):
+                result.warnings.append(f"Rij {r}: SKU {sku!r} is geen nummer — overgeslagen.")
+                continue
 
         row_brand = brand
         if brand_col:

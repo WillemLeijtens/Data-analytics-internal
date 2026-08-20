@@ -324,9 +324,14 @@ def _bewaar_in_inbox(filename: str, content: bytes) -> str | None:
     stappen of aan een shell ontsnappen."""
     naam = _VEILIG.sub("_", filename).strip("._") or "upload.xlsx"
     try:
-        INBOX.mkdir(parents=True, exist_ok=True)
+        INBOX.mkdir(parents=True, exist_ok=True, mode=0o700)
         doel = INBOX / naam
         doel.write_bytes(content)
+        # Bestandsinhoud kan bedrijfsgevoelige verkoopcijfers bevatten —
+        # niet leesbaar laten voor andere gebruikers op de host dan het
+        # eigen procesaccount (anders het default umask-gedrag, doorgaans
+        # world-readable).
+        doel.chmod(0o600)
     except OSError as e:  # noqa: BLE001 - volle schijf mag de import niet slopen
         print(f"[console] kon {naam} niet in de inbox bewaren: {e}", flush=True)
         return None
@@ -351,9 +356,21 @@ async def do_import(files: list[UploadFile]):
                     uitkomst["detail"] = ((uitkomst.get("detail") or "") +
                                           f" — bewaard als {pad}").strip(" —")
             results.append(uitkomst)
-        except Exception as e:  # noqa: BLE001 - one bad file must not kill the batch
+        except ValueError as e:
+            # Bewust opgeworpen, veilige meldingen (te groot bestand,
+            # decompressiebom) — die mogen letterlijk naar de gebruiker.
             results.append({"filename": filename, "status": "error",
                             "rows": 0, "retailer_id": None, "detail": str(e)})
+        except Exception as e:  # noqa: BLE001 - one bad file must not kill the batch
+            # Onverwachte fout (bug, DB-probleem): niet de ruwe exception-
+            # tekst naar de client — die kan interne details lekken. Volledig
+            # bericht gaat naar de serverlog, de gebruiker krijgt een veilige
+            # samenvatting.
+            print(f"[console] onverwachte fout bij import van {filename}: {e}", flush=True)
+            results.append({"filename": filename, "status": "error", "rows": 0,
+                            "retailer_id": None,
+                            "detail": "onverwachte fout bij het verwerken van dit bestand — "
+                                      "probeer het opnieuw of neem contact op als dit blijft gebeuren"})
     return {"results": results}
 
 
