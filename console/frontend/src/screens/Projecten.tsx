@@ -32,28 +32,32 @@ function bereken(proj: any, producten: any[], kosten: any[]) {
     };
   });
   const weken = looptijdWeken(proj.start_datum, proj.eind_datum);
-  const kostenEenmalig = kosten.filter((k) => !k.terugkerend).reduce((a, k) => a + n(k.bedrag), 0);
-  const kostenLooptijd = kosten.filter((k) => k.terugkerend).reduce((a, k) => a + n(k.bedrag), 0);
+  const bij = (k: any) => k.soort === "bijdrage_leverancier";
+  const somK = (terug: boolean, bijdrage: boolean) => kosten
+    .filter((k) => !!k.terugkerend === terug && bij(k) === bijdrage)
+    .reduce((a, k) => a + n(k.bedrag), 0);
+  const kostenEenmalig = somK(false, false), bijdrageEenmalig = somK(false, true);
+  const kostenLooptijd = somK(true, false), bijdrageLooptijd = somK(true, true);
   const som = (veld: string) => rijen.reduce((a, r: any) => a + r[veld], 0);
   const eenOmzet = som("eenmalig_omzet"), eenProductmarge = som("eenmalig_marge");
   const weekOmzet = som("week_omzet"), weekMarge = som("week_marge");
-  const eenMarge = eenProductmarge - kostenEenmalig;
+  const eenMarge = eenProductmarge - kostenEenmalig + bijdrageEenmalig;
   const terugOmzet = weken ? weekOmzet * weken : null;
-  const terugMarge = weken ? weekMarge * weken - kostenLooptijd : null;
-  const kostenBuitenBeeld = !weken && kostenLooptijd ? kostenLooptijd : 0;
+  const terugMarge = weken ? weekMarge * weken - kostenLooptijd + bijdrageLooptijd : null;
+  const kostenBuitenBeeld = !weken && (kostenLooptijd || bijdrageLooptijd)
+    ? kostenLooptijd - bijdrageLooptijd : 0;
   const pct = (m: number, o: number) => (o ? (m / o) * 100 : null);
   return {
     rijen, weken, kostenBuitenBeeld,
     eenmalig: { omzet: eenOmzet, productmarge: eenProductmarge, kosten: kostenEenmalig,
-                marge: eenMarge, pct: pct(eenMarge, eenOmzet) },
+                bijdrage: bijdrageEenmalig, marge: eenMarge, pct: pct(eenMarge, eenOmzet) },
     terugkerend: { weekOmzet, weekMarge, omzet: terugOmzet, kosten: kostenLooptijd,
-                   marge: terugMarge,
+                   bijdrage: bijdrageLooptijd, marge: terugMarge,
                    pct: terugMarge != null && terugOmzet ? pct(terugMarge, terugOmzet) : null },
     totaal: { omzet: eenOmzet + (terugOmzet ?? 0), marge: eenMarge + (terugMarge ?? 0) },
   };
 }
 
-const pctTxt = (v: number | null) => (v == null ? "" : ` · ${v.toLocaleString("nl-NL", { maximumFractionDigits: 1 })}%`);
 const tijd = (ts?: string | null) => ts
   ? new Date(ts.replace(" ", "T") + (ts.includes("Z") ? "" : "Z")).toLocaleString("nl-NL",
       { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
@@ -73,6 +77,14 @@ function looptijdTekst(start?: string | null, eind?: string | null): string {
 
 function Cel({ children }: { children: React.ReactNode }) {
   return <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{children}</td>;
+}
+
+/** Het percentage prominent naast het bedrag: nettomarge leest in twee
+ *  maten tegelijk. */
+function PctTag({ v }: { v: number | null }) {
+  if (v == null) return null;
+  return <span className={`tag ${v >= 0 ? "pos" : "neg"}`} style={{ marginLeft: 8, verticalAlign: "6px" }}>
+    {v.toLocaleString("nl-NL", { maximumFractionDigits: 1 })}%</span>;
 }
 
 function Geld({ v, accent }: { v: number | null; accent?: boolean }) {
@@ -180,8 +192,12 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                 <td>{p.naam}<br /><span className="sub">{p.aantal_producten} product{p.aantal_producten === 1 ? "" : "en"}</span></td>
                 <td>{p.retailer_naam ?? "—"}</td>
                 <td className="sub">{looptijdTekst(p.start_datum, p.eind_datum)}</td>
-                <Cel><Geld v={p.eenmalig.marge} accent /></Cel>
-                <Cel><Geld v={p.terugkerend.marge} accent /></Cel>
+                <Cel><Geld v={p.eenmalig.marge} accent />
+                  {p.eenmalig.marge_pct != null && <><br />
+                    <span className="sub">{p.eenmalig.marge_pct.toLocaleString("nl-NL")}%</span></>}</Cel>
+                <Cel><Geld v={p.terugkerend.marge} accent />
+                  {p.terugkerend.marge_pct != null && <><br />
+                    <span className="sub">{p.terugkerend.marge_pct.toLocaleString("nl-NL")}%</span></>}</Cel>
                 <td className="sub">{tijd(p.gewijzigd_op ?? p.aangemaakt_op)} · {p.gewijzigd_door ?? p.aangemaakt_door ?? "onbekend"}</td>
               </tr>
             ))}
@@ -296,7 +312,13 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
               <td>{k.soort === "overig"
                 ? <input type="text" size={22} value={k.label} aria-label="Omschrijving kostenpost"
                     onChange={(e) => zetRij("kosten", i, "label", e.target.value)} />
-                : k.label}</td>
+                : k.label}
+                {k.soort === "bijdrage_leverancier" && (
+                  <span className="sig-green" style={{ fontSize: 10.5, marginLeft: 8 }}
+                    title="Geld dat de fabrikant bijlegt: telt óp bij de nettomarge in plaats van eraf, en telt niet als omzet.">
+                    + telt op bij de marge
+                  </span>
+                )}</td>
               <td>{invoer("kosten", i, "bedrag", 96)}</td>
               <td>
                 <div className="seg">
@@ -312,27 +334,37 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
           ))}
         </tbody>
       </table>
-      <button className="chip" style={{ marginTop: 8 }}
-        onClick={() => setD({ ...d, kosten: [...d.kosten, { soort: "overig", label: "", bedrag: null, terugkerend: 0 }] })}>
-        + extra kostenregel
-      </button>
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <button className="chip"
+          onClick={() => setD({ ...d, kosten: [...d.kosten, { soort: "overig", label: "", bedrag: null, terugkerend: 0 }] })}>
+          + extra kostenregel
+        </button>
+        {/* Bestaande projecten van vóór deze regel hebben hem nog niet. */}
+        {!d.kosten.some((k: any) => k.soort === "bijdrage_leverancier") && (
+          <button className="chip"
+            onClick={() => setD({ ...d, kosten: [...d.kosten, { soort: "bijdrage_leverancier", label: "Bijdrage leverancier", bedrag: null, terugkerend: 0 }] })}>
+            + bijdrage leverancier
+          </button>
+        )}
+      </div>
 
       <h2>Resultaat</h2>
       <div className="grid kpi">
         <div className="card">
-          <div className="kpi-label">Eenmalig — de vulling
-            <Uitleg tekst="De eerste levering: winkels x stuks per winkel, tegen verkoopprijs. Marge = omzet min productkosten min de eenmalige kostenregels." /></div>
-          <div className="kpi-value">{fmtEur(b.eenmalig.marge)}</div>
-          <div className="kpi-sub">marge{pctTxt(b.eenmalig.pct)} · omzet {fmtEur(b.eenmalig.omzet)}</div>
-          <div className="kpi-sub">productmarge {fmtEur(b.eenmalig.productmarge)} − kosten {fmtEur(b.eenmalig.kosten)}</div>
+          <div className="kpi-label">Netto marge eenmalig — de vulling
+            <Uitleg tekst="De eerste levering: winkels x stuks per winkel, tegen verkoopprijs. Nettomarge = productmarge min de eenmalige kosten, plus de eenmalige bijdrage leverancier. Het percentage is de nettomarge gedeeld door de eenmalige omzet." /></div>
+          <div className="kpi-value">{fmtEur(b.eenmalig.marge)}<PctTag v={b.eenmalig.pct} /></div>
+          <div className="kpi-sub">omzet {fmtEur(b.eenmalig.omzet)}</div>
+          <div className="kpi-sub">productmarge {fmtEur(b.eenmalig.productmarge)} − kosten {fmtEur(b.eenmalig.kosten)}{b.eenmalig.bijdrage > 0 && <> + bijdrage {fmtEur(b.eenmalig.bijdrage)}</>}</div>
         </div>
         <div className="card">
-          <div className="kpi-label">Terugkerend — de doorverkoop
-            <Uitleg tekst="Rotatie x winkels, per week en opgeteld over de looptijd — de verwachte herbevoorrading nadat de vulling in het schap ligt. De looptijdkosten gaan hier vanaf. Zonder start- en einddatum is er alleen een weekbeeld." /></div>
-          <div className="kpi-value">{b.terugkerend.marge != null ? fmtEur(b.terugkerend.marge) : "—"}</div>
+          <div className="kpi-label">Netto marge terugkerend — de doorverkoop
+            <Uitleg tekst="Rotatie x winkels, per week en opgeteld over de looptijd — de verwachte herbevoorrading nadat de vulling in het schap ligt. Nettomarge = productmarge over de looptijd min de looptijdkosten, plus de looptijd-bijdrage leverancier. Het percentage is de nettomarge gedeeld door de terugkerende omzet. Zonder start- en einddatum is er alleen een weekbeeld." /></div>
+          <div className="kpi-value">{b.terugkerend.marge != null
+            ? <>{fmtEur(b.terugkerend.marge)}<PctTag v={b.terugkerend.pct} /></> : "—"}</div>
           <div className="kpi-sub">
             {b.weken
-              ? <>marge over {wk(b.weken)} wk{pctTxt(b.terugkerend.pct)} · omzet {fmtEur(b.terugkerend.omzet!)} − kosten {fmtEur(b.terugkerend.kosten)}</>
+              ? <>over {wk(b.weken)} wk · omzet {fmtEur(b.terugkerend.omzet!)} − kosten {fmtEur(b.terugkerend.kosten)}{b.terugkerend.bijdrage > 0 && <> + bijdrage {fmtEur(b.terugkerend.bijdrage)}</>}</>
               : "vul start- en einddatum in voor het looptijdtotaal"}
           </div>
           <div className="kpi-sub">per week: {fmtEur(b.terugkerend.weekOmzet)} omzet · {fmtEur(b.terugkerend.weekMarge)} marge</div>
@@ -340,14 +372,15 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
         <div className="card">
           <div className="kpi-label">Totaal project
             <Uitleg tekst="Vulling plus doorverkoop bij elkaar. De doorverkoop geldt als herbevoorrading (nieuwe omzet, want het schap wordt bijgevuld). Wordt er aan het einde níét herbevoorraad, dan komt een deel van de doorverkoop uit de al gefactureerde vulling en is dit totaal een bovengrens." /></div>
-          <div className="kpi-value">{fmtEur(b.totaal.marge)}</div>
-          <div className="kpi-sub">marge · omzet {fmtEur(b.totaal.omzet)}</div>
+          <div className="kpi-value">{fmtEur(b.totaal.marge)}
+            <PctTag v={b.totaal.omzet ? (b.totaal.marge / b.totaal.omzet) * 100 : null} /></div>
+          <div className="kpi-sub">netto marge · omzet {fmtEur(b.totaal.omzet)}</div>
           {b.kostenBuitenBeeld > 0 && (
             // Looptijdkosten zonder looptijd tellen nergens mee; dat stil
             // laten gebeuren laat het project completer lijken dan het is.
             <div className="kpi-sub sig-red">
-              excl. {fmtEur(b.kostenBuitenBeeld)} looptijdkosten — vul start- en
-              einddatum in om ze mee te rekenen
+              excl. {fmtEur(b.kostenBuitenBeeld)} looptijdkosten (na bijdrage) —
+              vul start- en einddatum in om ze mee te rekenen
             </div>
           )}
         </div>

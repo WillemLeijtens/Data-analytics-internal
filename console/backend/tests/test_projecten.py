@@ -100,6 +100,39 @@ def test_looptijdkosten_zonder_looptijd_staan_expliciet_buiten_beeld():
     assert uit["totaal"]["kosten_buiten_beeld"] == 0.0
 
 
+def test_bijdrage_leverancier_telt_op_bij_de_marge():
+    """De bijdrage van de fabrikant verlaagt de nettokosten: hij telt óp bij
+    de nettomarge van de kant waar zijn schakel op staat, en telt niet als
+    omzet (het is een tegemoetkoming, geen verkoop)."""
+    uit = projecten.bereken(
+        {"start_datum": "2026-09-01", "eind_datum": "2026-09-28"},
+        [PRODUCT],
+        [{"soort": "listing_fee", "label": "Listing fee", "bedrag": 500.0, "terugkerend": 0},
+         {"soort": "bijdrage_leverancier", "label": "Bijdrage leverancier",
+          "bedrag": 800.0, "terugkerend": 0},
+         {"soort": "marketing", "label": "Marketingbudget", "bedrag": 300.0, "terugkerend": 1},
+         {"soort": "bijdrage_leverancier", "label": "Bijdrage leverancier",
+          "bedrag": 100.0, "terugkerend": 1}])
+    e = uit["eenmalig"]
+    assert e["omzet"] == 3000.0                       # bijdrage is géén omzet
+    assert e["bijdrage"] == 800.0
+    assert e["marge"] == pytest.approx(1740.0 - 500.0 + 800.0)   # 2040
+    assert e["marge_pct"] == pytest.approx(2040.0 / 3000.0 * 100, abs=0.05)
+    t = uit["terugkerend"]
+    assert t["bijdrage"] == 100.0
+    assert t["marge"] == pytest.approx(4 * 145.0 - 300.0 + 100.0)  # 380
+    assert uit["totaal"]["marge"] == pytest.approx(2040.0 + 380.0)
+
+
+def test_bijdrage_zonder_looptijd_telt_in_buiten_beeld():
+    """Een looptijd-bijdrage zonder looptijd staat net zo buiten beeld als
+    looptijdkosten; het gemelde bedrag is het nettosaldo."""
+    uit = projecten.bereken({}, [PRODUCT], [
+        {"soort": "marketing", "label": "M", "bedrag": 4000.0, "terugkerend": 1},
+        {"soort": "bijdrage_leverancier", "label": "B", "bedrag": 1500.0, "terugkerend": 1}])
+    assert uit["totaal"]["kosten_buiten_beeld"] == 2500.0
+
+
 # ------------------------------------------------------------- opslag + log
 
 def test_aanmaken_opslaan_en_logboek(client):
@@ -108,7 +141,8 @@ def test_aanmaken_opslaan_en_logboek(client):
     d = r.json()
     # Standaardkostenregels staan klaar, met de gebruikelijke schakelstand.
     assert [k["soort"] for k in d["kosten"]] == \
-        ["listing_fee", "coop", "marketing", "display", "logistiek", "verpakking"]
+        ["listing_fee", "coop", "marketing", "display", "logistiek", "verpakking",
+         "bijdrage_leverancier"]
     assert d["log"][0]["actie"] == "aangemaakt" and d["log"][0]["door"] == "Willem"
 
     d["producten"] = [PRODUCT]

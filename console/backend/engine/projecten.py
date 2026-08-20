@@ -15,6 +15,11 @@ co-op, logistiek) op de terugkerende. De verpakking per stúk zit in de
 productmarge van beide kanten; de kostenregel "Verpakkingskosten (totaal)"
 is voor eenmalige verpakking die niet per stuk te verdelen is.
 
+De "Bijdrage leverancier" is de omgekeerde regel: geld dat de fabrikant
+bijlegt aan de actie. Hij staat tussen de kostenregels (zelfde schakel
+eenmalig/looptijd) maar telt OP bij de nettomarge in plaats van eraf —
+en telt bewust niet als omzet: het is een tegemoetkoming in de kosten.
+
 Alles is None-tolerant: een half ingevuld project rekent met 0 voor wat er
 nog niet staat, in plaats van te crashen of het scherm te blokkeren.
 """
@@ -32,9 +37,11 @@ STANDAARD_KOSTEN = [
     ("display", "Displaykosten", 0),
     ("logistiek", "Logistieke kosten", 1),
     ("verpakking", "Verpakkingskosten (totaal)", 0),
+    ("bijdrage_leverancier", "Bijdrage leverancier", 0),
 ]
 
 KOSTEN_SOORTEN = {s for s, _, _ in STANDAARD_KOSTEN} | {"overig"}
+BIJDRAGE = "bijdrage_leverancier"
 
 
 def _n(v) -> float:
@@ -85,8 +92,19 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict]) -> dict:
     regels = [_product(p) for p in producten]
     weken = looptijd_weken(project.get("start_datum"), project.get("eind_datum"))
 
-    kosten_eenmalig = sum(_n(k.get("bedrag")) for k in kosten if not k.get("terugkerend"))
-    kosten_looptijd = sum(_n(k.get("bedrag")) for k in kosten if k.get("terugkerend"))
+    def kosten_en_bijdrage(terugkerend: bool) -> tuple[float, float]:
+        uit = bij = 0.0
+        for k in kosten:
+            if bool(k.get("terugkerend")) != terugkerend:
+                continue
+            if k.get("soort") == BIJDRAGE:
+                bij += _n(k.get("bedrag"))
+            else:
+                uit += _n(k.get("bedrag"))
+        return uit, bij
+
+    kosten_eenmalig, bijdrage_eenmalig = kosten_en_bijdrage(False)
+    kosten_looptijd, bijdrage_looptijd = kosten_en_bijdrage(True)
 
     een_omzet = sum(r["eenmalig_omzet"] for r in regels)
     een_productmarge = sum(r["eenmalig_marge"] for r in regels)
@@ -98,19 +116,20 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict]) -> dict:
     # terugkerende marge blijft None in plaats van een schijngetal.
     terug_omzet = round(week_omzet * weken, 2) if weken else None
     terug_productmarge = round(week_marge * weken, 2) if weken else None
-    terug_marge = round(terug_productmarge - kosten_looptijd, 2) \
+    terug_marge = round(terug_productmarge - kosten_looptijd + bijdrage_looptijd, 2) \
         if terug_productmarge is not None else None
 
-    een_marge = round(een_productmarge - kosten_eenmalig, 2)
+    een_marge = round(een_productmarge - kosten_eenmalig + bijdrage_eenmalig, 2)
     totaal_omzet = round(een_omzet + (terug_omzet or 0), 2)
     totaal_marge = round(een_marge + (terug_marge or 0), 2) \
         if terug_marge is not None else een_marge
 
-    # Looptijdkosten zonder looptijd kunnen nergens op drukken. Ze stil uit
-    # elk totaal laten vallen zou het project completer laten lijken dan het
-    # is — het scherm meldt dit bedrag expliciet bij het Totaal.
-    kosten_buiten_beeld = round(kosten_looptijd, 2) \
-        if kosten_looptijd and not weken else 0.0
+    # Looptijd(kosten én bijdragen) zonder looptijd kunnen nergens op
+    # drukken. Ze stil uit elk totaal laten vallen zou het project completer
+    # laten lijken dan het is — het scherm meldt het nettobedrag expliciet
+    # bij het Totaal.
+    kosten_buiten_beeld = round(kosten_looptijd - bijdrage_looptijd, 2) \
+        if (kosten_looptijd or bijdrage_looptijd) and not weken else 0.0
 
     return {
         "producten": regels,
@@ -119,6 +138,7 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict]) -> dict:
             "omzet": round(een_omzet, 2),
             "productmarge": round(een_productmarge, 2),
             "kosten": round(kosten_eenmalig, 2),
+            "bijdrage": round(bijdrage_eenmalig, 2),
             "marge": een_marge,
             "marge_pct": _pct(een_marge, een_omzet),
         },
@@ -127,6 +147,7 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict]) -> dict:
             "omzet": terug_omzet,
             "productmarge": terug_productmarge,
             "kosten": round(kosten_looptijd, 2),
+            "bijdrage": round(bijdrage_looptijd, 2),
             "marge": terug_marge,
             "marge_pct": _pct(terug_marge, terug_omzet)
             if terug_marge is not None and terug_omzet else None,
