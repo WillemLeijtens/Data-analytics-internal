@@ -23,7 +23,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import db
-from engine import analytics, contracts, importer, projecten, signals
+from engine import (analytics, contracts, importer, projecten, signals,
+                    winkelhistorie)
 from engine import parser as parser_mod
 from engine.periods import sort_key
 from engine.profile import active_profile, capabilities, get_profiles
@@ -622,36 +623,10 @@ def save_settings(retailer_id: str, body: SettingsBody):
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
         if body.winkels_targets is not None:
-            # Winkelaantallen die VERANDEREN worden gelogd: alleen zo is een
-            # dalende distributie later terug te zien (het Overzicht toont
-            # dat als signaal). Ongewijzigde waarden voegen niets toe.
-            vorige = {(r["merk"], r["land"], r["banner"]): r["aantal_winkels"]
-                      for r in conn.execute(
-                          "SELECT merk, land, banner, aantal_winkels FROM retailer_settings "
-                          "WHERE retailer_id=?", (retailer_id,))}
-            met_historie = {(r["merk"], r["land"], r["banner"]) for r in conn.execute(
-                "SELECT DISTINCT merk, land, banner FROM winkelaantal_historie "
-                "WHERE retailer_id=?", (retailer_id,))}
-            nieuw = []
-            for s in body.winkels_targets:
-                aantal = s.get("aantal_winkels")
-                if not aantal:
-                    continue
-                scope = (s["merk"], s["land"], s.get("banner"))
-                oud = vorige.get(scope)
-                # Nog geen historie voor deze scope? Leg dan eerst de waarde
-                # vast zoals hij nú in de database staat. Zonder die nulmeting
-                # levert de eerste wijziging maar één punt op en blijft het
-                # signaal grijs — precies wanneer je de daling wilt zien.
-                if scope not in met_historie and oud:
-                    nieuw.append((*scope, oud))
-                if oud != aantal:
-                    nieuw.append((*scope, aantal))
-            vandaag = dt.date.today().isoformat()
             conn.executemany(
                 "INSERT INTO winkelaantal_historie (retailer_id, merk, land, banner, "
                 "aantal_winkels, geldig_vanaf) VALUES (?,?,?,?,?,?)",
-                [(retailer_id, *rij, vandaag) for rij in nieuw])
+                winkelhistorie.nieuwe_metingen(conn, retailer_id, body.winkels_targets))
             conn.execute("DELETE FROM retailer_settings WHERE retailer_id=?", (retailer_id,))
             conn.executemany(
                 "INSERT INTO retailer_settings (retailer_id, merk, land, banner, aantal_winkels, "
