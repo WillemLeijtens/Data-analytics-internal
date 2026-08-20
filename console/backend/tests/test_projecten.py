@@ -30,7 +30,7 @@ def client(tmp_path, monkeypatch):
 
 PRODUCT = {"naam": "Nagellak rood", "kostprijs": 2.0, "verkoopprijs": 5.0,
            "aantal_winkels": 100, "stuks_per_winkel": 6,
-           "rotatie_per_winkel_per_week": 0.5, "verpakking_per_stuk": 0.1}
+           "rotatie_per_winkel_per_week": 0.5}
 
 
 # ------------------------------------------------------------- rekenmodel
@@ -47,15 +47,15 @@ def test_eenmalig_en_terugkerend_gescheiden():
     assert uit["looptijd_weken"] == 4
     e = uit["eenmalig"]
     assert e["omzet"] == 3000.0                    # 600 x 5
-    assert e["productmarge"] == pytest.approx(1740.0)   # 600 x (5-2-0,10)
-    assert e["kosten"] == 500.0 and e["marge"] == pytest.approx(1240.0)
-    assert e["marge_pct"] == pytest.approx(41.3, abs=0.05)
+    assert e["productmarge"] == pytest.approx(1800.0)   # 600 x (5-2)
+    assert e["kosten"] == 500.0 and e["marge"] == pytest.approx(1300.0)
+    assert e["marge_pct"] == pytest.approx(43.3, abs=0.05)
     t = uit["terugkerend"]
-    assert t["per_week"] == {"omzet": 250.0, "marge": 145.0}
+    assert t["per_week"] == {"omzet": 250.0, "marge": 150.0}
     assert t["omzet"] == 1000.0 and t["kosten"] == 300.0
-    assert t["marge"] == pytest.approx(280.0)      # 4 x 145 - 300
+    assert t["marge"] == pytest.approx(300.0)      # 4 x 150 - 300
     assert uit["totaal"]["omzet"] == 4000.0
-    assert uit["totaal"]["marge"] == pytest.approx(1520.0)
+    assert uit["totaal"]["marge"] == pytest.approx(1600.0)
 
 
 def test_zonder_looptijd_geen_schijngetal():
@@ -116,12 +116,12 @@ def test_bijdrage_leverancier_telt_op_bij_de_marge():
     e = uit["eenmalig"]
     assert e["omzet"] == 3000.0                       # bijdrage is géén omzet
     assert e["bijdrage"] == 800.0
-    assert e["marge"] == pytest.approx(1740.0 - 500.0 + 800.0)   # 2040
-    assert e["marge_pct"] == pytest.approx(2040.0 / 3000.0 * 100, abs=0.05)
+    assert e["marge"] == pytest.approx(1800.0 - 500.0 + 800.0)   # 2100
+    assert e["marge_pct"] == pytest.approx(2100.0 / 3000.0 * 100, abs=0.05)
     t = uit["terugkerend"]
     assert t["bijdrage"] == 100.0
-    assert t["marge"] == pytest.approx(4 * 145.0 - 300.0 + 100.0)  # 380
-    assert uit["totaal"]["marge"] == pytest.approx(2040.0 + 380.0)
+    assert t["marge"] == pytest.approx(4 * 150.0 - 300.0 + 100.0)  # 400
+    assert uit["totaal"]["marge"] == pytest.approx(2100.0 + 400.0)
 
 
 def test_bijdrage_zonder_looptijd_telt_in_buiten_beeld():
@@ -155,12 +155,12 @@ def test_aanmaken_opslaan_en_logboek(client):
     d2 = r.json()
     assert d2["gewijzigd_door"] == "Sanne"
     assert d2["log"][0]["actie"].startswith("gewijzigd")
-    assert d2["berekening"]["eenmalig"]["marge"] == pytest.approx(1240.0)
+    assert d2["berekening"]["eenmalig"]["marge"] == pytest.approx(1300.0)
 
     # Herladen geeft hetzelfde terug; de lijst toont de kerncijfers.
     lijst = client.get("/api/projecten").json()
     assert lijst[0]["naam"] == "Actie week 40"
-    assert lijst[0]["eenmalig"]["marge"] == pytest.approx(1240.0)
+    assert lijst[0]["eenmalig"]["marge"] == pytest.approx(1300.0)
     assert lijst[0]["looptijd_weken"] == 4
 
 

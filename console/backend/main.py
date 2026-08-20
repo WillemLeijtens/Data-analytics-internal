@@ -776,11 +776,11 @@ def save_project(project_id: int, body: ProjectBody, request: Request):
         conn.execute("DELETE FROM project_producten WHERE project_id=?", (project_id,))
         conn.executemany(
             "INSERT INTO project_producten (project_id, volgorde, naam, kostprijs, "
-            "verkoopprijs, aantal_winkels, stuks_per_winkel, rotatie_per_winkel_per_week, "
-            "verpakking_per_stuk) VALUES (?,?,?,?,?,?,?,?,?)",
+            "verkoopprijs, aantal_winkels, stuks_per_winkel, rotatie_per_winkel_per_week) "
+            "VALUES (?,?,?,?,?,?,?,?)",
             [(project_id, i, p["naam"].strip(), p.get("kostprijs"), p.get("verkoopprijs"),
               p.get("aantal_winkels"), p.get("stuks_per_winkel"),
-              p.get("rotatie_per_winkel_per_week"), p.get("verpakking_per_stuk"))
+              p.get("rotatie_per_winkel_per_week"))
              for i, p in enumerate(body.producten)])
         conn.execute("DELETE FROM project_kosten WHERE project_id=?", (project_id,))
         conn.executemany(

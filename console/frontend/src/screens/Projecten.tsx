@@ -21,7 +21,7 @@ const wk = (weken: number) => weken.toLocaleString("nl-NL", { maximumFractionDig
 
 function bereken(proj: any, producten: any[], kosten: any[]) {
   const rijen = producten.map((p) => {
-    const margeStuk = n(p.verkoopprijs) - n(p.kostprijs) - n(p.verpakking_per_stuk);
+    const margeStuk = n(p.verkoopprijs) - n(p.kostprijs);
     const stuksEenmalig = n(p.aantal_winkels) * n(p.stuks_per_winkel);
     const stuksWeek = n(p.aantal_winkels) * n(p.rotatie_per_winkel_per_week);
     return {
@@ -93,8 +93,7 @@ function Geld({ v, accent }: { v: number | null; accent?: boolean }) {
 }
 
 const LEEG_PRODUCT = { naam: "", kostprijs: null, verkoopprijs: null, aantal_winkels: null,
-                       stuks_per_winkel: null, rotatie_per_winkel_per_week: null,
-                       verpakking_per_stuk: null };
+                       stuks_per_winkel: null, rotatie_per_winkel_per_week: null };
 
 export default function Projecten({ ctx }: { ctx: ShellCtx }) {
   const [lijst, setLijst] = useState<any[] | null>(null);
@@ -347,7 +346,6 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
             <th>Winkels<Uitleg tekst="Het aantal winkels dat aan dit project meedoet voor dit product." /></th>
             <th>Stuks / winkel<Uitleg tekst="De eerste vulling: hoeveel stuks elke winkel bij de start afneemt. Dit voedt de EENMALIGE omzet en marge." /></th>
             <th>Rotatie / winkel / wk<Uitleg tekst="De verwachte doorverkoop per winkel per week ná de eerste vulling. Dit voedt de TERUGKERENDE omzet en marge." /></th>
-            <th>Verpakking / stuk<Uitleg tekst="Verpakkingskosten per stuk; gaat van de marge per stuk af (eenmalig én terugkerend). Eenmalige verpakkingskosten die niet per stuk te verdelen zijn, zet je bij de kosten hieronder." /></th>
             <th style={{ textAlign: "right" }}>Eenmalig omzet / marge</th>
             <th style={{ textAlign: "right" }}>Per week omzet / marge</th>
             <th></th>
@@ -362,7 +360,6 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                 <td>{invoer("producten", i, "aantal_winkels", 64, "1")}</td>
                 <td>{invoer("producten", i, "stuks_per_winkel", 64, "1")}</td>
                 <td>{invoer("producten", i, "rotatie_per_winkel_per_week", 64, "0.1")}</td>
-                <td>{invoer("producten", i, "verpakking_per_stuk", 74, undefined, true)}</td>
                 <Cel>{fmtEur(b.rijen[i].eenmalig_omzet)}<br />
                   <span className={b.rijen[i].eenmalig_marge >= 0 ? "sig-green" : "sig-red"}>
                     {fmtEur(b.rijen[i].eenmalig_marge)}</span></Cel>
@@ -373,7 +370,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                   onClick={() => wegRij("producten", i)}>✕</button></td>
               </tr>
             ))}
-            {!d.producten.length && <tr><td colSpan={10} className="sub">Nog geen producten.</td></tr>}
+            {!d.producten.length && <tr><td colSpan={9} className="sub">Nog geen producten.</td></tr>}
           </tbody>
         </table>
       </div>

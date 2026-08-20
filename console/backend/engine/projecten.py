@@ -11,9 +11,10 @@ uitkomsten, omdat ze twee verschillende beslissingen voeden:
 
 Kosten hebben een schakel `terugkerend`: eenmalige kosten (listing fee, een
 display) drukken op de eenmalige marge, looptijdkosten (marketingbudget,
-co-op, logistiek) op de terugkerende. De verpakking per stúk zit in de
-productmarge van beide kanten; de kostenregel "Verpakkingskosten (totaal)"
-is voor eenmalige verpakking die niet per stuk te verdelen is.
+co-op, logistiek) op de terugkerende. Verpakking loopt uitsluitend via de
+kostenregel "Verpakkingskosten (totaal)" — geen apart veld per product: dat
+gaf op regelniveau een marge die zonder duidelijke reden op nul uitkwam
+zodra kostprijs plus verpakking de verkoopprijs opaten.
 
 De "Bijdrage leverancier" is de omgekeerde regel: geld dat de fabrikant
 bijlegt aan de actie. Hij staat tussen de kostenregels (zelfde schakel
@@ -67,8 +68,7 @@ def looptijd_weken(start: str | None, eind: str | None) -> float | None:
 
 def _product(p: dict) -> dict:
     winkels = _n(p.get("aantal_winkels"))
-    marge_per_stuk = (_n(p.get("verkoopprijs")) - _n(p.get("kostprijs"))
-                      - _n(p.get("verpakking_per_stuk")))
+    marge_per_stuk = _n(p.get("verkoopprijs")) - _n(p.get("kostprijs"))
     stuks_eenmalig = winkels * _n(p.get("stuks_per_winkel"))
     stuks_week = winkels * _n(p.get("rotatie_per_winkel_per_week"))
     return {
@@ -184,8 +184,7 @@ def valideer(project: dict, producten: list[dict], kosten: list[dict]) -> None:
         if not str(p.get("naam") or "").strip():
             raise ValueError("elk product heeft een naam nodig")
         for veld in ("kostprijs", "verkoopprijs", "aantal_winkels",
-                     "stuks_per_winkel", "rotatie_per_winkel_per_week",
-                     "verpakking_per_stuk"):
+                     "stuks_per_winkel", "rotatie_per_winkel_per_week"):
             w = p.get(veld)
             if w is not None and float(w) < 0:
                 raise ValueError(f"{veld} kan niet negatief zijn ({p['naam']})")
