@@ -1,11 +1,22 @@
-fastapi>=0.115
-uvicorn>=0.30
-python-multipart>=0.0.9
-openpyxl>=3.1
-pytest>=8
-httpx2
-anthropic>=0.40
-pypdf>=5.0
+# Exact gepind i.p.v. >=: zonder dit resolveert `pip install` op een
+# willekeurig moment naar wat dan toevallig nieuw is, en een productie-image
+# is dan niet reproduceerbaar (twee builds op verschillende dagen kunnen
+# stilzwijgend andere versies bevatten). Dit zijn de versies waartegen de
+# testsuite draait en groen is — bump bewust, één versie tegelijk, met de
+# tests als vangnet. Dit dekt alleen de directe dependencies, geen volledige
+# transitieve lock (pip-compile/uv zou dat toevoegen als dat ooit nodig is).
+fastapi==0.141.1
+uvicorn==0.52.4
+python-multipart==0.0.32
+openpyxl==3.1.5
+pytest==9.1.1
+anthropic==0.125.0
+pypdf==6.16.1
+# Starlette's TestClient (gebruikt door onze pytest-fixtures) geeft zonder
+# dit een StarletteDeprecationWarning en valt terug op een deprecated pad.
+# Eerder ten onrechte als "vermoedelijke typo voor httpx" verwijderd — het
+# is een los, actief onderhouden pakket dat Starlette hier zelf aanraadt.
+httpx2==2.12.0
 # Tijdzonedatabase voor zoneinfo (Europe/Amsterdam) — het slim-image levert
 # geen systeem-tzdata mee.
-tzdata
+tzdata==2026.3

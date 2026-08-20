@@ -7,8 +7,15 @@ blijft, net als voorheen, live herberekend uit `geldig_tot` door
 tekst en de condities; het rekenwerk voor "loopt dit nog" blijft
 deterministisch.
 
-Een nieuwe upload vervangt het vorige contract van die retailer volledig —
-er is bewust geen geschiedenis: één actueel contract per retailer.
+Een nieuwe upload vervangt het actuele contract van die retailer, maar het
+vorige contract wordt niet weggegooid: het gaat naar
+`contract_documenten_historie`, zodat een verkeerde extractie (bv. een
+gehallucineerde datum) terug te draaien is en niet stilzwijgend de enige
+vastlegging van de vorige, mogelijk correcte afspraken wist.
+
+`anthropic_config.api_key` (zie `haal_api_key()`) staat bewust
+onversleuteld in de database, zoals de rest van de app geen versleuteling
+kent — zie de "Back-up"-sectie in README.md voor de afweging.
 """
 
 from __future__ import annotations
@@ -21,6 +28,11 @@ import os
 MAX_PDF_PAGINAS = 15
 MAX_PROMPT_TEKENS = 40_000
 STANDAARD_MODEL = "claude-sonnet-4-5"
+# Een retailcontract dat meer dan 15 jaar terug inging of pas over 15 jaar
+# afloopt, is voor deze context vrijwel zeker een fout gelezen (of
+# gehallucineerde) datum, niet een echte looptijd. Zo'n datum mag dan niet
+# ongezien het rode/oranje/groene signaal aansturen.
+MAX_JAREN_PLAUSIBEL = 15
 
 
 def haal_api_key(conn) -> tuple[str | None, str]:
@@ -130,17 +142,30 @@ def analyseer(conn, tekst: str, vandaag: dt.date | None = None) -> dict:
         raise ValueError("contractanalyse leverde geen bruikbaar antwoord op") from e
 
     geldig_tot = data.get("geldig_tot")
+    conclusie = str(data.get("conclusie") or "").strip() or None
     if geldig_tot:
         try:
-            dt.date.fromisoformat(geldig_tot)
+            geldig_tot_datum = dt.date.fromisoformat(geldig_tot)
         except (TypeError, ValueError):
             geldig_tot = None
+        else:
+            jaren_verschil = abs((geldig_tot_datum - vandaag).days) / 365.25
+            if jaren_verschil > MAX_JAREN_PLAUSIBEL:
+                # Niet zomaar weggooien: de ruwe waarde blijft zichtbaar in de
+                # conclusie zodat een mens 'm kan beoordelen, maar hij mag het
+                # automatische signaal niet aansturen — vandaar geldig_tot=None.
+                waarschuwing = (f"Let op: de geëxtraheerde einddatum ({geldig_tot}) "
+                                f"leek onwaarschijnlijk (meer dan {MAX_JAREN_PLAUSIBEL} "
+                                "jaar van vandaag) en is genegeerd voor het signaal — "
+                                "controleer het brondocument handmatig.")
+                conclusie = f"{conclusie} {waarschuwing}" if conclusie else waarschuwing
+                geldig_tot = None
 
     return {
         "naam": str(data.get("naam") or "Contract")[:200],
         "type": (str(data.get("type")).strip() or None) if data.get("type") else None,
         "geldig_tot": geldig_tot,
-        "conclusie": str(data.get("conclusie") or "").strip() or None,
+        "conclusie": conclusie,
         "condities": [
             {"onderwerp": str(c.get("onderwerp") or "").strip(),
              "afspraak": str(c.get("afspraak") or "").strip()}
@@ -160,6 +185,12 @@ def verwerk_upload(conn, retailer_id: str, bestandsnaam: str, content: bytes,
     gevonden = (analyseer_fn or analyseer)(conn, tekst)
     nu = dt.datetime.now().isoformat(timespec="seconds")
 
+    conn.execute(
+        "INSERT INTO contract_documenten_historie (retailer_id, naam, type, geldig_tot, "
+        "signaal, conclusie, condities, bestandsnaam, geupload_op, geupload_door) "
+        "SELECT retailer_id, naam, type, geldig_tot, signaal, conclusie, condities, "
+        "bestandsnaam, geupload_op, geupload_door FROM contract_documents WHERE retailer_id=?",
+        (retailer_id,))
     conn.execute("DELETE FROM contract_documents WHERE retailer_id=?", (retailer_id,))
     cursor = conn.execute(
         "INSERT INTO contract_documents (retailer_id, naam, type, geldig_tot, signaal, "
@@ -170,3 +201,11 @@ def verwerk_upload(conn, retailer_id: str, bestandsnaam: str, content: bytes,
     row = conn.execute(
         "SELECT * FROM contract_documents WHERE id=?", (cursor.lastrowid,)).fetchone()
     return dict(row)
+
+
+def historie(conn, retailer_id: str) -> list[dict]:
+    """Eerder vervangen contracten van deze retailer, nieuwste eerst — puur
+    ter inzage/rollback, stuurt nooit het actuele signaal aan."""
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM contract_documenten_historie WHERE retailer_id=? "
+        "ORDER BY vervangen_op DESC", (retailer_id,))]

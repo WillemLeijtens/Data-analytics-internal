@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import io
 import json
+import logging
 import os
 import re
 import secrets
 import sys
+import zipfile
 from ipaddress import ip_address
 from pathlib import Path
 
@@ -24,6 +27,13 @@ from engine import analytics, contracts, importer, projecten, signals
 from engine import parser as parser_mod
 from engine.periods import sort_key
 from engine.profile import active_profile, capabilities, get_profiles
+
+# Eén regel per bericht, met tijdstip en niveau — bruikbaar voor
+# logaggregatie (bv. `docker logs` doorheen journald/Loki), i.p.v. kale
+# print()-regels zonder niveau of tijdstip. Uvicorn's eigen access-log
+# blijft apart lopen; dit is alleen voor de eigen berichten van de app.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [console] %(message)s")
+logger = logging.getLogger("console")
 
 app = FastAPI(title="Retailer Console")
 
@@ -121,12 +131,12 @@ if CONSOLE_AUTH == "password":
 else:
     # Gateway mode: no auth layer at all, so a successful portal login is
     # enough. Never any WWW-Authenticate response from this app.
-    print(f"[console] CONSOLE_AUTH=gateway — geen eigen inlog; het portaal "
-          f"authenticeert. Gebonden op {CONSOLE_BIND}.", flush=True)
+    logger.info("CONSOLE_AUTH=gateway — geen eigen inlog; het portaal "
+               "authenticeert. Gebonden op %s.", CONSOLE_BIND)
     if CONSOLE_PASSWORD:
-        print("[console] LET OP: CONSOLE_PASSWORD is gezet maar wordt "
-              "genegeerd in gateway-modus. Haal hem uit .env, of kies "
-              "CONSOLE_AUTH=password als je die laag wél wilt.", flush=True)
+        logger.warning("CONSOLE_PASSWORD is gezet maar wordt genegeerd in "
+                       "gateway-modus. Haal hem uit .env, of kies "
+                       "CONSOLE_AUTH=password als je die laag wél wilt.")
 
 # No CORS middleware on purpose: the SPA is served by this same app (and the
 # Vite dev server proxies /api), so every request is same-origin. A wildcard
@@ -228,6 +238,27 @@ def assortiment(retailer_id: str):
 
 # ---------------------------------------------------------------- import
 
+# Een .xlsx is een ZIP: een klein, geldig bestand kan intern uitpakken tot
+# vele GB's XML en het proces zo het geheugen uit jagen vóór openpyxl ook
+# maar één rij heeft gelezen (een "decompressiebom"). De byte-limiet
+# hierboven begrenst alleen de GECOMPRIMEERDE grootte, dus deze check komt
+# er los naast — niet-ZIP-bestanden (CSV, PDF) slaan 'm gewoon over.
+MAX_UNCOMPRESSED_MB = int(os.environ.get("CONSOLE_MAX_UNCOMPRESSED_MB", "1500"))
+
+
+def _keur_decompressie_goed(content: bytes) -> None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as zf:
+            totaal = sum(info.file_size for info in zf.infolist())
+    except zipfile.BadZipFile:
+        return  # geen ZIP/xlsx — niet dit type risico, de parser meldt zelf een nette fout
+    limiet = MAX_UNCOMPRESSED_MB * 1024 * 1024
+    if totaal > limiet:
+        raise ValueError(
+            f"bestand pakt uit tot meer dan {MAX_UNCOMPRESSED_MB} MB — "
+            "dit lijkt geen geldig Excel-bestand")
+
+
 async def _read_upload_limited(upload: UploadFile) -> bytes:
     """Lees in stukken en faal vóór een onbegrensde geheugentoewijzing."""
     content = bytearray()
@@ -235,6 +266,7 @@ async def _read_upload_limited(upload: UploadFile) -> bytes:
         if len(content) + len(chunk) > MAX_UPLOAD_BYTES:
             raise ValueError(f"bestand is groter dan {MAX_UPLOAD_MB} MB")
         content.extend(chunk)
+    _keur_decompressie_goed(content)
     return bytes(content)
 
 
@@ -300,11 +332,16 @@ def _bewaar_in_inbox(filename: str, content: bytes) -> str | None:
     stappen of aan een shell ontsnappen."""
     naam = _VEILIG.sub("_", filename).strip("._") or "upload.xlsx"
     try:
-        INBOX.mkdir(parents=True, exist_ok=True)
+        INBOX.mkdir(parents=True, exist_ok=True, mode=0o700)
         doel = INBOX / naam
         doel.write_bytes(content)
+        # Bestandsinhoud kan bedrijfsgevoelige verkoopcijfers bevatten —
+        # niet leesbaar laten voor andere gebruikers op de host dan het
+        # eigen procesaccount (anders het default umask-gedrag, doorgaans
+        # world-readable).
+        doel.chmod(0o600)
     except OSError as e:  # noqa: BLE001 - volle schijf mag de import niet slopen
-        print(f"[console] kon {naam} niet in de inbox bewaren: {e}", flush=True)
+        logger.error("kon %s niet in de inbox bewaren: %s", naam, e)
         return None
     return str(doel)
 
@@ -327,9 +364,21 @@ async def do_import(files: list[UploadFile]):
                     uitkomst["detail"] = ((uitkomst.get("detail") or "") +
                                           f" — bewaard als {pad}").strip(" —")
             results.append(uitkomst)
-        except Exception as e:  # noqa: BLE001 - one bad file must not kill the batch
+        except ValueError as e:
+            # Bewust opgeworpen, veilige meldingen (te groot bestand,
+            # decompressiebom) — die mogen letterlijk naar de gebruiker.
             results.append({"filename": filename, "status": "error",
                             "rows": 0, "retailer_id": None, "detail": str(e)})
+        except Exception as e:  # noqa: BLE001 - one bad file must not kill the batch
+            # Onverwachte fout (bug, DB-probleem): niet de ruwe exception-
+            # tekst naar de client — die kan interne details lekken. Volledig
+            # bericht gaat naar de serverlog, de gebruiker krijgt een veilige
+            # samenvatting.
+            logger.exception("onverwachte fout bij import van %s", filename)
+            results.append({"filename": filename, "status": "error", "rows": 0,
+                            "retailer_id": None,
+                            "detail": "onverwachte fout bij het verwerken van dit bestand — "
+                                      "probeer het opnieuw of neem contact op als dit blijft gebeuren"})
     return {"results": results}
 
 
@@ -635,6 +684,15 @@ async def upload_contract(retailer_id: str, request: Request, file: UploadFile, 
         return {"ok": True, "document": _contract_doc(doc)}
 
 
+@app.get("/api/{retailer_id}/contract/historie")
+def contract_historie(retailer_id: str):
+    """Eerder vervangen contracten — ter inzage, nooit sturend voor het
+    actuele signaal (dat blijft uitsluitend op contract_documents staan)."""
+    with db.get_conn() as conn:
+        _retailer_or_404(conn, retailer_id)
+        return {"historie": [_contract_doc(r) for r in contracts.historie(conn, retailer_id)]}
+
+
 def _masker(sleutel: str) -> str:
     """Nooit de volledige sleutel teruggeven aan de frontend."""
     if len(sleutel) <= 12:
@@ -868,25 +926,9 @@ def save_project(project_id: int, body: ProjectBody, request: Request):
             [(project_id, i, k["soort"], k["label"].strip(), k.get("bedrag"),
               1 if k.get("terugkerend") else 0)
              for i, k in enumerate(body.kosten)])
-        # Automatisch opslaan mag het logboek niet laten volstromen: ligt de
-        # laatste 'gewijzigd'-regel van DEZELFDE persoon nog geen 5 minuten
-        # terug, dan wordt die regel ververst (nieuwe tijd, nieuwe telling)
-        # in plaats van dat er een nieuwe bijkomt. Een andere persoon, of
-        # een stilte van 5+ minuten, begint gewoon een nieuwe regel — het
-        # logboek blijft dan nog steeds "wie deed wanneer iets" vertellen,
-        # niet "wie typte om welke seconde een letter".
         actie = (f"gewijzigd — {len(body.producten)} product(en), "
                  f"{len(body.kosten)} kostenregel(s)")
-        ver = conn.execute(
-            "UPDATE project_log SET op=datetime('now'), actie=? "
-            "WHERE id = (SELECT id FROM project_log WHERE project_id=? AND door=? "
-            "AND actie LIKE 'gewijzigd%' AND op >= datetime('now','-5 minutes') "
-            "ORDER BY op DESC, id DESC LIMIT 1)",
-            (actie, project_id, wie))
-        if not ver.rowcount:
-            conn.execute(
-                "INSERT INTO project_log (project_id, door, actie) VALUES (?,?,?)",
-                (project_id, wie, actie))
+        projecten.log_wijziging(conn, project_id, wie, actie)
         return _project_detail(conn, project_id)
 
 

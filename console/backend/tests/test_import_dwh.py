@@ -2,6 +2,7 @@
 DWH-export files through the builtin parser."""
 
 import importlib
+import io
 import sys
 from pathlib import Path
 
@@ -61,6 +62,53 @@ def test_old_flat_handoff_format_is_no_longer_recognised(client):
                      sheet="Sellout", meta_rows=8)
     r = upload(client, "DWH_sellout_TWEEZERMAN_NL_wk32.xlsx", flat)
     assert r["status"] in ("profiel_nodig", "error")
+
+
+def test_sku_leidende_nul_in_tekstcel_blijft_behouden(client):
+    """Een SKU-cel die als TEKST is opgeslagen ('007...') mag zijn leidende
+    nul niet verliezen — Excel-getallen kunnen dat sowieso nooit bewaren,
+    dus alleen bij een tekstcel is dit een echt risico. str(int(...)) zou
+    '007123' stilzwijgend tot '7123' maken."""
+    import openpyxl
+    import seed
+
+    content = seed.make_dwh_xlsx(seed._kv_demo_rows(["202632"]))
+    wb = openpyxl.load_workbook(io.BytesIO(content))
+    ws = wb["Sheet1"]
+    ws.cell(row=9, column=3, value="007123")  # eerste datarij, tekstcel i.p.v. getal
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    r = upload(client, "DWH__Sales_volume__sales_Tweezerman_KVNL_32_demo.xlsx", buf.getvalue())
+    assert r["status"] == "ingelezen"
+    art = client.get("/api/kruidvat/artikelen").json()
+    # De GTIN identificeert het artikel in de API — de test bewijst dat de
+    # rij niet is overgeslagen (SKU "geen nummer") en de import niet is
+    # vastgelopen op de tekstcel; het eigenlijke bewijs voor de leidende nul
+    # zit in de parser-unittest hieronder.
+    assert art["available"] and len(art["artikelen"]) == 3
+
+
+def test_sku_tekstcel_leidende_nul_parser_unit(client):
+    """Directe parser-test (geen retailer-API nodig): _kv_demo_rows() geeft
+    normaal een numerieke SKU; deze test injecteert een leidende nul als
+    tekst en controleert het item-attribuut zelf."""
+    import io as _io
+
+    import openpyxl
+    from engine import kruidvat_dwh
+    import seed
+
+    content = seed.make_dwh_xlsx(seed._kv_demo_rows(["202632"]))
+    wb = openpyxl.load_workbook(_io.BytesIO(content))
+    ws = wb["Sheet1"]
+    ws.cell(row=9, column=3, value="007123")
+    buf = _io.BytesIO()
+    wb.save(buf)
+
+    parsed = kruidvat_dwh.parse_workbook(_io.BytesIO(buf.getvalue()), "demo.xlsx")
+    skus = {i["sku"] for i in parsed.items}
+    assert "007123" in skus, f"leidende nul verloren, gevonden SKU's: {skus}"
 
 
 def test_unknown_upload_stays_visible_on_retailer_tab(client):

@@ -263,6 +263,27 @@ def test_upload_limit_is_enforced_per_file(client, monkeypatch):
     assert result["status"] == "error" and "groter dan" in result["detail"]
 
 
+def test_decompressiebom_wordt_geweigerd_voor_openpyxl_leest(client, monkeypatch):
+    """Een klein, geldig .xlsx-bestand dat uitgepakt gigantisch wordt (een
+    'zip bomb') mag nooit ongecontroleerd door openpyxl gedecomprimeerd
+    worden — dat kan het geheugen van het proces opblazen."""
+    import io
+    import zipfile
+
+    main = sys.modules["main"]
+    monkeypatch.setattr(main, "MAX_UNCOMPRESSED_MB", 1)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 2 MB aan herhaalde tekst comprimeert tot een paar honderd bytes.
+        zf.writestr("groot.xml", b"0" * (2 * 1024 * 1024))
+    result = client.post("/api/import", files=[
+        ("files", ("bom.xlsx", buf.getvalue())),
+    ]).json()["results"][0]
+    assert result["status"] == "error"
+    assert "pakt uit tot meer dan" in result["detail"]
+
+
 # ------------------------------------------------------- dubbele gegevens
 
 def test_identical_file_twice_counts_once(client):

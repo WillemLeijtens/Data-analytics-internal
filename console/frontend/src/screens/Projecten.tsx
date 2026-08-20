@@ -24,13 +24,21 @@ function bereken(proj: any, producten: any[], kosten: any[]) {
     const margeStuk = n(p.verkoopprijs) - n(p.kostprijs);
     const stuksEenmalig = n(p.aantal_winkels) * n(p.stuks_per_winkel);
     const stuksWeek = n(p.aantal_winkels) * n(p.rotatie_per_winkel_per_week);
+    // Eén van de twee prijzen leeg (de ander wel ingevuld) rekent het
+    // ontbrekende veld stil als €0 — dat kan de marge kunstmatig laten
+    // lijken alsof kostprijs of verkoopprijs nul is (zie engine/projecten.py).
+    const prijsOnvolledig = (p.kostprijs == null) !== (p.verkoopprijs == null);
     return {
+      prijsOnvolledig, naam: p.naam,
       eenmalig_omzet: stuksEenmalig * n(p.verkoopprijs),
       eenmalig_marge: stuksEenmalig * margeStuk,
       week_omzet: stuksWeek * n(p.verkoopprijs),
       week_marge: stuksWeek * margeStuk,
     };
   });
+  const waarschuwingen = rijen.filter((r) => r.prijsOnvolledig)
+    .map((r) => `${r.naam || "Naamloos product"}: kostprijs of verkoopprijs is leeg — de marge `
+      + "rekent het ontbrekende veld als €0, wat de marge kunstmatig kan op- of neerwaarts vertekenen.");
   const weken = looptijdWeken(proj.start_datum, proj.eind_datum);
   const bij = (k: any) => k.soort === "bijdrage_leverancier";
   const somK = (terug: boolean, bijdrage: boolean) => kosten
@@ -48,7 +56,7 @@ function bereken(proj: any, producten: any[], kosten: any[]) {
     ? kostenLooptijd - bijdrageLooptijd : 0;
   const pct = (m: number, o: number) => (o ? (m / o) * 100 : null);
   return {
-    rijen, weken, kostenBuitenBeeld,
+    rijen, weken, kostenBuitenBeeld, waarschuwingen,
     eenmalig: { omzet: eenOmzet, productmarge: eenProductmarge, kosten: kostenEenmalig,
                 bijdrage: bijdrageEenmalig, marge: eenMarge, pct: pct(eenMarge, eenOmzet) },
     terugkerend: { weekOmzet, weekMarge, omzet: terugOmzet, kosten: kostenLooptijd,
@@ -347,6 +355,11 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
       </div>
 
       <h2>Producten</h2>
+      {b.waarschuwingen.length > 0 && (
+        <div className="sub sig-red" style={{ marginBottom: 8 }}>
+          {b.waarschuwingen.map((w: string, i: number) => <div key={i}>{w}</div>)}
+        </div>
+      )}
       <div className="tablewrap" style={{ overflowX: "auto" }}>
         <table className="data">
           <thead><tr>

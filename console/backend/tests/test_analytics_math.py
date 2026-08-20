@@ -650,9 +650,9 @@ def test_contract_upload_vervangt_vorig_contract(client, monkeypatch):
     from engine import contracts
 
     antwoorden = iter([
-        {"naam": "Jaarcontract 2026", "type": "contract", "geldig_tot": "2099-01-01",
+        {"naam": "Jaarcontract 2026", "type": "contract", "geldig_tot": "2035-01-01",
          "conclusie": "Loopt nog.", "condities": [{"onderwerp": "Betaling", "afspraak": "30 dagen"}]},
-        {"naam": "Jaarcontract 2027", "type": "contract", "geldig_tot": "2001-01-01",
+        {"naam": "Jaarcontract 2027", "type": "contract", "geldig_tot": "2020-01-01",
          "conclusie": "Verlopen.", "condities": []},
     ])
     monkeypatch.setattr(contracts, "analyseer", lambda conn, tekst, vandaag=None: next(antwoorden))
@@ -677,6 +677,74 @@ def test_contract_upload_vervangt_vorig_contract(client, monkeypatch):
     kaart2 = next(c for c in client.get("/api/overview").json()["retailers"]
                   if c["id"] == "ici-paris-xl")
     assert kaart2["signalen"]["contract"]["signaal"] == "red"
+
+
+def test_contract_upload_bewaart_vorige_in_historie(client, monkeypatch):
+    """Een vervangen contract wordt niet weggegooid: het blijft opvraagbaar
+    in de historie, zodat een verkeerde extractie terug te draaien is."""
+    from engine import contracts
+
+    antwoorden = iter([
+        {"naam": "Eerste contract", "type": "contract", "geldig_tot": "2035-01-01",
+         "conclusie": "Loopt nog.", "condities": []},
+        {"naam": "Tweede contract", "type": "contract", "geldig_tot": "2020-01-01",
+         "conclusie": "Verlopen.", "condities": []},
+    ])
+    monkeypatch.setattr(contracts, "analyseer", lambda conn, tekst, vandaag=None: next(antwoorden))
+    monkeypatch.setattr(contracts, "pdf_tekst", lambda content: "contracttekst")
+
+    assert client.get("/api/ici-paris-xl/contract/historie").json()["historie"] == []
+    client.post("/api/ici-paris-xl/contract",
+               files={"file": ("c1.pdf", b"x", "application/pdf")})
+    assert client.get("/api/ici-paris-xl/contract/historie").json()["historie"] == []
+
+    client.post("/api/ici-paris-xl/contract",
+               files={"file": ("c2.pdf", b"x", "application/pdf")})
+    historie = client.get("/api/ici-paris-xl/contract/historie").json()["historie"]
+    assert len(historie) == 1
+    assert historie[0]["naam"] == "Eerste contract"
+    # Het actuele contract is nu het tweede — de historie is puur archief.
+    actueel = client.get("/api/ici-paris-xl/instellingen").json()["documenten"]
+    assert actueel[0]["naam"] == "Tweede contract"
+
+
+def test_analyseer_verwerpt_onwaarschijnlijke_datum(client, monkeypatch):
+    """Een geëxtraheerde einddatum die >15 jaar van vandaag ligt is
+    vrijwel zeker een verkeerd gelezen of gehallucineerde datum, geen
+    echte contractlooptijd — hij mag het automatische signaal niet
+    aansturen, maar blijft zichtbaar zodat een mens het kan controleren."""
+    import json as _json
+
+    import db as db_mod
+    from engine import contracts
+
+    class NepBlok:
+        type = "text"
+        text = _json.dumps({
+            "naam": "Contract X", "type": "contract", "geldig_tot": "2099-01-01",
+            "conclusie": "Loopt nog.", "condities": [],
+        })
+
+    class NepResponse:
+        content = [NepBlok()]
+
+    class NepMessages:
+        @staticmethod
+        def create(**kwargs):
+            return NepResponse()
+
+    class NepAnthropic:
+        def __init__(self, api_key=None):
+            self.messages = NepMessages()
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-fake")
+    monkeypatch.setattr("anthropic.Anthropic", NepAnthropic)
+
+    with db_mod.get_conn() as conn:
+        gevonden = contracts.analyseer(conn, "contracttekst", vandaag=dt.date(2026, 8, 20))
+    assert gevonden["geldig_tot"] is None
+    assert "onwaarschijnlijk" in gevonden["conclusie"]
+    assert "2099-01-01" in gevonden["conclusie"]  # ruwe waarde blijft zichtbaar
 
 
 # ------------------------------------------------ Anthropic-sleutelbeheer

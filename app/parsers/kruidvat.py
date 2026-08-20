@@ -201,6 +201,12 @@ def parse_workbook(path: str, filename: str) -> ParsedFile:
         sheet, silently dropping the others (and their banner never reached
         the filters).
     """
+    # NB: deliberately NOT read_only=True — this sheet is first scanned via
+    # iter_rows() (candidate detection) and then read with cell(row=,
+    # column=) random access; that combination doesn't work on a read-only
+    # (streaming) worksheet and hangs in practice. A real fix needs the
+    # extraction rewritten to iter_rows(), a larger, riskier change than
+    # fits here.
     wb = openpyxl.load_workbook(path, data_only=True)
     candidates = _sheet_candidates(wb)
     if not candidates:
@@ -307,11 +313,21 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
         sku = ws.cell(row=r, column=sku_col).value
         if sku is None:
             continue
-        try:
-            sku = str(int(sku))
-        except (TypeError, ValueError):
-            result.warnings.append(f"Row {r}: non-numeric SKU '{sku}', skipped.")
-            continue
+        if isinstance(sku, str):
+            # A text cell keeps a real leading zero (Excel numbers never
+            # can, so text is the only risk here). str(int(...)) would
+            # silently turn "007" into "7".
+            sku = sku.strip()
+            if re.fullmatch(r"\d+\.0+", sku):
+                sku = sku.split(".", 1)[0]
+            if not sku:
+                continue
+        else:
+            try:
+                sku = str(int(sku))
+            except (TypeError, ValueError):
+                result.warnings.append(f"Row {r}: non-numeric SKU '{sku}', skipped.")
+                continue
 
         row_brand = brand
         if brand_col:
@@ -346,9 +362,12 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
                 continue
             vol = _to_number(raw_vol)
             val = _to_number(raw_val)
-            if vol is None and raw_vol is not None:
+            # Also counts a cell that's blank while its sibling has data (e.g.
+            # volume reported, value not) — without this it was silently
+            # booked as 0, indistinguishable from a real reported zero.
+            if vol is None:
                 non_numeric_cells += 1
-            if val is None and raw_val is not None:
+            if val is None:
                 non_numeric_cells += 1
             result.facts.append(
                 {
@@ -370,8 +389,9 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
         )
     if non_numeric_cells:
         result.warnings.append(
-            f"{non_numeric_cells} volume/value cell(s) contained non-numeric "
-            "text and were treated as 0 — check the source file."
+            f"{non_numeric_cells} volume/value cell(s) were blank or contained "
+            "non-numeric text and were treated as 0 — check the source file "
+            "before acting on this."
         )
 
     # Reconcile against the printed Total row per week, if present.

@@ -76,6 +76,28 @@ def test_lege_velden_rekenen_als_nul():
     assert uit["eenmalig"]["marge_pct"] is None
 
 
+def test_lege_kostprijs_met_ingevulde_verkoopprijs_waarschuwt():
+    """Kostprijs leeg, verkoopprijs wel ingevuld: de marge rekent kostprijs
+    als €0 en lijkt daardoor voller dan hij is. De rekenwijze blijft
+    None-tolerant (crasht niet), maar dit moet een waarschuwing opleveren
+    i.p.v. stil een te hoge marge te tonen."""
+    uit = projecten.bereken({}, [{"naam": "Halfingevuld", "verkoopprijs": 10.0,
+                                  "aantal_winkels": 1, "stuks_per_winkel": 1}], [])
+    assert uit["producten"][0]["marge_per_stuk"] == 10.0  # rekent nog steeds door
+    assert uit["producten"][0]["prijs_onvolledig"] is True
+    assert uit["waarschuwingen"] and "Halfingevuld" in uit["waarschuwingen"][0]
+
+
+def test_beide_prijzen_leeg_of_beide_ingevuld_waarschuwt_niet():
+    """Beide leeg (nog niets ingevuld) of beide ingevuld (compleet) zijn
+    geen halfvolle rijen en horen geen waarschuwing te geven."""
+    uit = projecten.bereken({}, [
+        {"naam": "Nog leeg"},
+        {"naam": "Compleet", "kostprijs": 1.0, "verkoopprijs": 2.0},
+    ], [])
+    assert uit["waarschuwingen"] == []
+
+
 def test_looptijd_is_fractioneel_met_einddag_inbegrepen():
     """Hele weken afronden gooide tot een halve week doorverkoop weg (74
     dagen werd 11 weken); de looptijd telt nu fractioneel, mét de einddag."""

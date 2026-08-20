@@ -120,6 +120,18 @@ elkaar dus niet tegenspreken.
 `CONSOLE_ALLOW_OPEN=1` uit eerdere versies blijft werken en betekent
 `gateway`; die stand wint nu van een gezet wachtwoord.
 
+**Bewuste keuze: geen per-retailer autorisatie.** Beide standen hierboven
+zijn all-or-nothing — wie de poort door is (portal-login of het gedeelde
+wachtwoord) kan elke retailer zien én wijzigen, er is geen gebruikers- of
+rollentabel. Dat is een expliciet geaccepteerd risico, passend bij een
+klein, vertrouwd intern team waarvoor de app is gebouwd: iedereen mag
+sowieso alle retailers zien. Het logboek (wie wijzigde wat) is dan ook een
+werkafspraak, geen beveiligingsmaatregel. **Zodra de gebruikersgroep ooit
+breder wordt dan dat ene vertrouwde team** — externe partijen, retailer-
+eigen medewerkers, of iedereen die niet elke retailer mag zien — is echte
+per-gebruiker/per-retailer toegangscontrole nodig vóór die uitbreiding,
+niet erna.
+
 Een eigen hostnaam in plaats van een subpad (`/console`) is bewust: de SPA
 verwijst naar absolute `/assets`- en `/api`-paden, die onder een prefix
 zouden breken. Registreer hem in het portaal dus op een eigen host, niet
@@ -368,6 +380,17 @@ Beide databases worden dagelijks gekopieerd door de `backup`-service in
 `docker-compose.yml` (`sqlite3 .backup` + integriteitscontrole, 14 dagen
 bewaard in `backups/`). Herstelprocedure: `deploy/restore.md`.
 
+**Bewuste keuze: de Anthropic API-sleutel staat onversleuteld in de
+database** (`anthropic_config.api_key`, zie "AI-contractanalyse" hierboven)
+en komt dus ook onversleuteld in elke dagelijkse back-up terecht. Dat is
+hetzelfde beveiligingsniveau als `CONSOLE_PASSWORD` nu al heeft (plaintext
+env var) — geconsistent met de rest van deze app, niet apart verzwakt. Wie
+toegang heeft tot `backups/` of het databasebestand, heeft ook de sleutel.
+Beperk dus wie bij de droplet/back-upmap kan; overweeg sleutelrotatie als
+die toegang ooit breder wordt dan het kleine team waarvoor deze app is
+gebouwd (zie ook de sectie over autorisatie hierboven — dezelfde
+overweging geldt hier).
+
 ## Nieuwe retailer toevoegen
 
 1. Upload een bestand van de retailer: onbekend ⇒ **PROFIEL NODIG** in de
@@ -393,4 +416,14 @@ Bekende beperkingen: mailregels zijn CRUD-stubs (geen echte poller aan de
 console gekoppeld); contractanalyse vereist `ANTHROPIC_API_KEY` (zonder
 sleutel werkt de rest van de app, maar geeft een upload een nette 422); The
 Seasons-font is de demo-versie (alleen basis-ASCII — koop de licentie voor
-productie).
+productie); `react-router-dom` heeft een moderate open-redirect-CVE die
+alleen met een major-versiebump (v6 → v7) op te lossen is — bewust niet
+blind doorgevoerd, de navigatie in deze app is toch al een vaste,
+interne enum-set (retailer-id's + schermnamen), dus de praktische
+exploiteerbaarheid is laag; `npm audit` volgen als dit ooit verandert.
+
+Frontend heeft sinds kort ook geautomatiseerde tests (Vitest +
+Testing Library, `npm test` in `console/frontend`, draait mee in CI):
+`src/api.ts` (foutafhandeling — het kanaal waar élke foutmelding in de app
+doorheen loopt) en de `Uitleg`-popover. Dekking is nog beperkt tot deze
+kern; de rest van de UI leunt op `tsc`/`vite build` + handmatige controle.

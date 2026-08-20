@@ -68,17 +68,24 @@ def looptijd_weken(start: str | None, eind: str | None) -> float | None:
 
 def _product(p: dict) -> dict:
     winkels = _n(p.get("aantal_winkels"))
-    marge_per_stuk = _n(p.get("verkoopprijs")) - _n(p.get("kostprijs"))
+    kostprijs, verkoopprijs = p.get("kostprijs"), p.get("verkoopprijs")
+    marge_per_stuk = _n(verkoopprijs) - _n(kostprijs)
     stuks_eenmalig = winkels * _n(p.get("stuks_per_winkel"))
     stuks_week = winkels * _n(p.get("rotatie_per_winkel_per_week"))
     return {
         **p,
+        # Eén van de twee leeg (de ander wél ingevuld) rekent stilzwijgend
+        # met 0 voor het ontbrekende veld — dat KAN de marge onterecht laten
+        # lijken alsof kostprijs of verkoopprijs nul is. De rekenwijze blijft
+        # bewust None-tolerant (zie moduledocstring), maar dit signaal laat
+        # het scherm een waarschuwing tonen i.p.v. de marge stil te vertrouwen.
+        "prijs_onvolledig": (kostprijs is None) != (verkoopprijs is None),
         "marge_per_stuk": round(marge_per_stuk, 4),
         "eenmalig_stuks": round(stuks_eenmalig, 2),
-        "eenmalig_omzet": round(stuks_eenmalig * _n(p.get("verkoopprijs")), 2),
+        "eenmalig_omzet": round(stuks_eenmalig * _n(verkoopprijs), 2),
         "eenmalig_marge": round(stuks_eenmalig * marge_per_stuk, 2),
         "week_stuks": round(stuks_week, 2),
-        "week_omzet": round(stuks_week * _n(p.get("verkoopprijs")), 2),
+        "week_omzet": round(stuks_week * _n(verkoopprijs), 2),
         "week_marge": round(stuks_week * marge_per_stuk, 2),
     }
 
@@ -131,9 +138,17 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict]) -> dict:
     kosten_buiten_beeld = round(kosten_looptijd - bijdrage_looptijd, 2) \
         if (kosten_looptijd or bijdrage_looptijd) and not weken else 0.0
 
+    waarschuwingen = [
+        f"{r.get('naam') or 'Naamloos product'}: kostprijs of verkoopprijs is leeg — "
+        "de marge rekent het ontbrekende veld als €0, wat de marge kunstmatig kan "
+        "op- of neerwaarts vertekenen."
+        for r in regels if r.get("prijs_onvolledig")
+    ]
+
     return {
         "producten": regels,
         "looptijd_weken": weken,
+        "waarschuwingen": waarschuwingen,
         "eenmalig": {
             "omzet": round(een_omzet, 2),
             "productmarge": round(een_productmarge, 2),
@@ -195,3 +210,23 @@ def valideer(project: dict, producten: list[dict], kosten: list[dict]) -> None:
             raise ValueError("elke kostenregel heeft een omschrijving nodig")
         if k.get("bedrag") is not None and float(k["bedrag"]) < 0:
             raise ValueError(f"kostenbedrag kan niet negatief zijn ({k['label']})")
+
+
+def log_wijziging(conn, project_id: int, door: str, actie: str) -> None:
+    """Ververst de meest recente 'gewijzigd'-logregel van dezelfde persoon
+    als die nog geen 5 minuten oud is (nieuwe tijd, nieuwe actietekst), anders
+    komt er een nieuwe regel bij. Zonder dit zou automatisch opslaan (elke
+    wijziging, gedebounced op het scherm) het logboek laten volstromen met
+    tientallen regels per minuut terwijl iemand gewoon aan het typen is —
+    het logboek moet "wie deed wanneer iets" blijven vertellen, niet "wie
+    typte om welke seconde een letter"."""
+    ver = conn.execute(
+        "UPDATE project_log SET op=datetime('now'), actie=? "
+        "WHERE id = (SELECT id FROM project_log WHERE project_id=? AND door=? "
+        "AND actie LIKE 'gewijzigd%' AND op >= datetime('now','-5 minutes') "
+        "ORDER BY op DESC, id DESC LIMIT 1)",
+        (actie, project_id, door))
+    if not ver.rowcount:
+        conn.execute(
+            "INSERT INTO project_log (project_id, door, actie) VALUES (?,?,?)",
+            (project_id, door, actie))
