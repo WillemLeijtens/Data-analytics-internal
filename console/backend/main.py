@@ -6,6 +6,7 @@ import base64
 import datetime as dt
 import io
 import json
+import logging
 import os
 import re
 import secrets
@@ -26,6 +27,13 @@ from engine import analytics, contracts, importer, projecten, signals
 from engine import parser as parser_mod
 from engine.periods import sort_key
 from engine.profile import active_profile, capabilities, get_profiles
+
+# Eén regel per bericht, met tijdstip en niveau — bruikbaar voor
+# logaggregatie (bv. `docker logs` doorheen journald/Loki), i.p.v. kale
+# print()-regels zonder niveau of tijdstip. Uvicorn's eigen access-log
+# blijft apart lopen; dit is alleen voor de eigen berichten van de app.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [console] %(message)s")
+logger = logging.getLogger("console")
 
 app = FastAPI(title="Retailer Console")
 
@@ -123,12 +131,12 @@ if CONSOLE_AUTH == "password":
 else:
     # Gateway mode: no auth layer at all, so a successful portal login is
     # enough. Never any WWW-Authenticate response from this app.
-    print(f"[console] CONSOLE_AUTH=gateway — geen eigen inlog; het portaal "
-          f"authenticeert. Gebonden op {CONSOLE_BIND}.", flush=True)
+    logger.info("CONSOLE_AUTH=gateway — geen eigen inlog; het portaal "
+               "authenticeert. Gebonden op %s.", CONSOLE_BIND)
     if CONSOLE_PASSWORD:
-        print("[console] LET OP: CONSOLE_PASSWORD is gezet maar wordt "
-              "genegeerd in gateway-modus. Haal hem uit .env, of kies "
-              "CONSOLE_AUTH=password als je die laag wél wilt.", flush=True)
+        logger.warning("CONSOLE_PASSWORD is gezet maar wordt genegeerd in "
+                       "gateway-modus. Haal hem uit .env, of kies "
+                       "CONSOLE_AUTH=password als je die laag wél wilt.")
 
 # No CORS middleware on purpose: the SPA is served by this same app (and the
 # Vite dev server proxies /api), so every request is same-origin. A wildcard
@@ -333,7 +341,7 @@ def _bewaar_in_inbox(filename: str, content: bytes) -> str | None:
         # world-readable).
         doel.chmod(0o600)
     except OSError as e:  # noqa: BLE001 - volle schijf mag de import niet slopen
-        print(f"[console] kon {naam} niet in de inbox bewaren: {e}", flush=True)
+        logger.error("kon %s niet in de inbox bewaren: %s", naam, e)
         return None
     return str(doel)
 
@@ -366,7 +374,7 @@ async def do_import(files: list[UploadFile]):
             # tekst naar de client — die kan interne details lekken. Volledig
             # bericht gaat naar de serverlog, de gebruiker krijgt een veilige
             # samenvatting.
-            print(f"[console] onverwachte fout bij import van {filename}: {e}", flush=True)
+            logger.exception("onverwachte fout bij import van %s", filename)
             results.append({"filename": filename, "status": "error", "rows": 0,
                             "retailer_id": None,
                             "detail": "onverwachte fout bij het verwerken van dit bestand — "

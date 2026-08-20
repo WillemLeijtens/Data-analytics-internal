@@ -12,6 +12,10 @@ vorige contract wordt niet weggegooid: het gaat naar
 `contract_documenten_historie`, zodat een verkeerde extractie (bv. een
 gehallucineerde datum) terug te draaien is en niet stilzwijgend de enige
 vastlegging van de vorige, mogelijk correcte afspraken wist.
+
+`anthropic_config.api_key` (zie `haal_api_key()`) staat bewust
+onversleuteld in de database, zoals de rest van de app geen versleuteling
+kent — zie de "Back-up"-sectie in README.md voor de afweging.
 """
 
 from __future__ import annotations

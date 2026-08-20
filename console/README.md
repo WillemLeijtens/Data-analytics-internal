@@ -380,6 +380,17 @@ Beide databases worden dagelijks gekopieerd door de `backup`-service in
 `docker-compose.yml` (`sqlite3 .backup` + integriteitscontrole, 14 dagen
 bewaard in `backups/`). Herstelprocedure: `deploy/restore.md`.
 
+**Bewuste keuze: de Anthropic API-sleutel staat onversleuteld in de
+database** (`anthropic_config.api_key`, zie "AI-contractanalyse" hierboven)
+en komt dus ook onversleuteld in elke dagelijkse back-up terecht. Dat is
+hetzelfde beveiligingsniveau als `CONSOLE_PASSWORD` nu al heeft (plaintext
+env var) — geconsistent met de rest van deze app, niet apart verzwakt. Wie
+toegang heeft tot `backups/` of het databasebestand, heeft ook de sleutel.
+Beperk dus wie bij de droplet/back-upmap kan; overweeg sleutelrotatie als
+die toegang ooit breder wordt dan het kleine team waarvoor deze app is
+gebouwd (zie ook de sectie over autorisatie hierboven — dezelfde
+overweging geldt hier).
+
 ## Nieuwe retailer toevoegen
 
 1. Upload een bestand van de retailer: onbekend ⇒ **PROFIEL NODIG** in de
