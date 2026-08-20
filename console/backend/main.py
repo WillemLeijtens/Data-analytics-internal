@@ -676,6 +676,15 @@ async def upload_contract(retailer_id: str, request: Request, file: UploadFile, 
         return {"ok": True, "document": _contract_doc(doc)}
 
 
+@app.get("/api/{retailer_id}/contract/historie")
+def contract_historie(retailer_id: str):
+    """Eerder vervangen contracten — ter inzage, nooit sturend voor het
+    actuele signaal (dat blijft uitsluitend op contract_documents staan)."""
+    with db.get_conn() as conn:
+        _retailer_or_404(conn, retailer_id)
+        return {"historie": [_contract_doc(r) for r in contracts.historie(conn, retailer_id)]}
+
+
 def _masker(sleutel: str) -> str:
     """Nooit de volledige sleutel teruggeven aan de frontend."""
     if len(sleutel) <= 12:

@@ -176,6 +176,7 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   const [error, setError] = useState<string | null>(null);
   const [contractBezig, setContractBezig] = useState(false);
   const [contractFout, setContractFout] = useState<string | null>(null);
+  const [contractHistorie, setContractHistorie] = useState<any[] | null>(null);
 
   const load = () => apiGet(`/${ctx.retailer}/instellingen`).then((d) => {
     setData(d); setError(null);
@@ -219,6 +220,7 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
     fd.append("file", file);
     try {
       await apiSend(`/${ctx.retailer}/contract`, "POST", fd);
+      setContractHistorie(null);  // vorige historie is nu stale, opnieuw laden bij openen
       load();
     } catch (e: any) {
       setContractFout(String(e?.message ?? e));
@@ -287,14 +289,35 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
               )}
             </div>
           ))}
-          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 14 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 14, flexWrap: "wrap" }}>
             <label className="btn ghost" style={{ cursor: contractBezig ? "default" : "pointer" }}>
               {contractBezig ? "Bezig met analyseren…" : "Nieuw contract uploaden (vervangt dit)"}
               <input type="file" accept="application/pdf" disabled={contractBezig} style={{ display: "none" }}
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadContract(f); e.target.value = ""; }} />
             </label>
+            <button className="chip off" style={{ fontSize: 10 }}
+              onClick={async () => {
+                if (contractHistorie) { setContractHistorie(null); return; }
+                const r = await apiGet<{ historie: any[] }>(`/${ctx.retailer}/contract/historie`);
+                setContractHistorie(r.historie);
+              }}>
+              {contractHistorie ? "verberg historie" : "eerdere contracten"}
+            </button>
             {contractFout && <span className="sub sig-red">{contractFout}</span>}
           </div>
+          {contractHistorie && (
+            contractHistorie.length ? (
+              <div style={{ marginTop: 10 }}>
+                {contractHistorie.map((h: any) => (
+                  <div key={h.id} className="sub" style={{ fontSize: 10.5, marginTop: 6, borderTop: "1px solid var(--t-border)", paddingTop: 6 }}>
+                    <b>{h.naam}</b> — vervangen op {h.vervangen_op?.slice(0, 16).replace("T", " ")}
+                    {h.geldig_tot ? ` · gold tot ${h.geldig_tot}` : ""}
+                    {h.conclusie && <div style={{ marginTop: 2 }}>{h.conclusie}</div>}
+                  </div>
+                ))}
+              </div>
+            ) : <div className="sub" style={{ fontSize: 10.5, marginTop: 8 }}>Nog geen eerdere contracten.</div>
+          )}
         </div>
       ) : (
         <div className="dropzone">
