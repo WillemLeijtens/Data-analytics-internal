@@ -253,6 +253,34 @@ def test_profile_publishing_is_no_longer_exposed(client):
     assert client.get("/api/parser/voorstel").status_code in (404, 405)
 
 
+def test_gelijktijdige_upload_van_hetzelfde_nieuwe_bestand_dupliceert_niet(client):
+    """REL-1: twee gelijktijdige uploads van hetzelfde, nog-nooit-geziene
+    bestand zouden allebei de 'existing is None'-check kunnen passeren
+    vóórdat een van beide commit. De UNIQUE-index op imports.file_hash
+    (migrations/001_schema.sql) is de schema-level backstop daartegen: een
+    tweede INSERT met dezelfde hash faalt hard i.p.v. stil te dupliceren.
+    Dit simuleert de tweede, "verliezende" schrijver direct op de database."""
+    import sqlite3
+
+    import db as db_mod
+
+    with db_mod.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO imports (retailer_id, profile_id, filename, file_hash, status) "
+            "VALUES (NULL, NULL, 'a.xlsx', 'zelfde-hash', 'profiel_nodig')")
+
+    with db_mod.get_conn() as conn:
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO imports (retailer_id, profile_id, filename, file_hash, status) "
+                "VALUES (NULL, NULL, 'b.xlsx', 'zelfde-hash', 'profiel_nodig')")
+
+    # De eerste rij staat nog gewoon: de mislukte tweede poging heeft niets
+    # kapotgemaakt, alleen zichzelf niet toegevoegd.
+    rows = client.get("/api/imports").json()
+    assert sum(1 for r in rows if r["filename"] == "a.xlsx") == 1
+
+
 def test_upload_limit_is_enforced_per_file(client, monkeypatch):
     main = sys.modules["main"]
     monkeypatch.setattr(main, "MAX_UPLOAD_BYTES", 10)
