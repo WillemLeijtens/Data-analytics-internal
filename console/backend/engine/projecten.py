@@ -210,3 +210,23 @@ def valideer(project: dict, producten: list[dict], kosten: list[dict]) -> None:
             raise ValueError("elke kostenregel heeft een omschrijving nodig")
         if k.get("bedrag") is not None and float(k["bedrag"]) < 0:
             raise ValueError(f"kostenbedrag kan niet negatief zijn ({k['label']})")
+
+
+def log_wijziging(conn, project_id: int, door: str, actie: str) -> None:
+    """Ververst de meest recente 'gewijzigd'-logregel van dezelfde persoon
+    als die nog geen 5 minuten oud is (nieuwe tijd, nieuwe actietekst), anders
+    komt er een nieuwe regel bij. Zonder dit zou automatisch opslaan (elke
+    wijziging, gedebounced op het scherm) het logboek laten volstromen met
+    tientallen regels per minuut terwijl iemand gewoon aan het typen is —
+    het logboek moet "wie deed wanneer iets" blijven vertellen, niet "wie
+    typte om welke seconde een letter"."""
+    ver = conn.execute(
+        "UPDATE project_log SET op=datetime('now'), actie=? "
+        "WHERE id = (SELECT id FROM project_log WHERE project_id=? AND door=? "
+        "AND actie LIKE 'gewijzigd%' AND op >= datetime('now','-5 minutes') "
+        "ORDER BY op DESC, id DESC LIMIT 1)",
+        (actie, project_id, door))
+    if not ver.rowcount:
+        conn.execute(
+            "INSERT INTO project_log (project_id, door, actie) VALUES (?,?,?)",
+            (project_id, door, actie))

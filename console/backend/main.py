@@ -926,25 +926,9 @@ def save_project(project_id: int, body: ProjectBody, request: Request):
             [(project_id, i, k["soort"], k["label"].strip(), k.get("bedrag"),
               1 if k.get("terugkerend") else 0)
              for i, k in enumerate(body.kosten)])
-        # Automatisch opslaan mag het logboek niet laten volstromen: ligt de
-        # laatste 'gewijzigd'-regel van DEZELFDE persoon nog geen 5 minuten
-        # terug, dan wordt die regel ververst (nieuwe tijd, nieuwe telling)
-        # in plaats van dat er een nieuwe bijkomt. Een andere persoon, of
-        # een stilte van 5+ minuten, begint gewoon een nieuwe regel — het
-        # logboek blijft dan nog steeds "wie deed wanneer iets" vertellen,
-        # niet "wie typte om welke seconde een letter".
         actie = (f"gewijzigd — {len(body.producten)} product(en), "
                  f"{len(body.kosten)} kostenregel(s)")
-        ver = conn.execute(
-            "UPDATE project_log SET op=datetime('now'), actie=? "
-            "WHERE id = (SELECT id FROM project_log WHERE project_id=? AND door=? "
-            "AND actie LIKE 'gewijzigd%' AND op >= datetime('now','-5 minutes') "
-            "ORDER BY op DESC, id DESC LIMIT 1)",
-            (actie, project_id, wie))
-        if not ver.rowcount:
-            conn.execute(
-                "INSERT INTO project_log (project_id, door, actie) VALUES (?,?,?)",
-                (project_id, wie, actie))
+        projecten.log_wijziging(conn, project_id, wie, actie)
         return _project_detail(conn, project_id)
 
 
