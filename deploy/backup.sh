@@ -1,5 +1,5 @@
 #!/bin/sh
-# Dagelijkse back-up van beide SQLite-databases.
+# Dagelijkse back-up van de console-database.
 #
 # sqlite3 .backup in plaats van cp: een kopie met cp tijdens een schrijvende
 # import levert een half bestand op (WAL-modus schrijft in een tweede bestand).
@@ -53,6 +53,5 @@ maak_backup() {
 mkdir -p "$DOEL"
 while true; do
     maak_backup /data/console/console.db console || true
-    maak_backup /data/streamlit/analytics.db analytics || true
     sleep 3600
 done

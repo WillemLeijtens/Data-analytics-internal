@@ -6,8 +6,8 @@ datamodel, per retailer een parser die in dít project gebouwd wordt tegen een
 écht aanleverbestand — er zit geen retailer-specifieke code in analyses of UI,
 en er valt in de app niets te mappen of te publiceren.
 
-De bestaande Streamlit-app in `app/` blijft ongewijzigd draaien; deze console
-staat er los naast tot de overstap gemaakt wordt.
+Deze console is sinds de verwijdering van de oude Streamlit-app (`app/`) de
+enige applicatie in deze repo.
 
 ## Starten
 
@@ -19,8 +19,8 @@ make dev    # backend :8000 + frontend :5173
 
 ## Deployen op de droplet
 
-De console draait als **één extra container** naast de bestaande
-Streamlit-app: eigen image, eigen database in `console/data/`, eigen poort.
+De console draait als **één container** met een eigen image en een eigen
+database in `console/data/`; daarnaast draait alleen nog de `backup`-service.
 
 Toegang loopt via het **portaal** (privé-adres + firewallregel voor de
 gateway + forward-auth), net als bij de andere apps. Niets van deze repo

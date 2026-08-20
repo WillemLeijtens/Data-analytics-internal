@@ -22,9 +22,8 @@ jobs:
       # Console-tests draaien vanuit hun eigen map: ze zetten sys.path op
       # backend/ en importeren modules op naam.
       - run: python -m pytest -q tests
-      - run: python -m pytest -q tests
         working-directory: console/backend
-      - run: python -m compileall -q app console/backend
+      - run: python -m compileall -q console/backend
 
   frontend:
     runs-on: ubuntu-latest

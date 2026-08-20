@@ -142,9 +142,9 @@ def test_real_file_with_mangled_name_still_recognised(client):
 
 
 def test_dwh_total_mismatch_imports_with_visible_warning(client):
-    """Gelijk aan de Streamlit-app: een niet-kloppend Total-getal blokkeert de
-    import niet, maar levert wel een waarschuwing die de UI toont — blokkeren
-    zou betekenen dat je bij een bronbestandsfout helemaal geen cijfers hebt."""
+    """Een niet-kloppend Total-getal blokkeert de import niet, maar levert wel
+    een waarschuwing die de UI toont — blokkeren zou betekenen dat je bij een
+    bronbestandsfout helemaal geen cijfers hebt."""
     import io
     import seed
     from openpyxl import load_workbook

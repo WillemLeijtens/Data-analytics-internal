@@ -18,9 +18,11 @@ Real export format (confirmed against sample files):
 
 from __future__ import annotations
 
-# Vendored from app/parsers/kruidvat.py (the Streamlit app), where this
-# parser has been proven against the real DWH sample files. Keep the two in
-# sync when the export format changes; only this import block differs.
+# Originally vendored from the Streamlit app's app/parsers/kruidvat.py, where
+# this parser was first proven against the real DWH sample files. That app has
+# since been removed, so this is now the single implementation — the parity
+# test that kept the two copies in sync is gone with it. Coverage now comes
+# from tests/test_import_dwh.py, which runs the real sample files through it.
 
 import math
 import re
