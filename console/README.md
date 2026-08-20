@@ -416,4 +416,14 @@ Bekende beperkingen: mailregels zijn CRUD-stubs (geen echte poller aan de
 console gekoppeld); contractanalyse vereist `ANTHROPIC_API_KEY` (zonder
 sleutel werkt de rest van de app, maar geeft een upload een nette 422); The
 Seasons-font is de demo-versie (alleen basis-ASCII — koop de licentie voor
-productie).
+productie); `react-router-dom` heeft een moderate open-redirect-CVE die
+alleen met een major-versiebump (v6 → v7) op te lossen is — bewust niet
+blind doorgevoerd, de navigatie in deze app is toch al een vaste,
+interne enum-set (retailer-id's + schermnamen), dus de praktische
+exploiteerbaarheid is laag; `npm audit` volgen als dit ooit verandert.
+
+Frontend heeft sinds kort ook geautomatiseerde tests (Vitest +
+Testing Library, `npm test` in `console/frontend`, draait mee in CI):
+`src/api.ts` (foutafhandeling — het kanaal waar élke foutmelding in de app
+doorheen loopt) en de `Uitleg`-popover. Dekking is nog beperkt tot deze
+kern; de rest van de UI leunt op `tsc`/`vite build` + handmatige controle.
