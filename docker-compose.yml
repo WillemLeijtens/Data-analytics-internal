@@ -1,56 +1,7 @@
 services:
-  app:
-    build: .
-    restart: unless-stopped
-    environment:
-      # Zelfde schakelaar als de console (CONSOLE_AUTH): 'gateway' = geen
-      # eigen inlog, het portaal authenticeert; 'password' (standaard) = het
-      # gedeelde wachtwoord in de app zelf. Gateway-modus mag alleen bij een
-      # prive binding; de app weigert anders te starten.
-      - APP_AUTH=${APP_AUTH:-password}
-      - APP_BIND=${APP_BIND:-127.0.0.1}
-      - STREAMLIT_APP_PASSWORD=${STREAMLIT_APP_PASSWORD}
-      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
-      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-common}
-      - IMAP_HOST=${IMAP_HOST:-}
-      - IMAP_PORT=${IMAP_PORT:-993}
-      - IMAP_USER=${IMAP_USER:-}
-      - IMAP_PASSWORD=${IMAP_PASSWORD:-}
-      - IMAP_FOLDER=${IMAP_FOLDER:-INBOX}
-    volumes:
-      - ./data:/app/data
-    ports:
-      # Net als de console: ALLEEN op het prive-adres, toegang loopt via het
-      # portaal (forward-auth op de gateway). Nooit 0.0.0.0 — dan staan de
-      # verkoopcijfers op het publieke IP.
-      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8501}:8501"
-    # Begrenst wat één kwaadaardig/kapot Excel-bestand (bv. een decompressie-
-    # bom) maximaal aan hostgeheugen kan opeisen voordat de container zelf
-    # herstart in plaats van de hele droplet te laten vastlopen.
-    mem_limit: ${APP_MEM_LIMIT:-1g}
-
-  # Polls Outlook for new sellout mails. Shares ./data with the app, so it
-  # uses the same database and the same OAuth token cache — signing in once
-  # in the web UI is enough for this service too. Does nothing until
-  # auto-import is switched on in Settings.
-  poller:
-    build: .
-    restart: unless-stopped
-    command: ["python", "app/auto_import.py", "--loop", "--interval", "900"]
-    environment:
-      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
-      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-common}
-      - IMAP_HOST=${IMAP_HOST:-}
-      - IMAP_PORT=${IMAP_PORT:-993}
-      - IMAP_USER=${IMAP_USER:-}
-      - IMAP_PASSWORD=${IMAP_PASSWORD:-}
-      - IMAP_FOLDER=${IMAP_FOLDER:-INBOX}
-    volumes:
-      - ./data:/app/data
-
-  # Retailer Console: de multi-retailer herbouw (FastAPI + gebouwde React-SPA
-  # in één image). Draait naast de Streamlit-app op zijn eigen database, zodat
-  # de bestaande app ongemoeid blijft tot de overstap gemaakt wordt.
+  # Retailer Console: FastAPI + de gebouwde React-SPA in één image. Dit is
+  # sinds het verwijderen van de Streamlit-app de enige applicatie hier; de
+  # oude app (app/, poller, ./data/analytics.db) is uit de repo gehaald.
   console:
     build:
       context: ./console
@@ -84,14 +35,16 @@ services:
       # gateway erbij, zet dan CONSOLE_BIND op het privé-adres van deze
       # droplet — nooit op 0.0.0.0.
       - "${CONSOLE_BIND:-127.0.0.1}:${CONSOLE_PORT:-8010}:8000"
-    # Zelfde reden als bij 'app': begrenst het geheugen dat één upload
-    # maximaal kan opeisen.
+    # Begrenst wat één kwaadaardig/kapot Excel-bestand (bv. een decompressie-
+    # bom) maximaal aan hostgeheugen kan opeisen voordat de container zelf
+    # herstart in plaats van de hele droplet te laten vastlopen.
     mem_limit: ${CONSOLE_MEM_LIMIT:-1g}
 
-  # Dagelijkse back-up van BEIDE databases naar ./backups, 14 dagen bewaard.
-  # Zonder deze service staat de volledige importhistorie op één droplet
-  # zonder kopie. Leest de databases alleen; draait als eigen container zodat
-  # er geen cron op de host nodig is. Herstellen: zie deploy/restore.md.
+  # Dagelijkse back-up van de console-database naar ./backups, 14 dagen
+  # bewaard. Zonder deze service staat de volledige importhistorie op één
+  # droplet zonder kopie. Leest de database alleen; draait als eigen
+  # container zodat er geen cron op de host nodig is. Herstellen: zie
+  # deploy/restore.md.
   backup:
     image: alpine:3
     restart: unless-stopped
@@ -105,7 +58,6 @@ services:
       # omdat dat alleen in de containerlog stond, viel het niet op.
       # De back-up zelf schrijft nog steeds uitsluitend naar /backups.
       - ./console/data:/data/console
-      - ./data:/data/streamlit
       - ./backups:/backups
       - ./deploy/backup.sh:/backup.sh:ro
     entrypoint: ["/bin/sh", "-c", "apk add --no-cache sqlite >/dev/null && exec /bin/sh /backup.sh"]

@@ -98,7 +98,7 @@ else
     while IFS=$'\t' read -r _naam dir; do
         [ -n "${dir:-}" ] || continue
         VAN_ONS=0
-        for db in "$dir/console/data/console.db" "$dir/data/analytics.db"; do
+        for db in "$dir/console/data/console.db"; do
             if [ -f "$db" ]; then
                 printf '   %s  %s\n' "$(date -r "$db" '+%Y-%m-%d %H:%M')" "$db"
                 VAN_ONS=1
@@ -118,10 +118,9 @@ fi
 # publiek adres te luisteren. Een binding op 0.0.0.0 of op het publieke IP is
 # daarom een bevinding, geen detail: dan staan de verkoopcijfers open.
 kop "Waar luisteren onze diensten?"
-for dienst in console app; do
+for dienst in console; do
     case "$dienst" in
         console) poort=8000; pad="/healthz" ;;
-        app)     poort=8501; pad="/" ;;
     esac
     ADRES=$("${COMPOSE[@]}" port "$dienst" "$poort" 2>/dev/null | head -n1)
     if [ -z "$ADRES" ]; then
@@ -136,14 +135,13 @@ for dienst in console app; do
             # Prive-adres: precies de bedoeling, de gateway komt hier langs.
             : ;;
         0.0.0.0|::|\[::\])
-            meld "PROBLEEM $dienst luistert op $ADRES — dat is elk adres van deze host, dus ook het publieke IP. Zet APP_BIND/CONSOLE_BIND op het prive-adres." ;;
+            meld "PROBLEEM $dienst luistert op $ADRES — dat is elk adres van deze host, dus ook het publieke IP. Zet CONSOLE_BIND op het prive-adres." ;;
         *)
             meld "PROBLEEM $dienst luistert op $ADRES; dat lijkt geen prive-adres. Alles hoort achter het portaal te staan." ;;
     esac
     if command -v curl >/dev/null 2>&1; then
-        # Een paar pogingen: de Streamlit-app heeft na een herstart ~15 s
-        # nodig om pandas en altair te laden. Direct na `up -d` meten geeft
-        # anders een 000 die op een storing lijkt terwijl hij nog opstart.
+        # Een paar pogingen: direct na `up -d` meten geeft anders een 000 die
+        # op een storing lijkt terwijl de container nog aan het opstarten is.
         for poging in 1 2 3 4 5; do
             CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 8 "http://$ADRES$pad" 2>/dev/null)
             [ "$CODE" != "000" ] && break
@@ -159,10 +157,8 @@ for dienst in console app; do
 done
 
 CONSOLE_ENV=$(grep -E '^CONSOLE_BIND=' .env 2>/dev/null | cut -d= -f2-)
-APP_ENV=$(grep -E '^APP_BIND=' .env 2>/dev/null | cut -d= -f2-)
 echo
 echo ".env: CONSOLE_BIND=${CONSOLE_ENV:-<niet gezet, valt terug op 127.0.0.1>}"
-echo ".env: APP_BIND=${APP_ENV:-<niet gezet, valt terug op 127.0.0.1>}"
 
 # -------------------------------------------------------------- back-ups ---
 # De back-up faalde dagenlang zonder dat iemand het zag: de fout stond alleen
@@ -172,7 +168,7 @@ kop "Back-ups"
 if [ ! -d backups ]; then
     echo "Geen map 'backups/' in deze checkout."
 else
-    for naam in console analytics; do
+    for naam in console; do
         NIEUWSTE=$(ls -1t "backups/$naam-"*.db 2>/dev/null | head -n1)
         if [ -z "$NIEUWSTE" ]; then
             echo "$naam: GEEN ENKELE back-up"

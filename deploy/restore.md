@@ -1,13 +1,16 @@
 # Back-up en herstel
 
-Beide databases worden dagelijks gekopieerd door de `backup`-service in
+De console-database wordt dagelijks gekopieerd door de `backup`-service in
 `docker-compose.yml`. Er is geen cron op de droplet nodig: de container kijkt
 elk uur of de back-up van vandaag er al is en maakt hem anders alsnog.
 
 | wat | waar in de container | back-upnaam |
 |---|---|---|
 | Retailer Console | `console/data/console.db` | `backups/console-JJJJMMDD.db` |
-| Streamlit-app | `data/analytics.db` | `backups/analytics-JJJJMMDD.db` |
+
+> De oude Streamlit-app is verwijderd; `data/analytics.db` wordt niet meer
+> geback-upt. Bestaande `backups/analytics-*.db` uit de periode dat hij nog
+> draaide blijven staan tot je ze zelf opruimt.
 
 - **Bewaartermijn**: 14 dagen (`BACKUP_KEEP_DAYS` in `.env` om af te wijken).
 - **Methode**: `sqlite3 .backup`, geen `cp`. Een `cp` tijdens een lopende
@@ -38,9 +41,6 @@ cp backups/console-JJJJMMDD.db console/data/console.db
 docker compose start console
 curl -fsS "http://$(docker compose port console 8000)/healthz"   # {"status":"ok",...}
 ```
-
-Zelfde procedure voor de Streamlit-app met `app`/`poller` en
-`data/analytics.db`.
 
 Gooi `*.kapot` pas weg als het dashboard de verwachte cijfers laat zien: soms
 zit er in het beschadigde bestand nog data die nieuwer is dan de laatste
