@@ -374,9 +374,13 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
                 continue
             vol = _to_number(raw_vol)
             val = _to_number(raw_val)
-            if vol is None and raw_vol is not None:
+            # Telt ook mee als slechts één van de twee cellen leeg is (bv.
+            # wel volume, geen omzet die week): zonder deze telling werd zo'n
+            # rij stil als 0 geboekt, niet te onderscheiden van een echt
+            # gerapporteerde nul.
+            if vol is None:
                 non_numeric_cells += 1
-            if val is None and raw_val is not None:
+            if val is None:
                 non_numeric_cells += 1
             result.facts.append(
                 {
@@ -398,8 +402,9 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
         )
     if non_numeric_cells:
         result.warnings.append(
-            f"{non_numeric_cells} volume/omzetcel(len) bevatten niet-numerieke tekst "
-            "en zijn als 0 geboekt — controleer het bronbestand."
+            f"{non_numeric_cells} volume/omzetcel(len) waren leeg of bevatten "
+            "niet-numerieke tekst en zijn als 0 geboekt — controleer het bronbestand "
+            "voordat je hierop stuurt."
         )
 
     # Reconcile against the printed Total row per week, if present.

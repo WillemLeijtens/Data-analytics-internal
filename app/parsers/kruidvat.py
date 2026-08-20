@@ -346,9 +346,12 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
                 continue
             vol = _to_number(raw_vol)
             val = _to_number(raw_val)
-            if vol is None and raw_vol is not None:
+            # Also counts a cell that's blank while its sibling has data (e.g.
+            # volume reported, value not) — without this it was silently
+            # booked as 0, indistinguishable from a real reported zero.
+            if vol is None:
                 non_numeric_cells += 1
-            if val is None and raw_val is not None:
+            if val is None:
                 non_numeric_cells += 1
             result.facts.append(
                 {
@@ -370,8 +373,9 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
         )
     if non_numeric_cells:
         result.warnings.append(
-            f"{non_numeric_cells} volume/value cell(s) contained non-numeric "
-            "text and were treated as 0 — check the source file."
+            f"{non_numeric_cells} volume/value cell(s) were blank or contained "
+            "non-numeric text and were treated as 0 — check the source file "
+            "before acting on this."
         )
 
     # Reconcile against the printed Total row per week, if present.

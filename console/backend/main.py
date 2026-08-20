@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import io
 import json
 import os
 import re
 import secrets
 import sys
+import zipfile
 from ipaddress import ip_address
 from pathlib import Path
 
@@ -228,6 +230,27 @@ def assortiment(retailer_id: str):
 
 # ---------------------------------------------------------------- import
 
+# Een .xlsx is een ZIP: een klein, geldig bestand kan intern uitpakken tot
+# vele GB's XML en het proces zo het geheugen uit jagen vóór openpyxl ook
+# maar één rij heeft gelezen (een "decompressiebom"). De byte-limiet
+# hierboven begrenst alleen de GECOMPRIMEERDE grootte, dus deze check komt
+# er los naast — niet-ZIP-bestanden (CSV, PDF) slaan 'm gewoon over.
+MAX_UNCOMPRESSED_MB = int(os.environ.get("CONSOLE_MAX_UNCOMPRESSED_MB", "1500"))
+
+
+def _keur_decompressie_goed(content: bytes) -> None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as zf:
+            totaal = sum(info.file_size for info in zf.infolist())
+    except zipfile.BadZipFile:
+        return  # geen ZIP/xlsx — niet dit type risico, de parser meldt zelf een nette fout
+    limiet = MAX_UNCOMPRESSED_MB * 1024 * 1024
+    if totaal > limiet:
+        raise ValueError(
+            f"bestand pakt uit tot meer dan {MAX_UNCOMPRESSED_MB} MB — "
+            "dit lijkt geen geldig Excel-bestand")
+
+
 async def _read_upload_limited(upload: UploadFile) -> bytes:
     """Lees in stukken en faal vóór een onbegrensde geheugentoewijzing."""
     content = bytearray()
@@ -235,6 +258,7 @@ async def _read_upload_limited(upload: UploadFile) -> bytes:
         if len(content) + len(chunk) > MAX_UPLOAD_BYTES:
             raise ValueError(f"bestand is groter dan {MAX_UPLOAD_MB} MB")
         content.extend(chunk)
+    _keur_decompressie_goed(content)
     return bytes(content)
 
 

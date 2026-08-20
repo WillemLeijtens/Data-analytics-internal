@@ -120,6 +120,18 @@ elkaar dus niet tegenspreken.
 `CONSOLE_ALLOW_OPEN=1` uit eerdere versies blijft werken en betekent
 `gateway`; die stand wint nu van een gezet wachtwoord.
 
+**Bewuste keuze: geen per-retailer autorisatie.** Beide standen hierboven
+zijn all-or-nothing — wie de poort door is (portal-login of het gedeelde
+wachtwoord) kan elke retailer zien én wijzigen, er is geen gebruikers- of
+rollentabel. Dat is een expliciet geaccepteerd risico, passend bij een
+klein, vertrouwd intern team waarvoor de app is gebouwd: iedereen mag
+sowieso alle retailers zien. Het logboek (wie wijzigde wat) is dan ook een
+werkafspraak, geen beveiligingsmaatregel. **Zodra de gebruikersgroep ooit
+breder wordt dan dat ene vertrouwde team** — externe partijen, retailer-
+eigen medewerkers, of iedereen die niet elke retailer mag zien — is echte
+per-gebruiker/per-retailer toegangscontrole nodig vóór die uitbreiding,
+niet erna.
+
 Een eigen hostnaam in plaats van een subpad (`/console`) is bewust: de SPA
 verwijst naar absolute `/assets`- en `/api`-paden, die onder een prefix
 zouden breken. Registreer hem in het portaal dus op een eigen host, niet
