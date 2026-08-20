@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Retailer Console — By Leijtens</title>
+    <script>
+      /* Zet het thema VOOR de eerste verf. Doet de React-app dit pas na het
+         laden, dan ziet de gebruiker eerst een lichte pagina die daarna naar
+         donker springt. Bewust klein en zonder afhankelijkheden; de logica
+         staat verder in src/theme.ts. */
+      (function () {
+        try {
+          var modus = localStorage.getItem("bl-theme") || "system";
+          var donker = modus === "dark" ||
+            (modus === "system" && window.matchMedia &&
+             window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.dataset.theme = donker ? "dark" : "light";
+        } catch (e) {
+          document.documentElement.dataset.theme = "light";
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

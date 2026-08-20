@@ -1,0 +1,63 @@
+{
+  "retailer_id": "kruidvat",
+  "version": 4,
+  "status": "live",
+  "detection": {
+    "filename_glob": "DWH_sellout_*_wk*.xlsx",
+    "sheet": "Sellout",
+    "header_row": 9,
+    "required_headers": [
+      "Weeknummer",
+      "EAN",
+      "Omzet excl BTW"
+    ],
+    "filetype": "xlsx",
+    "csv_delimiter": null,
+    "decimal": ","
+  },
+  "period": {
+    "type": "week",
+    "source_column": "Weeknummer",
+    "format": "yyyyww"
+  },
+  "mapping": [
+    {
+      "source": "EAN",
+      "target": "artikel_ean"
+    },
+    {
+      "source": "Artikelomschrijving",
+      "target": "artikel_naam"
+    },
+    {
+      "source": "Merk",
+      "target": "merk",
+      "normalize": "upper"
+    },
+    {
+      "source": "Land",
+      "target": "land",
+      "normalize": "upper"
+    },
+    {
+      "source": "Banner",
+      "target": "banner"
+    },
+    {
+      "source": "Winkelnr",
+      "target": "winkel_id"
+    },
+    {
+      "source": "Aantal",
+      "target": "volume"
+    },
+    {
+      "source": "Omzet excl BTW",
+      "target": "omzet"
+    }
+  ],
+  "constants": {},
+  "thresholds": {
+    "promo_price_drop": 0.05
+  }
+}

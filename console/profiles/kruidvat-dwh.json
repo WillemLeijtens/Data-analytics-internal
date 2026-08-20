@@ -1,0 +1,25 @@
+{
+  "retailer_id": "kruidvat",
+  "version": 5,
+  "status": "live",
+  "builtin": "kruidvat_dwh",
+  "detection": {
+    "filename_glob": "DWH_*.xlsx",
+    "sheet": null,
+    "header_row": 1,
+    "required_headers": [],
+    "filetype": "xlsx",
+    "csv_delimiter": null,
+    "decimal": ","
+  },
+  "period": {
+    "type": "week",
+    "source_column": "(ingebouwd: weekkolommen in het bestand)",
+    "format": "yyyyww"
+  },
+  "mapping": [],
+  "constants": {},
+  "thresholds": {
+    "promo_price_drop": 0.05
+  }
+}

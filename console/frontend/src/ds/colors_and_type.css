@@ -1,0 +1,263 @@
+/* =============================================================
+   By Leijtens — Colors & Type Foundation
+   =============================================================
+   The official palette and typography for By Leijtens.
+   A premium European cosmetics distribution brand.
+   Confident, clean, warm — never corporate, never playful.
+   ============================================================= */
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap");
+
+/* The Seasons — the display face. Always used for headings.
+   LET OP: het bestand in fonts/ is de DEMO ("FSP DEMO - The Seasons", 95 glyphs).
+   De demo bevat alleen basis-ASCII: geen é ë ï ó ü ç, geen krulaanhalingstekens,
+   geen – — … € £. Vraagt de tekst zo'n teken, dan valt de browser terug op een
+   ander font (of toont een demo-/promoteken in ontwerpsoftware).
+   Daarom is unicode-range hieronder bewust beperkt tot wat de demo écht heeft:
+   alle overige tekens gaan automatisch naar de serif-fallback i.p.v. te breken.
+   Definitieve oplossing: licentie van Elena Genova kopen en dit bestand
+   vervangen door de volledige versie — verwijder dan de unicode-range. */
+@font-face {
+  font-family: "The Seasons";
+  src: url("fonts/TheSeasons-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0020-007E;
+}
+
+/* Montserrat — body & labels. */
+@font-face {
+  font-family: "Montserrat";
+  src: url("fonts/Montserrat-VariableFont_wght.ttf") format("truetype-variations"),
+       url("fonts/Montserrat-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Kept for the personal signature lockup only (Willem Leijtens). */
+@font-face {
+  font-family: "Brittany Signature";
+  src: url("fonts/BrittanySignatureScript.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* =========================================================
+     COLOR — Brand Palette
+     Only two background colors exist: hoofdkleur and paper.
+     No gradients. No other backgrounds.
+     ========================================================= */
+
+  --bl-hoofdkleur:        #0E323B;  /* deep petrol/teal — only dark surface */
+  --bl-paper:             #F8F5F5;  /* warm off-white — only light surface */
+
+  /* Neutrals — secondary text, metadata, dividers ONLY */
+  --bl-gray-700:          #7E8D92;  /* neutral mid */
+  --bl-gray-400:          #BAC3C8;  /* neutral light */
+  --bl-gray-200:          #EAEFF1;  /* surface light tint */
+  --bl-white:             #FFFFFF;
+
+  /* Accent — STRICTLY hairline divider lines, small date/label tags,
+     a single highlighted word. NEVER buttons, backgrounds, headings,
+     or any large element. */
+  --bl-accent:            #FF914D;  /* warme oranje */
+
+  /* =========================================================
+     COLOR — Semantic Aliases
+     ========================================================= */
+  --fg-on-dark:    var(--bl-paper);        /* text/logos on hoofdkleur */
+  --fg-on-light:   var(--bl-hoofdkleur);   /* text/logos on paper */
+
+  --fg-1:          var(--bl-hoofdkleur);   /* primary on light */
+  --fg-2:          var(--bl-hoofdkleur);   /* body on light */
+  /* Secundaire tekst: een stap donkerder dan --bl-gray-700 (#7E8D92, ~3,9:1
+     op wit) zodat meta-tekst de 4,5:1-contrastnorm haalt. De merkgrijstint
+     blijft bestaan voor decoratieve elementen (lijnen, assen, dots). */
+  --fg-3:          #64777D;                /* secondary / meta, >=4.5:1 */
+  --fg-4:          var(--bl-gray-400);     /* disabled / hint */
+  --fg-accent:     var(--bl-accent);
+
+  --bg-page:       var(--bl-paper);
+  --bg-dark:       var(--bl-hoofdkleur);
+
+  --border-soft:   var(--bl-gray-400);
+  --border-rule:   var(--bl-accent);       /* the orange hairline */
+
+  /* =========================================================
+     TYPE
+     ========================================================= */
+  --font-display:  "The Seasons", "Cormorant Garamond", "Playfair Display", Georgia, serif;
+  --font-label:    "Montserrat", "Futura PT", -apple-system, Arial, sans-serif;
+  --font-body:     "Montserrat", "Inter", -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+  --font-script:   "Brittany Signature", "Allura", cursive;
+  --font-mono:     ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --fs-display-xl: 120px;
+  --fs-display-lg: 72px;
+  --fs-h1:         42px;
+  --fs-h2:         32px;
+  --fs-h3:         22px;
+  --fs-h4:         16px;
+  --fs-body:       15px;
+  --fs-body-sm:    13px;
+  --fs-caption:    11px;
+  --fs-script:     48px;
+
+  --fw-light:      300;  /* @kind font */
+  --fw-regular:    400;  /* @kind font */
+  --fw-medium:     500;  /* @kind font */
+  --fw-semibold:   600;  /* @kind font */
+
+  --tracking-display: 0.08em;   /* serif titles, all-caps */
+  --tracking-label:   0.15em;   /* labels/subtitles */
+  --tracking-eyebrow: 0.18em;   /* tiny eyebrows */
+  --tracking-body:    0;
+
+  --lh-tight:    1.05;  /* @kind font */
+  --lh-snug:     1.2;  /* @kind font */
+  --lh-normal:   1.5;  /* @kind font */
+  --lh-loose:    1.7;  /* @kind font */
+
+  /* =========================================================
+     SPACING & SHAPE
+     ========================================================= */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  24px;
+  --space-6:  32px;
+  --space-7:  48px;
+  --space-8:  64px;
+  --space-9:  96px;
+
+  --radius-sm:   2px;
+  --radius-md:   4px;
+  --radius-lg:   8px;
+  --radius-pill: 999px;
+
+  --shadow-1: 0 1px 2px rgba(26, 58, 56, 0.06);
+  --shadow-2: 0 4px 16px rgba(26, 58, 56, 0.08);
+}
+
+/* =========================================================
+   SEMANTIC ELEMENT STYLES
+   ========================================================= */
+
+html, body {
+  font-family: var(--font-body);
+  font-weight: var(--fw-regular);
+  font-size: var(--fs-body);
+  line-height: var(--lh-loose);
+  color: var(--fg-1);
+  background: var(--bg-page);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, .h1 {
+  font-family: var(--font-display);
+  font-weight: var(--fw-regular);
+  font-size: var(--fs-h1);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--tracking-display);
+  text-transform: uppercase;
+  color: var(--fg-1);
+  margin: 0 0 var(--space-5);
+}
+
+h2, .h2 {
+  font-family: var(--font-display);
+  font-weight: var(--fw-regular);
+  font-size: var(--fs-h2);
+  line-height: var(--lh-snug);
+  letter-spacing: var(--tracking-display);
+  text-transform: uppercase;
+  color: var(--fg-1);
+  margin: 0 0 var(--space-4);
+}
+
+/* Periodenotaties ("2026-W32", "t/m") in display-koppen: het demo-font van
+   The Seasons vervangt koppel- en schuine strepen door ornamenten (≛).
+   Deze span zet zulke stukjes in de bodyfont, op maat van de kop. */
+.kop-data {
+  font-family: var(--font-body);
+  font-size: 0.82em;
+  letter-spacing: 0.04em;
+}
+
+h3, .h3 {
+  font-family: var(--font-display);
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-h3);
+  line-height: var(--lh-snug);
+  letter-spacing: 0.04em;
+  color: var(--fg-1);
+  margin: 0 0 var(--space-3);
+}
+
+h4, .h4 {
+  font-family: var(--font-label);
+  font-weight: var(--fw-light);
+  font-size: var(--fs-h4);
+  line-height: var(--lh-snug);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--fg-1);
+  margin: 0 0 var(--space-3);
+}
+
+.eyebrow, .label {
+  font-family: var(--font-label);
+  font-weight: var(--fw-light);
+  font-size: var(--fs-caption);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--fg-3);
+}
+
+.signature {
+  font-family: var(--font-script);
+  font-weight: var(--fw-regular);
+  font-size: var(--fs-script);
+  color: var(--fg-1);
+  line-height: 1;
+}
+
+p {
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: var(--lh-loose);
+  color: var(--fg-1);
+  margin: 0 0 var(--space-4);
+  text-wrap: pretty;
+}
+
+small, .caption {
+  font-size: var(--fs-caption);
+  color: var(--fg-3);
+}
+
+hr, .rule-orange {
+  border: 0;
+  height: 1px;
+  background: var(--bl-accent);
+  margin: var(--space-6) 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid var(--bl-accent);
+  transition: opacity 160ms ease;
+}
+a:hover { opacity: 0.7; }
+
+code, kbd, pre, .mono {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}

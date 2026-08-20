@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: sellout-analytics
+    env: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    disk:
+      name: analytics-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: STREAMLIT_APP_PASSWORD
+        sync: false

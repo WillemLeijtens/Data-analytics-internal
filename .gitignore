@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+data/*.db
+data/*.db-wal
+data/*.db-shm
+console/data/
+# Back-upkopieën van de databases: horen op de droplet, niet in de repo.
+backups/
+# OAuth token cache: contains a refresh token for the mailbox — never commit.
+data/msal_cache.json
+.streamlit/secrets.toml
+.env
+certs/

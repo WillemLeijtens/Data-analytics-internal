@@ -1,0 +1,233 @@
+/* Retailer Console app styles — on top of the By Leijtens tokens
+   (src/ds/colors_and_type.css). Values per README §Design Tokens. */
+
+:root {
+  /* Alle kleuren staan in ds/theme.css: één plek waar het palet beheerd
+     wordt, en een thema wisselen is niets anders dan andere waarden. Hier
+     alleen nog vormgeving die niet per thema verschilt. */
+  --radius: 8px;
+  --shadow: var(--t-shadow);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--t-bg);
+  color: var(--t-fg);
+  font-family: "Montserrat", sans-serif;
+  font-size: 13.5px;
+}
+
+.layout { display: flex; min-height: 100vh; }
+
+/* ---------------------------------------------------------------- sidebar */
+.sidebar {
+  width: 248px; flex: 0 0 248px; position: sticky; top: 0; height: 100vh;
+  overflow-y: auto; background: var(--t-sidebar); color: var(--t-sidebar-fg);
+  display: flex; flex-direction: column; padding: 24px 0 16px;
+}
+.sidebar .logo { padding: 0 24px 24px; }
+.sidebar .logo img { width: 132px; display: block; }
+.nav-item {
+  display: block; width: 100%; text-align: left; background: none; border: 0;
+  color: var(--t-sidebar-fg); padding: 9px 24px; font: 500 12px "Montserrat", sans-serif;
+  letter-spacing: 0.06em; cursor: pointer; transition: background 200ms ease;
+}
+.nav-item:hover { background: var(--t-sidebar-hover); }
+.nav-item.active { background: var(--t-sidebar-active); }
+.nav-item.disabled { color: color-mix(in oklab, var(--t-sidebar-fg) 32%, transparent); cursor: not-allowed; }
+.nav-item.sub { padding-left: 48px; }
+.nav-group {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: none; border: 0; cursor: pointer;
+  padding: 14px 24px 6px; color: var(--t-sidebar-fg2);
+  font: 600 9.5px "Montserrat", sans-serif; letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.nav-group svg { transition: transform 200ms ease; }
+.nav-group.closed svg { transform: rotate(-90deg); }
+.sidebar .foot {
+  margin-top: auto; padding: 20px 24px 8px;
+  font-family: "Brittany Signature", cursive; font-size: 21px; color: var(--t-sidebar-fg2);
+}
+
+/* ---------------------------------------------------------------- tabs */
+.main-col { flex: 1; min-width: 0; }
+.tabs {
+  display: flex; gap: 4px; padding: 14px 40px 0; background: var(--t-card);
+  border-bottom: 1px solid var(--t-border); flex-wrap: wrap;
+}
+.tab {
+  display: flex; align-items: center; gap: 8px; border: 0; background: none;
+  padding: 10px 14px 12px; cursor: pointer; font: 500 12px "Montserrat", sans-serif;
+  letter-spacing: 0.05em; color: var(--t-meta); border-bottom: 2px solid transparent;
+  transition: background 160ms ease;
+}
+.tab:hover { background: var(--t-card2); }
+.tab.active { color: var(--t-fg); border-bottom-color: var(--t-fg); }
+.tab .dot { width: 7px; height: 7px; border-radius: 50%; }
+.tab .meta { font-size: 9.5px; letter-spacing: 0.12em; color: var(--t-meta); }
+
+.content { max-width: 1360px; padding: 34px 40px 60px; }
+
+/* ---------------------------------------------------------------- type */
+h1, h2, h3 { font-family: "The Seasons", serif; font-weight: 400; text-transform: uppercase; color: var(--t-fg); }
+h1 { font-size: 27px; letter-spacing: 0.06em; margin: 0 0 6px; }
+h2 { font-size: 17px; letter-spacing: 0.06em; margin: 34px 0 14px; }
+.eyebrow {
+  font: 600 10.5px "Montserrat", sans-serif; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--t-meta);
+}
+.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
+.sub { color: var(--t-meta); font-size: 11.5px; }
+
+/* ---------------------------------------------------------------- cards */
+.card {
+  background: var(--t-card); border: 1px solid var(--t-border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 20px 22px;
+}
+.grid { display: grid; gap: 16px; }
+.grid.cards { grid-template-columns: repeat(auto-fit, minmax(228px, 1fr)); }
+.grid.kpi { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+
+.kpi-label { font: 600 10.5px "Montserrat", sans-serif; letter-spacing: 0.16em; text-transform: uppercase; color: var(--t-meta); display: flex; justify-content: space-between; align-items: center; }
+.kpi-value { font-size: 40px; font-weight: 300; margin: 10px 0 2px; }
+.kpi-sub { font-size: 11.5px; color: var(--t-meta); }
+.bar-track { height: 3px; background: var(--t-card2); border-radius: 2px; margin-top: 4px; }
+.bar-fill { height: 3px; border-radius: 2px; background: var(--t-fg); }
+
+.tag {
+  display: inline-block; font: 600 9.5px "Montserrat", sans-serif;
+  letter-spacing: 0.12em; text-transform: uppercase; border-radius: 6px;
+  padding: 3px 8px; border: 1px solid var(--t-border); color: var(--t-meta);
+}
+.tag.accent { border-color: var(--accent); color: var(--t-fg); }
+.tag.pos { background: color-mix(in oklab, var(--pos) 14%, var(--t-card));
+  color: var(--pos-text); border-color: transparent; }
+.tag.neg { background: color-mix(in oklab, var(--neg) 14%, var(--t-card));
+  color: var(--neg-text); border-color: transparent; }
+
+/* ---------------------------------------------------------------- level strip */
+.level-strip {
+  background: var(--t-card2); border-radius: 4px; padding: 10px 16px;
+  display: flex; align-items: center; gap: 12px; margin-bottom: 22px; flex-wrap: wrap;
+}
+.level-strip .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.level-strip a { color: var(--t-fg); font-size: 11.5px; margin-left: auto; }
+
+.chip {
+  background: var(--t-fg); color: var(--t-bg); border-radius: 6px;
+  font: 600 10px "Montserrat", sans-serif; letter-spacing: 0.12em;
+  text-transform: uppercase; padding: 4px 10px; border: 1px solid var(--t-fg);
+  cursor: pointer;
+}
+.chip.off { background: transparent; color: var(--t-meta); border-color: var(--t-border); }
+.chip.static { cursor: default; }
+
+/* ---------------------------------------------------------------- tables */
+table.data { width: 100%; border-collapse: collapse; background: var(--t-card); border: 1px solid var(--t-border); border-radius: var(--radius); overflow: hidden; }
+table.data th {
+  background: var(--t-card2); text-align: left; padding: 9px 12px;
+  font: 600 10px "Montserrat", sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--t-meta);
+}
+table.data td { padding: 9px 12px; border-top: 1px solid var(--t-border); }
+table.data tr.click { cursor: pointer; }
+table.data tr.click:hover, table.data tr.selected { background: var(--t-card2); }
+.brand-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: baseline; }
+
+/* ---------------------------------------------------------------- controls */
+.btn {
+  background: var(--t-fg); color: var(--t-bg); border: 1px solid var(--t-fg);
+  border-radius: 8px; padding: 9px 18px; font: 600 11px "Montserrat", sans-serif;
+  letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer;
+}
+.btn.ghost { background: transparent; color: var(--t-fg); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.seg { display: inline-flex; border: 1px solid var(--t-border); border-radius: 8px; overflow: hidden; }
+.seg button {
+  border: 0; background: var(--t-card); padding: 7px 14px; cursor: pointer;
+  font: 600 10.5px "Montserrat", sans-serif; letter-spacing: 0.1em; text-transform: uppercase; color: var(--t-meta);
+}
+.seg button.on { background: var(--t-fg); color: var(--t-bg); }
+.seg button:disabled { opacity: 0.45; cursor: default; }
+input[type="text"], input[type="number"], input[type="url"] {
+  border: 1px solid var(--t-border); border-radius: 8px; padding: 8px 10px;
+  font: 400 12.5px "Montserrat", sans-serif; color: var(--t-fg); background: var(--t-card);
+}
+.checkbox { width: 15px; height: 15px; accent-color: var(--t-fg); }
+
+/* ---------------------------------------------------------------- signals / radar */
+.sig-green { color: var(--pos-text); }
+.sig-orange { color: var(--warn-text); }
+.sig-red { color: var(--neg-text); }
+.sig-grey { color: var(--t-meta); }
+.dot-green { background: var(--pos); }
+.dot-orange { background: var(--warn); }
+.dot-red { background: var(--neg); }
+.dot-grey { background: var(--t-fg3); }
+
+.radar-wrap { display: flex; justify-content: center; margin: 26px 0; }
+.radar {
+  position: relative; width: 680px; height: 680px; max-width: 100%;
+}
+.radar-tile {
+  position: absolute; width: 132px; height: 132px; background: var(--t-card);
+  border: 1px solid var(--t-border); border-top-width: 2px; border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 12px 14px; cursor: pointer;
+}
+.radar-tile h4 {
+  font: 400 12.5px "The Seasons", serif; text-transform: uppercase;
+  letter-spacing: 0.05em; margin: 0 0 4px;
+}
+.radar-tile .meta { font: 600 9px "Montserrat", sans-serif; letter-spacing: 0.14em; color: var(--t-meta); }
+.radar-tile .context { font-size: 10.5px; margin-top: 8px; line-height: 1.35; }
+.radar-tile .dots { position: absolute; bottom: 10px; left: 14px; display: flex; gap: 5px; }
+.radar-tile .dots i { width: 7px; height: 7px; border-radius: 50%; display: block; }
+.radar-tile.pulse { animation: radarPulse 1.8s ease-in-out infinite; }
+@keyframes radarPulse {
+  0%, 100% { box-shadow: var(--shadow), 0 0 0 0 color-mix(in oklab, var(--neg) 35%, transparent); }
+  50% { box-shadow: var(--shadow), 0 0 0 7px transparent; }
+}
+.radar-hub {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 116px; height: 116px; border-radius: 50%; background: var(--t-fg);
+  color: var(--t-bg); display: flex; flex-direction: column; align-items: center;
+  justify-content: center; z-index: 2;
+}
+.radar-hub b { font-size: 30px; font-weight: 300; }
+.radar-hub span { font: 600 8.5px "Montserrat", sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--t-bg); opacity: 0.72; }
+.radar-sweep {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from 0deg, color-mix(in oklab, var(--t-fg) 10%, transparent), transparent 55deg);
+  animation: radarSweep 6s linear infinite; pointer-events: none;
+}
+@keyframes radarSweep { to { transform: rotate(360deg); } }
+
+/* ---------------------------------------------------------------- misc */
+.dropzone {
+  border: 1.5px dashed var(--t-border); border-radius: var(--radius); background: var(--t-card);
+  padding: 44px 20px; text-align: center; color: var(--t-meta);
+}
+.rule-block { border-top: 2px solid var(--t-border); padding-top: 12px; }
+.hairline { border: 0; border-top: 1px solid var(--t-border); margin: 30px 0; }
+.status-label { border: 1px solid var(--t-border); border-radius: 6px; padding: 3px 9px; font: 600 9.5px "Montserrat", sans-serif; letter-spacing: 0.12em; }
+.status-label.need { border-color: var(--accent); }
+.pill { border: 1px solid var(--t-fg); border-radius: 6px; padding: 4px 10px; font: 500 11px "Montserrat", sans-serif; background: var(--t-card); }
+.pill.open { border-color: var(--accent); }
+.pill.unused { border-color: var(--t-border); color: var(--t-meta); }
+.empty-card { text-align: center; padding: 60px 20px; }
+.tooltip {
+  position: absolute; background: var(--t-fg); color: var(--t-bg); border-radius: 6px;
+  padding: 7px 10px; font-size: 11px; pointer-events: none; white-space: nowrap; z-index: 5;
+}
+/* Popover van het Uitleg-icoontje (?): naar document.body geportaald, dus
+   onafhankelijk van overflow:hidden en van de uppercase/letter-spacing die
+   tabelkoppen op hun inhoud erven. Terugloop i.p.v. white-space:nowrap,
+   want deze teksten zijn hele zinnen, geen chart-waarden. */
+.uitleg-bol {
+  position: fixed; z-index: 60; max-width: 260px; width: max-content;
+  background: var(--t-fg); color: var(--t-bg); border-radius: 8px;
+  padding: 9px 12px; font: 400 12px "Montserrat", sans-serif; line-height: 1.4;
+  letter-spacing: normal; text-transform: none; text-align: left;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); pointer-events: none;
+}

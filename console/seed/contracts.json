@@ -1,0 +1,58 @@
+{
+  "kruidvat": [
+    {
+      "naam": "Jaarcontract 2026",
+      "type": "contract",
+      "geldig_tot": "2026-12-31",
+      "signaal": "green",
+      "conclusie": "Contract loopt nog, geldig tot 31-12-2026.",
+      "condities": [
+        {"onderwerp": "Betalingstermijn", "afspraak": "30 dagen na factuurdatum"},
+        {"onderwerp": "COOP-bijdrage", "afspraak": "2% van de omzet, per kwartaal gefactureerd"}
+      ]
+    },
+    {
+      "naam": "Bonusafspraak TWEEZERMAN",
+      "type": "bonusafspraak",
+      "geldig_tot": "2026-09-30",
+      "signaal": "orange",
+      "conclusie": "Bonusafspraak loopt nog, verloopt over minder dan 30 dagen na 2026-09-30.",
+      "condities": [
+        {"onderwerp": "Volumebonus", "afspraak": "3% extra korting bij afname > 10.000 stuks per kwartaal"}
+      ]
+    }
+  ],
+  "etos": [
+    {
+      "naam": "Leveringsvoorwaarden 2026",
+      "type": "contract",
+      "geldig_tot": "2026-12-31",
+      "signaal": "green",
+      "conclusie": "Contract loopt nog, geldig tot 31-12-2026.",
+      "condities": [
+        {"onderwerp": "Levertijd", "afspraak": "Binnen 5 werkdagen na orderbevestiging"}
+      ]
+    }
+  ],
+  "ici-paris-xl": [
+    {
+      "naam": "Distributieovereenkomst",
+      "type": "contract",
+      "geldig_tot": "2026-08-31",
+      "signaal": "red",
+      "conclusie": "Contract is verlopen of verloopt deze week (31-08-2026).",
+      "condities": [
+        {"onderwerp": "Marketingbudget", "afspraak": "€ 5.000 per jaar voor gezamenlijke campagnes"}
+      ]
+    },
+    {
+      "naam": "Prijslijst H2",
+      "type": "prijslijst",
+      "geldig_tot": "2026-12-31",
+      "signaal": "green",
+      "conclusie": "Prijslijst geldig tot 31-12-2026.",
+      "condities": []
+    }
+  ],
+  "douglas": []
+}

@@ -1,0 +1,104 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      # Zelfde schakelaar als de console (CONSOLE_AUTH): 'gateway' = geen
+      # eigen inlog, het portaal authenticeert; 'password' (standaard) = het
+      # gedeelde wachtwoord in de app zelf. Gateway-modus mag alleen bij een
+      # prive binding; de app weigert anders te starten.
+      - APP_AUTH=${APP_AUTH:-password}
+      - APP_BIND=${APP_BIND:-127.0.0.1}
+      - STREAMLIT_APP_PASSWORD=${STREAMLIT_APP_PASSWORD}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-common}
+      - IMAP_HOST=${IMAP_HOST:-}
+      - IMAP_PORT=${IMAP_PORT:-993}
+      - IMAP_USER=${IMAP_USER:-}
+      - IMAP_PASSWORD=${IMAP_PASSWORD:-}
+      - IMAP_FOLDER=${IMAP_FOLDER:-INBOX}
+    volumes:
+      - ./data:/app/data
+    ports:
+      # Net als de console: ALLEEN op het prive-adres, toegang loopt via het
+      # portaal (forward-auth op de gateway). Nooit 0.0.0.0 — dan staan de
+      # verkoopcijfers op het publieke IP.
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8501}:8501"
+
+  # Polls Outlook for new sellout mails. Shares ./data with the app, so it
+  # uses the same database and the same OAuth token cache — signing in once
+  # in the web UI is enough for this service too. Does nothing until
+  # auto-import is switched on in Settings.
+  poller:
+    build: .
+    restart: unless-stopped
+    command: ["python", "app/auto_import.py", "--loop", "--interval", "900"]
+    environment:
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-common}
+      - IMAP_HOST=${IMAP_HOST:-}
+      - IMAP_PORT=${IMAP_PORT:-993}
+      - IMAP_USER=${IMAP_USER:-}
+      - IMAP_PASSWORD=${IMAP_PASSWORD:-}
+      - IMAP_FOLDER=${IMAP_FOLDER:-INBOX}
+    volumes:
+      - ./data:/app/data
+
+  # Retailer Console: de multi-retailer herbouw (FastAPI + gebouwde React-SPA
+  # in één image). Draait naast de Streamlit-app op zijn eigen database, zodat
+  # de bestaande app ongemoeid blijft tot de overstap gemaakt wordt.
+  console:
+    build:
+      context: ./console
+    restart: unless-stopped
+    environment:
+      # EEN schakelaar bepaalt de toegang, zodat instellingen elkaar niet
+      # kunnen tegenspreken:
+      #   gateway  (standaard) - geen inlog in de app; de forward-auth van
+      #                          het portaal is de poortwachter. Een gezette
+      #                          CONSOLE_PASSWORD wordt genegeerd (met melding
+      #                          in de log), dus nooit een tweede popup.
+      #   password             - HTTP basic auth in de app; vereist
+      #                          CONSOLE_PASSWORD en een gateway die de
+      #                          Authorization-header injecteert.
+      # Gateway-modus mag alleen bij een prive binding: de app weigert te
+      # starten bij gateway + 0.0.0.0.
+      - CONSOLE_AUTH=${CONSOLE_AUTH:-gateway}
+      - CONSOLE_BIND=${CONSOLE_BIND:-127.0.0.1}
+      - CONSOLE_PASSWORD=${CONSOLE_PASSWORD:-}
+      - CONSOLE_USER=${CONSOLE_USER:-console}
+      - CONSOLE_MAX_UPLOAD_MB=${CONSOLE_MAX_UPLOAD_MB:-200}
+      # Contractanalyse (PDF-upload → looptijd + condities). Zonder sleutel
+      # blijft de rest van de app werken; een upload geeft dan een nette 422.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CONSOLE_CONTRACT_MODEL=${CONSOLE_CONTRACT_MODEL:-}
+    volumes:
+      - ./console/data:/srv/data
+    ports:
+      # Standaard ALLEEN op loopback: toegang loopt via het portaal
+      # (forward-auth op de gateway), niet via het publieke IP. Moet de
+      # gateway erbij, zet dan CONSOLE_BIND op het privé-adres van deze
+      # droplet — nooit op 0.0.0.0.
+      - "${CONSOLE_BIND:-127.0.0.1}:${CONSOLE_PORT:-8010}:8000"
+
+  # Dagelijkse back-up van BEIDE databases naar ./backups, 14 dagen bewaard.
+  # Zonder deze service staat de volledige importhistorie op één droplet
+  # zonder kopie. Leest de databases alleen; draait als eigen container zodat
+  # er geen cron op de host nodig is. Herstellen: zie deploy/restore.md.
+  backup:
+    image: alpine:3
+    restart: unless-stopped
+    environment:
+      - BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      # BEWUST niet :ro. Een SQLite-database in WAL-modus is niet te openen
+      # zonder schrijfrechten: de lezer moet de index in het -shm-bestand
+      # kunnen aanmaken en bijwerken, ook als hij verder alleen leest. Met
+      # `:ro` faalde elke back-up met "unable to open database file" — en
+      # omdat dat alleen in de containerlog stond, viel het niet op.
+      # De back-up zelf schrijft nog steeds uitsluitend naar /backups.
+      - ./console/data:/data/console
+      - ./data:/data/streamlit
+      - ./backups:/backups
+      - ./deploy/backup.sh:/backup.sh:ro
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache sqlite >/dev/null && exec /bin/sh /backup.sh"]

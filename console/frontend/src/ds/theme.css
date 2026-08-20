@@ -1,0 +1,165 @@
+/* =============================================================
+   By Leijtens — Thema (licht/donker) voor de Retailer Console
+   =============================================================
+   Alle kleuren van de app staan HIER. De rest van de stylesheets
+   verwijst alleen nog naar deze variabelen, zodat een thema wisselen
+   niets anders is dan een andere set waarden — en zodat er maar één
+   plek is waar het palet beheerd wordt.
+
+   Werking: het thema staat als `data-theme="light" | "dark"` op <html>.
+   Dat attribuut wordt gezet vóór de eerste verf (zie index.html), anders
+   flitst de pagina eerst in het verkeerde thema.
+
+   Licht staat op :root en is dus de terugval als er geen attribuut staat
+   (JavaScript uit, of een fout in het opstartscript). Donker overschrijft.
+   ============================================================= */
+
+:root,
+html[data-theme="light"] {
+  /* Vlakken en tekst */
+  --t-bg: #F8F5F5;                      /* pagina */
+  --t-card: #FFFFFF;                    /* kaartvlak */
+  --t-card2: #EAEFF1;                   /* verzonken vlak: balkjes, invoer */
+  --t-border: rgba(14, 50, 59, 0.12);   /* haarlijnen */
+  --t-fg: #0E323B;                      /* primaire tekst */
+  --t-fg2: #546E77;                     /* secundaire tekst */
+  --t-fg3: #7E8D92;                     /* metadata — DECORATIEF */
+  --t-meta: #657378;                    /* metadata als TEKST, >=4,5:1 */
+  --t-shadow: 0 4px 16px rgba(26, 58, 56, 0.08);
+
+  /* De zijbalk is in het lichte thema het donkere merkvlak; in het
+     donkere thema zou datzelfde vlak wegvallen tegen de pagina, en dan
+     wordt het juist een tint dieper. */
+  --t-sidebar: #0E323B;
+  --t-sidebar-fg: #F8F5F5;
+  --t-sidebar-fg2: #BAC3C8;
+  --t-sidebar-hover: rgba(248, 245, 245, 0.09);
+  --t-sidebar-active: rgba(248, 245, 245, 0.14);
+
+  /* Grafiekhulplijnen: lichter dan de rand, want ze mogen niet
+     concurreren met de data. */
+  --t-grid: #EAEFF1;
+
+  /* Jaren in grafieken — hoog contrast onderling, per thema anders. */
+  --c-y1: #6B7F8C;                      /* oudste jaar */
+  --c-y2: #1E88C7;
+  --c-y3: #17A184;                      /* huidig jaar */
+
+  /* Positief/negatief. De -text-varianten zijn een tint donkerder (licht
+     thema) of lichter (donker thema), zodat kleine tekst de 4,5:1-norm
+     haalt; de basiskleur blijft voor vlakken, stippen en lijnen, waar 3:1
+     genoeg is. Gemeten waarden staan onderaan dit bestand. */
+  --pos: #178F73;
+  --neg: #C7563B;
+  --warn: #B4690E;
+  --pos-text: #147D65;
+  --neg-text: #B94E35;
+  --warn-text: #A15E0D;
+
+  /* De merkaliassen uit colors_and_type.css volgen het thema. Zonder deze
+     brug halen h1/h2/h3 en de bodytekst hun kleur nog uit --fg-1 (het donkere
+     merkblauw) en zijn koppen in het donkere thema onleesbaar — donker op
+     donker. Eén plek waar het palet beheerd wordt, betekent ook dat de oude
+     aliassen hierheen wijzen in plaats van naar vaste hexwaarden. */
+  --fg-1: var(--t-fg);
+  --fg-2: var(--t-fg);
+  --fg-3: var(--t-meta);
+  --fg-4: var(--t-fg3);
+  --bg-page: var(--t-bg);
+  --border-soft: var(--t-border);
+}
+
+html[data-theme="dark"] {
+  --t-bg: #0E323B;
+  --t-card: #12404C;
+  --t-card2: #0B2A32;
+  --t-border: rgba(248, 245, 245, 0.10);
+  --t-fg: #F8F5F5;
+  --t-fg2: #BAC3C8;
+  --t-fg3: #7E8D92;                     /* decoratief */
+  --t-meta: #9CA8AC;                    /* metadata als tekst, >=4,5:1 */
+  --t-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+
+  --t-sidebar: #0B2A32;
+  --t-sidebar-fg: #F8F5F5;
+  --t-sidebar-fg2: #BAC3C8;
+  --t-sidebar-hover: rgba(248, 245, 245, 0.07);
+  --t-sidebar-active: rgba(248, 245, 245, 0.12);
+
+  --t-grid: rgba(248, 245, 245, 0.08);
+
+  --c-y1: #5E7684;
+  --c-y2: #3FB0E8;
+  --c-y3: #55D6B8;
+
+  --pos: #2FBF9B;
+  --neg: #DB6E52;
+  --warn: #D9A03F;
+  --pos-text: #2FBF9B;                  /* haalt 4,85:1, mag zo blijven */
+  --neg-text: #E38E78;
+  --warn-text: #D9A03F;                 /* 4,86:1 */
+
+  --fg-1: var(--t-fg);
+  --fg-2: var(--t-fg);
+  --fg-3: var(--t-meta);
+  --fg-4: var(--t-fg3);
+  --bg-page: var(--t-bg);
+  --border-soft: var(--t-border);
+}
+
+/* Categorieën (merken, retailers) — in BEIDE thema's gelijk, zodat een
+   merk zijn kleur houdt als je wisselt. Op volgorde toekennen. */
+:root {
+  --cat1: #2E9FD6;
+  --cat2: #2FBF9B;
+  --cat3: #6B7EDC;
+  --cat4: #B368C9;
+  --cat5: #DB6A8F;
+  --cat6: #D9A03F;
+  --cat7: #8AB85A;
+  --cat8: #DB6E52;
+  --cat9: #7E8D92;
+  --cat10: #4E8A99;
+
+  /* Accent: UITSLUITEND de targetlijn in grafieken en één haarlijn per
+     pagina. Nooit knoppen, vlakken of koppen — dat is een merkregel, geen
+     smaakkwestie. */
+  --accent: #FF914D;
+}
+
+/* Zachte overgang bij het wisselen van thema. Wie bewegingen liever
+   uitzet, krijgt ze niet: die voorkeur staat in het systeem. */
+html {
+  background: var(--t-bg);
+}
+body {
+  transition: background 320ms ease, color 320ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  body { transition: none; }
+}
+
+/* -------------------------------------------------------------------------
+   Contrast — gemeten, niet geschat
+
+   De waarden uit de handoff zijn aangehouden voor vlakken, stippen, lijnen
+   en grafiekreeksen: daar geldt 3:1 en die halen ze ruim. Voor kleine TEKST
+   haalden vier ervan de 4,5:1-norm niet, en juist meta-tekst (".sub",
+   ".kpi-sub", tabelkoppen) is waar dat opvalt. Daarvoor staan hierboven de
+   --t-meta- en -text-varianten. Contrastverhoudingen:
+
+     donker, op kaart #12404C / pagina #0E323B
+       --t-fg     10,40 / 12,59      --t-fg2      6,29 / 7,63
+       --t-fg3     3,28 / 3,97  (decoratief)
+       --t-meta    4,62 / 5,60       --pos        4,85 / 5,88
+       --neg-text  4,51 / 5,47       --warn       4,86 / 5,88
+
+     licht, op kaart #FFFFFF / pagina #F8F5F5
+       --t-fg     13,65 / 12,59      --t-fg2      5,42 / 5,00
+       --t-fg3     3,44 / 3,17  (decoratief)
+       --t-meta    4,91 / 4,53       --pos-text   5,06 / 4,67
+       --neg-text  5,00 / 4,61       --warn-text  5,09 / 4,70
+
+   Verander je een kleur, meet dan opnieuw. Het scriptje ervoor staat in
+   console/frontend/contrast.mjs.
+   ------------------------------------------------------------------------- */
