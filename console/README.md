@@ -128,7 +128,7 @@ onder `/console`.
 Bij de **eerste start** laadt de console alleen de parser-profielen voor de
 retailers waarvan het aanleverformaat bekend is (Kruidvat DWH, ICI Paris XL
 maandrapport). Verder is een verse installatie **leeg**: geen winkelaantallen,
-targets, mailregels, SharePoint-koppeling of contractdocumenten. Dat is
+targets, mailregels of contractdocumenten. Dat is
 bewust — een verzonnen winkelaantal of rotatietarget voedt echte
 berekeningen (omzet per winkel, delist-advies) en levert dan geloofwaardige
 maar onjuiste cijfers.
@@ -185,7 +185,7 @@ console/
       fallback.py    # de 4 terugvalregels, altijd met level_used + labels
       analytics.py   # dashboard, artikelen, promoties+uplift, assortiment
       signals.py     # signalenradar (assortiment / contract / data)
-      contracts.py   # ContractSource-interface + mock (SharePoint = TODO)
+      contracts.py   # PDF-contractupload: tekst uitlezen + Claude-analyse
     main.py          # FastAPI-endpoints
     seed.py          # seeds in ECHT formaat door de echte pipeline
   frontend/          # tabs boven, donkere sidebar, 9 schermen
@@ -347,11 +347,14 @@ oordeel maar "Te kort geleden geïntroduceerd".
 
 ### Contractdocumenten
 
-De SharePoint-koppeling is nog een mock. Die levert **verzonnen** documenten
-en die zouden het contractsignaal op het Overzicht kleuren, dus hij doet
-alleen mee met `CONSOLE_CONTRACTS=mock` (seed en tests). Standaard levert een
-gekoppelde map niets en blijft het signaal grijs: een leeg scherm is eerlijk,
-een verzonnen contract niet.
+Contracten worden per retailer als PDF geüpload (Instellingen → Contract).
+Claude (Anthropic API) haalt er de looptijd, een conclusie (loopt nog /
+verlopen) en de afgesproken condities (betalingen, COOP-investeringen e.d.)
+uit. Een nieuwe upload vervangt het vorige contract — er is geen
+geschiedenis. Het contractsignaal op het Overzicht blijft live herberekend
+uit de gevonden einddatum (`signals.py`), niet door het model geraden.
+Vereist `ANTHROPIC_API_KEY` in de omgeving; zonder sleutel geeft een upload
+een nette 422 en blijft de rest van de app gewoon werken.
 
 ### Back-up
 
@@ -381,5 +384,7 @@ bewaard in `backups/`). Herstelprocedure: `deploy/restore.md`.
 7. ✅ Visuele steekproef via Playwright-screenshots (radar, dashboard, parser, lege staat Douglas).
 
 Bekende beperkingen: mailregels zijn CRUD-stubs (geen echte poller aan de
-console gekoppeld); SharePoint is een mock (`contracts.py`); The Seasons-font
-is de demo-versie (alleen basis-ASCII — koop de licentie voor productie).
+console gekoppeld); contractanalyse vereist `ANTHROPIC_API_KEY` (zonder
+sleutel werkt de rest van de app, maar geeft een upload een nette 422); The
+Seasons-font is de demo-versie (alleen basis-ASCII — koop de licentie voor
+productie).

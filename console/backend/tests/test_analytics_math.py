@@ -624,29 +624,57 @@ def test_nieuw_artikel_is_geen_delist_kandidaat(client):
     assert loper["advies"] == "Op target"
 
 
-# ------------------------------------------------- geen verzonnen contracten
+# ------------------------------------------------------- contract-uploads
 
-def test_sharepoint_koppelen_verzint_geen_documenten(client):
-    """De mock levert 'Distributieovereenkomst, verloopt 31-08-2026' en dat
-    kleurt het Overzicht rood. Zonder CONSOLE_CONTRACTS=mock hoort een
-    koppeling geen enkel document op te leveren."""
-    r = client.post("/api/ici-paris-xl/sharepoint",
-                    json={"map_url": "https://voorbeeld.sharepoint.com/contracten"}).json()
-    assert r["ok"] is True and r["documenten"] == [] and r["bron"] == "niet gekoppeld"
+def test_contract_upload_zonder_api_key_geeft_422(client, monkeypatch):
+    """Zonder ANTHROPIC_API_KEY mag de upload nooit een halve of verzonnen
+    analyse opslaan — een nette 422 in plaats van een crash."""
+    from engine import contracts
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(contracts, "pdf_tekst", lambda content: "contracttekst")
+    r = client.post("/api/ici-paris-xl/contract",
+                    files={"file": ("contract.pdf", b"x", "application/pdf")})
+    assert r.status_code == 422
+    assert "ANTHROPIC_API_KEY" in r.text
     inst = client.get("/api/ici-paris-xl/instellingen").json()
+    assert "sharepoint" not in inst
     assert inst["documenten"] == []
-    assert inst["sharepoint"]["map_url"].startswith("https://voorbeeld")
 
+
+def test_contract_upload_vervangt_vorig_contract(client, monkeypatch):
+    """Een nieuwe upload vervangt het vorige contract van die retailer: geen
+    geschiedenis, en het signaal wordt live herberekend uit geldig_tot."""
+    from engine import contracts
+
+    antwoorden = iter([
+        {"naam": "Jaarcontract 2026", "type": "contract", "geldig_tot": "2099-01-01",
+         "conclusie": "Loopt nog.", "condities": [{"onderwerp": "Betaling", "afspraak": "30 dagen"}]},
+        {"naam": "Jaarcontract 2027", "type": "contract", "geldig_tot": "2001-01-01",
+         "conclusie": "Verlopen.", "condities": []},
+    ])
+    monkeypatch.setattr(contracts, "analyseer", lambda tekst, vandaag=None: next(antwoorden))
+    monkeypatch.setattr(contracts, "pdf_tekst", lambda content: "contracttekst")
+
+    r1 = client.post("/api/ici-paris-xl/contract",
+                     files={"file": ("c1.pdf", b"x", "application/pdf")}).json()
+    assert r1["ok"] is True and r1["document"]["naam"] == "Jaarcontract 2026"
+    inst = client.get("/api/ici-paris-xl/instellingen").json()
+    assert len(inst["documenten"]) == 1
+    assert inst["documenten"][0]["condities"] == [{"onderwerp": "Betaling", "afspraak": "30 dagen"}]
     kaart = next(c for c in client.get("/api/overview").json()["retailers"]
                  if c["id"] == "ici-paris-xl")
-    assert kaart["signalen"]["contract"]["signaal"] == "grey"
+    assert kaart["signalen"]["contract"]["signaal"] == "green"
 
-
-def test_mock_contracten_alleen_met_expliciete_schakelaar(client, monkeypatch):
-    monkeypatch.setenv("CONSOLE_CONTRACTS", "mock")
-    r = client.post("/api/ici-paris-xl/sharepoint",
-                    json={"map_url": "https://voorbeeld.sharepoint.com/contracten"}).json()
-    assert r["bron"] == "mock" and len(r["documenten"]) == 2
+    r2 = client.post("/api/ici-paris-xl/contract",
+                     files={"file": ("c2.pdf", b"x", "application/pdf")}).json()
+    assert r2["document"]["naam"] == "Jaarcontract 2027"
+    inst2 = client.get("/api/ici-paris-xl/instellingen").json()
+    assert len(inst2["documenten"]) == 1
+    assert inst2["documenten"][0]["naam"] == "Jaarcontract 2027"
+    kaart2 = next(c for c in client.get("/api/overview").json()["retailers"]
+                  if c["id"] == "ici-paris-xl")
+    assert kaart2["signalen"]["contract"]["signaal"] == "red"
 
 
 # --------------------------------------------------------------- YTD-overlap

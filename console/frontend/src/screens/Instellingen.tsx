@@ -94,9 +94,10 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   const [wt, setWt] = useState<any[]>([]);
   const [rt, setRt] = useState<any[]>([]);
   const [mail, setMail] = useState<any[]>([]);
-  const [spUrl, setSpUrl] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [contractBezig, setContractBezig] = useState(false);
+  const [contractFout, setContractFout] = useState<string | null>(null);
 
   const load = () => apiGet(`/${ctx.retailer}/instellingen`).then((d) => {
     setData(d); setError(null);
@@ -132,6 +133,20 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
     }
   };
 
+  const uploadContract = async (file: File) => {
+    setContractBezig(true); setContractFout(null);
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      await apiSend(`/${ctx.retailer}/contract`, "POST", fd);
+      load();
+    } catch (e: any) {
+      setContractFout(String(e?.message ?? e));
+    } finally {
+      setContractBezig(false);
+    }
+  };
+
   const upd = (arr: any[], set: any, i: number, key: string, v: any) => {
     const copy = [...arr]; copy[i] = { ...copy[i], [key]: v }; set(copy);
   };
@@ -162,52 +177,56 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
       <h2>Weergave</h2>
       <ThemaKeuze />
 
-      <h2>SharePoint koppeling</h2>
-      {data.sharepoint ? (
+      <h2>Contract</h2>
+      {data.documenten.length ? (
         <div className="card">
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span className="mono">{data.sharepoint.map_url}</span>
-            <span className={`tag ${data.documenten.length ? "pos" : ""}`}>
-              {data.documenten.length ? "Gekoppeld" : "Geregistreerd"}
-            </span>
+          {data.documenten.map((d: any) => (
+            <div key={d.id}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <b>{d.naam}</b>
+                <span className="sub">{d.type ?? "—"}</span>
+                <span className="mono sub">geldig tot {d.geldig_tot ?? "—"}</span>
+                <span className={`brand-dot dot-${d.signaal}`} style={{ width: 9, height: 9 }} />
+                <span className="sub" style={{ marginLeft: "auto" }}>
+                  {d.bestandsnaam} · geüpload {d.geupload_op?.slice(0, 10) ?? "—"}
+                  {d.geupload_door ? ` door ${d.geupload_door}` : ""}
+                </span>
+              </div>
+              {d.conclusie && <p className="sub" style={{ marginTop: 10 }}>{d.conclusie}</p>}
+              {!!d.condities?.length && (
+                <table className="data" style={{ marginTop: 10 }}>
+                  <thead><tr><th>Onderwerp</th><th>Afspraak</th></tr></thead>
+                  <tbody>
+                    {d.condities.map((c: any, i: number) => (
+                      <tr key={i}><td>{c.onderwerp}</td><td>{c.afspraak}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 14 }}>
+            <label className="btn ghost" style={{ cursor: contractBezig ? "default" : "pointer" }}>
+              {contractBezig ? "Bezig met analyseren…" : "Nieuw contract uploaden (vervangt dit)"}
+              <input type="file" accept="application/pdf" disabled={contractBezig} style={{ display: "none" }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadContract(f); e.target.value = ""; }} />
+            </label>
+            {contractFout && <span className="sub sig-red">{contractFout}</span>}
           </div>
-          {data.documenten.length ? (
-            <>
-              <table className="data" style={{ marginTop: 14 }}>
-                <thead><tr><th>Document</th><th>Type</th><th>Geldig tot</th><th>Signaal</th></tr></thead>
-                <tbody>
-                  {data.documenten.map((d: any) => (
-                    <tr key={d.id}>
-                      <td>{d.naam}</td><td>{d.type ?? "—"}</td><td className="mono">{d.geldig_tot ?? "—"}</td>
-                      <td><span className={`brand-dot dot-${d.signaal}`} style={{ width: 9, height: 9 }} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p className="sub" style={{ marginTop: 10 }}>Deze documenten voeden het contractsignaal op de Overzicht-radar.</p>
-            </>
-          ) : (
-            // Eerlijk over wat er (nog niet) gebeurt: de koppeling met
-            // Microsoft Graph bestaat nog niet, dus er wordt niets bewaakt.
-            <p className="sub" style={{ marginTop: 10 }}>
-              De map is geregistreerd. Documentbewaking volgt zodra de Microsoft
-              Graph-koppeling er is — er worden nu nog géén documenten opgehaald
-              en het contractsignaal blijft grijs.
-            </p>
-          )}
         </div>
       ) : (
         <div className="dropzone">
-          <p className="sub">Registreer hier de SharePoint-map met contracten. Zodra de Microsoft
-            Graph-koppeling er is, worden de documenten opgehaald en de vervaldatums bewaakt.</p>
+          <p className="sub">Upload het contract als PDF. Claude haalt automatisch de looptijd
+            (loopt dit nog of is het verlopen) en de afgesproken condities eruit — dit voedt
+            meteen het contractsignaal op de Overzicht-radar.</p>
           <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 10 }}>
-            <input type="url" placeholder="https://…sharepoint.com/sites/…" size={44}
-              value={spUrl} onChange={(e) => setSpUrl(e.target.value)} />
-            <button className="btn" disabled={!spUrl}
-              onClick={async () => { await apiSend(`/${ctx.retailer}/sharepoint`, "POST", { map_url: spUrl }); load(); }}>
-              Map koppelen
-            </button>
+            <label className="btn" style={{ cursor: contractBezig ? "default" : "pointer" }}>
+              {contractBezig ? "Bezig met analyseren…" : "Contract uploaden"}
+              <input type="file" accept="application/pdf" disabled={contractBezig} style={{ display: "none" }}
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadContract(f); e.target.value = ""; }} />
+            </label>
           </div>
+          {contractFout && <p className="sub sig-red" style={{ marginTop: 10 }}>{contractFout}</p>}
         </div>
       )}
 

@@ -40,7 +40,6 @@ LEGACY_DEMO_SETTINGS = {
     },
 }
 
-DEMO_SHAREPOINT_PREFIX = "https://leijtens.sharepoint.com/sites/retail/"
 DEMO_FILE_MARKERS = ("_demo.xlsx", "etos_sales_wk", "Douglas_Abverkauf_KW",
                      "ICIP_ALL_MTH_", "DWH_sellout_TWEEZERMAN_NL_wk",
                      "Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__20")
@@ -102,23 +101,20 @@ def main():
             if n and args.doen:
                 conn.execute(f"DELETE FROM {tabel} WHERE {waar}", params)
 
-        # SharePoint-koppeling + de daaruit afgeleide contractdocumenten.
-        links = conn.execute(
-            "SELECT retailer_id FROM sharepoint_links WHERE map_url LIKE ?",
-            (DEMO_SHAREPOINT_PREFIX + "%",)).fetchall()
-        demo_docs = {r["naam"] for docs in json.loads(
-            (SEED / "contracts.json").read_text()).values() for r in docs}
-        for row in links:
-            r = row["retailer_id"]
+        # Demo-contracten: exact de namen die de seed erin zet (geupload_door='demo').
+        demo_by_retailer = json.loads((SEED / "contracts.json").read_text())
+        for r, docs in demo_by_retailer.items():
+            namen = {d["naam"] for d in docs}
+            if not namen:
+                continue
             n = conn.execute(
-                "SELECT COUNT(*) c FROM contract_documents WHERE retailer_id=?",
-                (r,)).fetchone()["c"]
+                f"SELECT COUNT(*) c FROM contract_documents WHERE retailer_id=? AND naam IN "
+                f"({','.join('?' * len(namen))})", (r, *namen)).fetchone()["c"]
             tel("contract_documents", n)
-            tel("sharepoint_links", 1)
-            if args.doen:
-                conn.execute("DELETE FROM contract_documents WHERE retailer_id=? AND naam IN "
-                             f"({','.join('?' * len(demo_docs))})", (r, *demo_docs))
-                conn.execute("DELETE FROM sharepoint_links WHERE retailer_id=?", (r,))
+            if n and args.doen:
+                conn.execute(
+                    f"DELETE FROM contract_documents WHERE retailer_id=? AND naam IN "
+                    f"({','.join('?' * len(namen))})", (r, *namen))
 
         # Demo-imports (en hun feiten) — echte bestanden blijven staan.
         for marker in DEMO_FILE_MARKERS:

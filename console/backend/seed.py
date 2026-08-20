@@ -2,8 +2,8 @@
 CSV stand-ins in console/seed/, then push them through the actual import
 pipeline (no direct inserts — this proves the parsers work, PROMPT §7).
 
-Also loads the four handoff profiles verbatim, default settings and the
-mock SharePoint contract documents.
+Also loads the four handoff profiles verbatim, default settings and demo
+contract documents.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import db
-from engine import contracts, importer
+from engine import importer
 
 BASE = Path(__file__).resolve().parents[1]          # console/
 PROFILES = BASE / "profiles"
@@ -415,14 +415,18 @@ def _load_demo_settings():
                         "INSERT INTO mail_rules (retailer_id, naam, afzender, bijlage_glob) "
                         "VALUES (?,?,?,?)", (retailer, naam, afzender, glob))
 
-        # SharePoint: link + interpret documents for retailers present in contracts.json.
+        # Demo-contracten: alsof ze al eens geüpload en geanalyseerd zijn.
         doclist = json.loads((SEED / "contracts.json").read_text())
-        for retailer in doclist:
-            conn.execute(
-                "INSERT INTO sharepoint_links (retailer_id, map_url) VALUES (?,?) "
-                "ON CONFLICT(retailer_id) DO UPDATE SET map_url=excluded.map_url",
-                (retailer, f"https://leijtens.sharepoint.com/sites/retail/{retailer}/contracten"))
-            contracts.sync_documents(conn, retailer)
+        for retailer, docs in doclist.items():
+            conn.execute("DELETE FROM contract_documents WHERE retailer_id=?", (retailer,))
+            conn.executemany(
+                "INSERT INTO contract_documents (retailer_id, naam, type, geldig_tot, signaal, "
+                "conclusie, condities, bestandsnaam, geupload_op, geupload_door) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                [(retailer, d["naam"], d.get("type"), d.get("geldig_tot"), d.get("signaal", "grey"),
+                  d.get("conclusie"), json.dumps(d.get("condities", [])),
+                  d.get("naam", "contract") + ".pdf", "2026-01-05T09:00:00", "demo")
+                 for d in docs])
 
 
 def seed():

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import json
 import os
 import re
 import secrets
@@ -138,6 +139,14 @@ db.init_db()
 # installatie — de oude alleen-bij-lege-tabel-check hield dat tegen.
 import seed as _seed  # noqa: E402
 _seed.bootstrap()
+
+
+def _contract_doc(row) -> dict:
+    """condities staat als JSON-tekst in de database; de frontend krijgt
+    een echte lijst."""
+    d = dict(row)
+    d["condities"] = json.loads(d["condities"]) if d.get("condities") else []
+    return d
 
 
 def _retailer_or_404(conn, retailer_id: str):
@@ -458,9 +467,7 @@ def get_settings(retailer_id: str):
                 "SELECT * FROM rotatie_targets WHERE retailer_id=? ORDER BY merk", (retailer_id,))],
             "mail_rules": [dict(r) for r in conn.execute(
                 "SELECT * FROM mail_rules WHERE retailer_id=? ORDER BY id", (retailer_id,))],
-            "sharepoint": (lambda r: dict(r) if r else None)(conn.execute(
-                "SELECT * FROM sharepoint_links WHERE retailer_id=?", (retailer_id,)).fetchone()),
-            "documenten": [dict(r) for r in conn.execute(
+            "documenten": [_contract_doc(r) for r in conn.execute(
                 "SELECT * FROM contract_documents WHERE retailer_id=? ORDER BY naam", (retailer_id,))],
         }
 
@@ -609,22 +616,23 @@ def delete_winkelaantal(retailer_id: str, meting_id: int):
         return {"ok": True}
 
 
-class SharepointBody(BaseModel):
-    map_url: str
-
-
-@app.post("/api/{retailer_id}/sharepoint")
-def link_sharepoint(retailer_id: str, body: SharepointBody):
+@app.post("/api/{retailer_id}/contract")
+async def upload_contract(retailer_id: str, request: Request, file: UploadFile, door: str | None = None):
+    """PDF uploaden: vervangt het huidige contract van deze retailer. Claude
+    haalt looptijd, conclusie en condities eruit; het signaal blijft
+    daarna live herberekend uit de gevonden einddatum (signals.py)."""
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-        conn.execute(
-            "INSERT INTO sharepoint_links (retailer_id, map_url) VALUES (?,?) "
-            "ON CONFLICT(retailer_id) DO UPDATE SET map_url=excluded.map_url",
-            (retailer_id, body.map_url))
-        docs = contracts.sync_documents(conn, retailer_id)
-        # De map wordt wél vastgelegd; documenten komen er pas bij als de
-        # Graph-koppeling er is. Geen verzonnen contracten in de tussentijd.
-        return {"ok": True, "documenten": docs, "bron": contracts.bron_naam()}
+        try:
+            content = await _read_upload_limited(file)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        wie = _gebruiker(request, door)
+        try:
+            doc = contracts.verwerk_upload(conn, retailer_id, _safe_filename(file), content, wie)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        return {"ok": True, "document": _contract_doc(doc)}
 
 
 # ---------------------------------------------------------------- projecten

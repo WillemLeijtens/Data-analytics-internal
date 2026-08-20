@@ -68,6 +68,10 @@ services:
       - CONSOLE_PASSWORD=${CONSOLE_PASSWORD:-}
       - CONSOLE_USER=${CONSOLE_USER:-console}
       - CONSOLE_MAX_UPLOAD_MB=${CONSOLE_MAX_UPLOAD_MB:-200}
+      # Contractanalyse (PDF-upload → looptijd + condities). Zonder sleutel
+      # blijft de rest van de app werken; een upload geeft dan een nette 422.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CONSOLE_CONTRACT_MODEL=${CONSOLE_CONTRACT_MODEL:-}
     volumes:
       - ./console/data:/srv/data
     ports:
