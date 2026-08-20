@@ -43,15 +43,19 @@ def _n(v) -> float:
     return float(v) if v is not None else 0.0
 
 
-def looptijd_weken(start: str | None, eind: str | None) -> int | None:
-    """Hele weken tussen start- en einddatum (minimaal 1 zodra beide datums
-    er staan: een actie van drie dagen is één actieweek, geen nul)."""
+def looptijd_weken(start: str | None, eind: str | None) -> float | None:
+    """Weken tussen start- en einddatum, einddag inbegrepen, op één decimaal.
+
+    Fractioneel, niet afgerond op hele weken: round(dagen/7) maakte van elf
+    dagen één week en van 74 dagen elf weken — tot een halve week
+    doorverkoop (±5% op een actie van tien weken) verdween of kwam erbij.
+    84 dagen (start t/m einde) is exact 12,0 weken."""
     if not start or not eind:
         return None
-    dagen = (dt.date.fromisoformat(eind) - dt.date.fromisoformat(start)).days
-    if dagen < 0:
+    dagen = (dt.date.fromisoformat(eind) - dt.date.fromisoformat(start)).days + 1
+    if dagen <= 0:
         return None
-    return max(1, round(dagen / 7))
+    return round(dagen / 7, 1)
 
 
 def _product(p: dict) -> dict:
@@ -102,6 +106,12 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict]) -> dict:
     totaal_marge = round(een_marge + (terug_marge or 0), 2) \
         if terug_marge is not None else een_marge
 
+    # Looptijdkosten zonder looptijd kunnen nergens op drukken. Ze stil uit
+    # elk totaal laten vallen zou het project completer laten lijken dan het
+    # is — het scherm meldt dit bedrag expliciet bij het Totaal.
+    kosten_buiten_beeld = round(kosten_looptijd, 2) \
+        if kosten_looptijd and not weken else 0.0
+
     return {
         "producten": regels,
         "looptijd_weken": weken,
@@ -125,6 +135,7 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict]) -> dict:
             "omzet": totaal_omzet,
             "marge": totaal_marge,
             "marge_pct": _pct(totaal_marge, totaal_omzet),
+            "kosten_buiten_beeld": kosten_buiten_beeld,
         },
     }
 

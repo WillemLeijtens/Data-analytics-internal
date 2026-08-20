@@ -8,12 +8,16 @@ import { LoadState, Uitleg } from "../components/shared";
    de cijfers voor de lijst en na het opslaan. */
 const n = (v: any) => (v == null || v === "" ? 0 : +v || 0);
 
+/** Weken tussen start en einde, einddag inbegrepen, op één decimaal —
+ *  dezelfde formule als engine/projecten.looptijd_weken. */
 function looptijdWeken(start?: string | null, eind?: string | null): number | null {
   if (!start || !eind) return null;
-  const dagen = (new Date(eind).getTime() - new Date(start).getTime()) / 86400000;
-  if (dagen < 0 || isNaN(dagen)) return null;
-  return Math.max(1, Math.round(dagen / 7));
+  const dagen = (new Date(eind).getTime() - new Date(start).getTime()) / 86400000 + 1;
+  if (dagen <= 0 || isNaN(dagen)) return null;
+  return Math.round((dagen / 7) * 10) / 10;
 }
+
+const wk = (weken: number) => weken.toLocaleString("nl-NL", { maximumFractionDigits: 1 });
 
 function bereken(proj: any, producten: any[], kosten: any[]) {
   const rijen = producten.map((p) => {
@@ -36,9 +40,10 @@ function bereken(proj: any, producten: any[], kosten: any[]) {
   const eenMarge = eenProductmarge - kostenEenmalig;
   const terugOmzet = weken ? weekOmzet * weken : null;
   const terugMarge = weken ? weekMarge * weken - kostenLooptijd : null;
+  const kostenBuitenBeeld = !weken && kostenLooptijd ? kostenLooptijd : 0;
   const pct = (m: number, o: number) => (o ? (m / o) * 100 : null);
   return {
-    rijen, weken,
+    rijen, weken, kostenBuitenBeeld,
     eenmalig: { omzet: eenOmzet, productmarge: eenProductmarge, kosten: kostenEenmalig,
                 marge: eenMarge, pct: pct(eenMarge, eenOmzet) },
     terugkerend: { weekOmzet, weekMarge, omzet: terugOmzet, kosten: kostenLooptijd,
@@ -60,7 +65,7 @@ function looptijdTekst(start?: string | null, eind?: string | null): string {
   if (weken == null) return "geen looptijd ingevuld";
   const nu = Date.now();
   const s = new Date(start!).getTime(), e = new Date(eind!).getTime() + 86400000;
-  const basis = `${weken} ${weken === 1 ? "week" : "weken"}`;
+  const basis = `${wk(weken)} ${weken === 1 ? "week" : "weken"}`;
   if (nu < s) return `${basis} · start over ${Math.max(1, Math.ceil((s - nu) / 604800000))} wk`;
   if (nu > e) return `${basis} · afgelopen`;
   return `${basis} · nog ${Math.max(1, Math.ceil((e - nu) / 604800000))} wk`;
@@ -323,19 +328,28 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
         </div>
         <div className="card">
           <div className="kpi-label">Terugkerend — de doorverkoop
-            <Uitleg tekst="Rotatie x winkels, per week en opgeteld over de looptijd. De looptijdkosten gaan hier vanaf. Zonder start- en einddatum is er alleen een weekbeeld." /></div>
+            <Uitleg tekst="Rotatie x winkels, per week en opgeteld over de looptijd — de verwachte herbevoorrading nadat de vulling in het schap ligt. De looptijdkosten gaan hier vanaf. Zonder start- en einddatum is er alleen een weekbeeld." /></div>
           <div className="kpi-value">{b.terugkerend.marge != null ? fmtEur(b.terugkerend.marge) : "—"}</div>
           <div className="kpi-sub">
             {b.weken
-              ? <>marge over {b.weken} wk{pctTxt(b.terugkerend.pct)} · omzet {fmtEur(b.terugkerend.omzet!)} − kosten {fmtEur(b.terugkerend.kosten)}</>
+              ? <>marge over {wk(b.weken)} wk{pctTxt(b.terugkerend.pct)} · omzet {fmtEur(b.terugkerend.omzet!)} − kosten {fmtEur(b.terugkerend.kosten)}</>
               : "vul start- en einddatum in voor het looptijdtotaal"}
           </div>
           <div className="kpi-sub">per week: {fmtEur(b.terugkerend.weekOmzet)} omzet · {fmtEur(b.terugkerend.weekMarge)} marge</div>
         </div>
         <div className="card">
-          <div className="kpi-label">Totaal project</div>
+          <div className="kpi-label">Totaal project
+            <Uitleg tekst="Vulling plus doorverkoop bij elkaar. De doorverkoop geldt als herbevoorrading (nieuwe omzet, want het schap wordt bijgevuld). Wordt er aan het einde níét herbevoorraad, dan komt een deel van de doorverkoop uit de al gefactureerde vulling en is dit totaal een bovengrens." /></div>
           <div className="kpi-value">{fmtEur(b.totaal.marge)}</div>
           <div className="kpi-sub">marge · omzet {fmtEur(b.totaal.omzet)}</div>
+          {b.kostenBuitenBeeld > 0 && (
+            // Looptijdkosten zonder looptijd tellen nergens mee; dat stil
+            // laten gebeuren laat het project completer lijken dan het is.
+            <div className="kpi-sub sig-red">
+              excl. {fmtEur(b.kostenBuitenBeeld)} looptijdkosten — vul start- en
+              einddatum in om ze mee te rekenen
+            </div>
+          )}
         </div>
       </div>
 

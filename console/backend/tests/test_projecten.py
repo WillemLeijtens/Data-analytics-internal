@@ -37,9 +37,10 @@ PRODUCT = {"naam": "Nagellak rood", "kostprijs": 2.0, "verkoopprijs": 5.0,
 
 def test_eenmalig_en_terugkerend_gescheiden():
     """100 winkels x 6 stuks vulling = 600 stuks sell-in; daarna 0,5 per
-    winkel per week = 50 stuks per week, 4 weken lang."""
+    winkel per week = 50 stuks per week, 4 weken lang (1 t/m 28 september:
+    28 dagen inclusief de einddag = exact 4,0 weken)."""
     uit = projecten.bereken(
-        {"start_datum": "2026-09-01", "eind_datum": "2026-09-29"},
+        {"start_datum": "2026-09-01", "eind_datum": "2026-09-28"},
         [PRODUCT],
         [{"soort": "listing_fee", "label": "Listing fee", "bedrag": 500.0, "terugkerend": 0},
          {"soort": "marketing", "label": "Marketingbudget", "bedrag": 300.0, "terugkerend": 1}])
@@ -75,8 +76,28 @@ def test_lege_velden_rekenen_als_nul():
     assert uit["eenmalig"]["marge_pct"] is None
 
 
-def test_korte_actie_is_een_week():
-    assert projecten.looptijd_weken("2026-09-01", "2026-09-03") == 1
+def test_looptijd_is_fractioneel_met_einddag_inbegrepen():
+    """Hele weken afronden gooide tot een halve week doorverkoop weg (74
+    dagen werd 11 weken); de looptijd telt nu fractioneel, mét de einddag."""
+    assert projecten.looptijd_weken("2026-09-01", "2026-09-03") == 0.4   # 3 dagen
+    assert projecten.looptijd_weken("2026-09-01", "2026-09-01") == 0.1   # 1 dag
+    assert projecten.looptijd_weken("2026-01-05", "2026-03-29") == 12.0  # 84 dagen
+    assert projecten.looptijd_weken("2026-09-01", "2026-11-13") == 10.6  # 74 dagen
+
+
+def test_looptijdkosten_zonder_looptijd_staan_expliciet_buiten_beeld():
+    """Looptijdkosten kunnen zonder looptijd nergens op drukken; ze stil uit
+    het totaal laten vallen laat het project completer lijken dan het is."""
+    uit = projecten.bereken({}, [PRODUCT],
+                            [{"soort": "marketing", "label": "M", "bedrag": 4000.0,
+                              "terugkerend": 1}])
+    assert uit["totaal"]["kosten_buiten_beeld"] == 4000.0
+    # Mét looptijd tellen ze gewoon mee en is er niets buiten beeld.
+    uit = projecten.bereken({"start_datum": "2026-09-01", "eind_datum": "2026-09-28"},
+                            [PRODUCT],
+                            [{"soort": "marketing", "label": "M", "bedrag": 4000.0,
+                              "terugkerend": 1}])
+    assert uit["totaal"]["kosten_buiten_beeld"] == 0.0
 
 
 # ------------------------------------------------------------- opslag + log
@@ -93,7 +114,7 @@ def test_aanmaken_opslaan_en_logboek(client):
     d["producten"] = [PRODUCT]
     d["kosten"][0]["bedrag"] = 500.0
     r = client.put(f"/api/projecten/{d['id']}",
-                   json={**d, "start_datum": "2026-09-01", "eind_datum": "2026-09-29",
+                   json={**d, "start_datum": "2026-09-01", "eind_datum": "2026-09-28",
                          "door": "Sanne"})
     assert r.status_code == 200
     d2 = r.json()
