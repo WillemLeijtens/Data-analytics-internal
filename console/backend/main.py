@@ -635,6 +635,77 @@ async def upload_contract(retailer_id: str, request: Request, file: UploadFile, 
         return {"ok": True, "document": _contract_doc(doc)}
 
 
+def _masker(sleutel: str) -> str:
+    """Nooit de volledige sleutel teruggeven aan de frontend."""
+    if len(sleutel) <= 12:
+        return "•••• (ingesteld)"
+    return f"{sleutel[:10]}…{sleutel[-4:]}"
+
+
+def _anthropic_status(conn) -> dict:
+    row = conn.execute("SELECT * FROM anthropic_config WHERE id=1").fetchone()
+    sleutel, bron = contracts.haal_api_key(conn)
+    return {
+        "ingesteld": sleutel is not None,
+        "gemaskeerd": _masker(sleutel) if sleutel else None,
+        "bron": bron,
+        "bijgewerkt_op": row["bijgewerkt_op"] if row else None,
+        "bijgewerkt_door": row["bijgewerkt_door"] if row else None,
+        "laatst_getest_op": row["laatst_getest_op"] if row else None,
+        "laatst_status": row["laatst_status"] if row else None,
+        "laatst_melding": row["laatst_melding"] if row else None,
+    }
+
+
+@app.get("/api/systeem/anthropic")
+def anthropic_status():
+    with db.get_conn() as conn:
+        return _anthropic_status(conn)
+
+
+class AnthropicKeyBody(BaseModel):
+    api_key: str
+
+
+@app.put("/api/systeem/anthropic")
+def anthropic_opslaan(body: AnthropicKeyBody, request: Request):
+    """Lege sleutel wist de DB-override en valt terug op de
+    omgevingsvariabele. Na opslaan wordt de resulterende sleutel meteen
+    getest, zodat de status altijd actueel is."""
+    with db.get_conn() as conn:
+        nu = dt.datetime.now().isoformat(timespec="seconds")
+        wie = _gebruiker(request, None)
+        conn.execute(
+            "UPDATE anthropic_config SET api_key=?, bijgewerkt_op=?, bijgewerkt_door=? WHERE id=1",
+            (body.api_key.strip() or None, nu, wie))
+        sleutel, _ = contracts.haal_api_key(conn)
+        if sleutel:
+            ok, melding = contracts.test_sleutel(sleutel)
+        else:
+            ok, melding = False, "Geen sleutel ingesteld"
+        conn.execute(
+            "UPDATE anthropic_config SET laatst_getest_op=?, laatst_status=?, laatst_melding=? "
+            "WHERE id=1", (nu, "ok" if ok else "fout", melding))
+        return _anthropic_status(conn)
+
+
+@app.post("/api/systeem/anthropic/test")
+def anthropic_testen():
+    """Hertest de huidige sleutel (DB of terugval op env) zonder hem te
+    wijzigen — zo signaleert een extern ingetrokken sleutel zich vanzelf."""
+    with db.get_conn() as conn:
+        sleutel, _ = contracts.haal_api_key(conn)
+        nu = dt.datetime.now().isoformat(timespec="seconds")
+        if sleutel:
+            ok, melding = contracts.test_sleutel(sleutel)
+        else:
+            ok, melding = False, "Geen sleutel ingesteld"
+        conn.execute(
+            "UPDATE anthropic_config SET laatst_getest_op=?, laatst_status=?, laatst_melding=? "
+            "WHERE id=1", (nu, "ok" if ok else "fout", melding))
+        return _anthropic_status(conn)
+
+
 # ---------------------------------------------------------------- projecten
 
 # Wie deed dit? De console zelf heeft geen inlog (het portaal authenticeert),

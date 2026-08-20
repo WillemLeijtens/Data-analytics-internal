@@ -353,8 +353,14 @@ verlopen) en de afgesproken condities (betalingen, COOP-investeringen e.d.)
 uit. Een nieuwe upload vervangt het vorige contract — er is geen
 geschiedenis. Het contractsignaal op het Overzicht blijft live herberekend
 uit de gevonden einddatum (`signals.py`), niet door het model geraden.
-Vereist `ANTHROPIC_API_KEY` in de omgeving; zonder sleutel geeft een upload
-een nette 422 en blijft de rest van de app gewoon werken.
+
+De Anthropic API-sleutel wordt bij voorkeur direct in de app ingevuld
+(Instellingen → "AI-contractanalyse", boven aan elk retailer-scherm, dus
+retailer-onafhankelijk) — met een live statustest (groen/rood) bij opslaan
+en op aanvraag. Een `ANTHROPIC_API_KEY` in de omgeving blijft werken als
+terugval (bv. vlak na een verse deploy); de in-app-sleutel wint als beide
+gezet zijn. Zonder geldige sleutel geeft een upload een nette 422 en blijft
+de rest van de app gewoon werken.
 
 ### Back-up
 

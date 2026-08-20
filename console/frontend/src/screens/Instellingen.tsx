@@ -89,6 +89,84 @@ function HandmatigeRij({ onAdd }: { onAdd: (m: string, l: string | null, b: stri
   );
 }
 
+/** Retailer-onafhankelijk: de Anthropic-sleutel geldt voor de hele app, dus
+ *  dit blok laadt los van ctx.retailer en staat gelijk op elke
+ *  Instellingenpagina. */
+function AnthropicSleutelKaart() {
+  const [status, setStatus] = useState<any>(null);
+  const [invoer, setInvoer] = useState("");
+  const [bezig, setBezig] = useState<"opslaan" | "testen" | null>(null);
+  const [fout, setFout] = useState<string | null>(null);
+
+  const laad = () => apiGet("/systeem/anthropic").then(setStatus).catch((e) => setFout(String(e?.message ?? e)));
+  useEffect(() => { laad(); }, []);
+
+  const opslaan = async () => {
+    setBezig("opslaan"); setFout(null);
+    try {
+      const r = await apiSend("/systeem/anthropic", "PUT", { api_key: invoer });
+      setStatus(r); setInvoer("");
+    } catch (e: any) {
+      setFout(String(e?.message ?? e));
+    } finally {
+      setBezig(null);
+    }
+  };
+
+  const testen = async () => {
+    setBezig("testen"); setFout(null);
+    try {
+      setStatus(await apiSend("/systeem/anthropic/test", "POST"));
+    } catch (e: any) {
+      setFout(String(e?.message ?? e));
+    } finally {
+      setBezig(null);
+    }
+  };
+
+  if (!status) return null;
+  const dot = status.laatst_status === "ok" ? "green" : status.ingesteld ? "red" : "grey";
+
+  return (
+    <>
+      <h2>AI-contractanalyse (Claude API)</h2>
+      <div className="card">
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span className={`brand-dot dot-${dot}`} style={{ width: 9, height: 9 }} />
+          <span className="sub">
+            {status.ingesteld
+              ? `${status.gemaskeerd} · ${status.bron === "database" ? "uit de app" : "uit de omgeving"}`
+              : "Geen sleutel ingesteld"}
+          </span>
+          {status.laatst_getest_op && (
+            <span className="sub">
+              laatst getest {status.laatst_getest_op.slice(0, 16).replace("T", " ")}
+              {status.laatst_status === "fout" && status.laatst_melding ? ` — ${status.laatst_melding}` : ""}
+            </span>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
+          <input type="password" placeholder="sk-ant-…" size={44} aria-label="Anthropic API-sleutel"
+            value={invoer} onChange={(e) => setInvoer(e.target.value)} />
+          <button className="btn" disabled={!invoer || bezig !== null} onClick={opslaan}>
+            {bezig === "opslaan" ? "Bezig…" : "Opslaan & testen"}
+          </button>
+          {status.ingesteld && (
+            <button className="btn ghost" disabled={bezig !== null} onClick={testen}>
+              {bezig === "testen" ? "Bezig…" : "Test opnieuw"}
+            </button>
+          )}
+        </div>
+        <p className="sub" style={{ marginTop: 8 }}>
+          Een lege sleutel opslaan wist de app-instelling en valt terug op de omgevingsvariabele
+          (indien gezet). Voedt de contractanalyse bij Contract hieronder.
+        </p>
+        {fout && <p className="sub sig-red" style={{ marginTop: 8 }}>{fout}</p>}
+      </div>
+    </>
+  );
+}
+
 export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   const [data, setData] = useState<any>(null);
   const [wt, setWt] = useState<any[]>([]);
@@ -113,6 +191,8 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
       <h1>Instellingen</h1>
       <h2>Weergave</h2>
       <ThemaKeuze />
+      <hr className="hairline" />
+      <AnthropicSleutelKaart />
       <hr className="hairline" />
       <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />
     </>);
@@ -176,6 +256,8 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
 
       <h2>Weergave</h2>
       <ThemaKeuze />
+
+      <AnthropicSleutelKaart />
 
       <h2>Contract</h2>
       {data.documenten.length ? (

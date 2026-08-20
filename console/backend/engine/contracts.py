@@ -23,6 +23,34 @@ MAX_PROMPT_TEKENS = 40_000
 STANDAARD_MODEL = "claude-sonnet-4-5"
 
 
+def haal_api_key(conn) -> tuple[str | None, str]:
+    """DB-sleutel wint van de omgevingsvariabele: zo kan de sleutel via de
+    app gezet worden zonder herstart, terwijl .env als terugval blijft
+    werken (bv. vlak na een verse deploy, vóórdat iemand inlogt)."""
+    row = conn.execute("SELECT api_key FROM anthropic_config WHERE id=1").fetchone()
+    db_key = (row["api_key"] or "").strip() if row else ""
+    if db_key:
+        return db_key, "database"
+    env_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if env_key:
+        return env_key, "omgeving"
+    return None, "geen"
+
+
+def test_sleutel(api_key: str) -> tuple[bool, str]:
+    """Een goedkope, niet-tokenverbruikende call om te controleren of de
+    sleutel werkt — geen gok op basis van het formaat."""
+    import anthropic
+
+    try:
+        anthropic.Anthropic(api_key=api_key).models.list(limit=1)
+    except anthropic.AuthenticationError:
+        return False, "Ongeldige sleutel (authenticatie mislukt)"
+    except anthropic.APIError as e:
+        return False, f"Test mislukt: {e}"
+    return True, "Werkt"
+
+
 def pdf_tekst(content: bytes) -> str:
     """Tekst uit de eerste pagina's van een PDF. Geen tekst gevonden (bv.
     een gescande, niet-doorzoekbare PDF) levert een lege string — de
@@ -67,7 +95,7 @@ Contracttekst:
 ---"""
 
 
-def analyseer(tekst: str, vandaag: dt.date | None = None) -> dict:
+def analyseer(conn, tekst: str, vandaag: dt.date | None = None) -> dict:
     """Belt de Claude API en parseert het antwoord. Raise ValueError met een
     Nederlandse melding bij een ontbrekende sleutel, een API-fout of
     onbruikbaar JSON — nooit halve of verzonnen data opslaan."""
@@ -75,9 +103,9 @@ def analyseer(tekst: str, vandaag: dt.date | None = None) -> dict:
         raise ValueError(
             "geen tekst gevonden in de PDF — is het een gescand document "
             "zonder doorzoekbare tekst?")
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    api_key, _ = haal_api_key(conn)
     if not api_key:
-        raise ValueError("contractanalyse is niet geconfigureerd (ANTHROPIC_API_KEY ontbreekt)")
+        raise ValueError("contractanalyse is niet geconfigureerd (geen Anthropic API-sleutel)")
 
     import anthropic
 
@@ -129,7 +157,7 @@ def verwerk_upload(conn, retailer_id: str, bestandsnaam: str, content: bytes,
     Standaard wordt de module-functie `analyseer` gebruikt — pas bij het
     aanroepen opgezocht, zodat tests hem via monkeypatch kunnen vervangen."""
     tekst = pdf_tekst(content)
-    gevonden = (analyseer_fn or analyseer)(tekst)
+    gevonden = (analyseer_fn or analyseer)(conn, tekst)
     nu = dt.datetime.now().isoformat(timespec="seconds")
 
     conn.execute("DELETE FROM contract_documents WHERE retailer_id=?", (retailer_id,))

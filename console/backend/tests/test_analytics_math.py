@@ -13,6 +13,7 @@ zodat hij niet terug kan komen:
 
 import datetime as dt
 import importlib
+import json
 import sys
 from pathlib import Path
 
@@ -627,8 +628,9 @@ def test_nieuw_artikel_is_geen_delist_kandidaat(client):
 # ------------------------------------------------------- contract-uploads
 
 def test_contract_upload_zonder_api_key_geeft_422(client, monkeypatch):
-    """Zonder ANTHROPIC_API_KEY mag de upload nooit een halve of verzonnen
-    analyse opslaan — een nette 422 in plaats van een crash."""
+    """Zonder sleutel (noch database, noch omgeving) mag de upload nooit een
+    halve of verzonnen analyse opslaan — een nette 422 in plaats van een
+    crash."""
     from engine import contracts
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -636,7 +638,7 @@ def test_contract_upload_zonder_api_key_geeft_422(client, monkeypatch):
     r = client.post("/api/ici-paris-xl/contract",
                     files={"file": ("contract.pdf", b"x", "application/pdf")})
     assert r.status_code == 422
-    assert "ANTHROPIC_API_KEY" in r.text
+    assert "sleutel" in r.text
     inst = client.get("/api/ici-paris-xl/instellingen").json()
     assert "sharepoint" not in inst
     assert inst["documenten"] == []
@@ -653,7 +655,7 @@ def test_contract_upload_vervangt_vorig_contract(client, monkeypatch):
         {"naam": "Jaarcontract 2027", "type": "contract", "geldig_tot": "2001-01-01",
          "conclusie": "Verlopen.", "condities": []},
     ])
-    monkeypatch.setattr(contracts, "analyseer", lambda tekst, vandaag=None: next(antwoorden))
+    monkeypatch.setattr(contracts, "analyseer", lambda conn, tekst, vandaag=None: next(antwoorden))
     monkeypatch.setattr(contracts, "pdf_tekst", lambda content: "contracttekst")
 
     r1 = client.post("/api/ici-paris-xl/contract",
@@ -675,6 +677,52 @@ def test_contract_upload_vervangt_vorig_contract(client, monkeypatch):
     kaart2 = next(c for c in client.get("/api/overview").json()["retailers"]
                   if c["id"] == "ici-paris-xl")
     assert kaart2["signalen"]["contract"]["signaal"] == "red"
+
+
+# ------------------------------------------------ Anthropic-sleutelbeheer
+
+def test_haal_api_key_database_wint_van_omgeving(client, monkeypatch):
+    from engine import contracts
+    import db as db_mod
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "env-sleutel")
+    with db_mod.get_conn() as conn:
+        assert contracts.haal_api_key(conn) == ("env-sleutel", "omgeving")
+        conn.execute("UPDATE anthropic_config SET api_key=? WHERE id=1", ("db-sleutel",))
+        assert contracts.haal_api_key(conn) == ("db-sleutel", "database")
+        conn.execute("UPDATE anthropic_config SET api_key=? WHERE id=1", ("",))
+        assert contracts.haal_api_key(conn) == ("env-sleutel", "omgeving")
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with db_mod.get_conn() as conn:
+        assert contracts.haal_api_key(conn) == (None, "geen")
+
+
+def test_anthropic_key_opslaan_en_testen(client, monkeypatch):
+    from engine import contracts
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    r0 = client.get("/api/systeem/anthropic").json()
+    assert r0 == {"ingesteld": False, "gemaskeerd": None, "bron": "geen",
+                  "bijgewerkt_op": None, "bijgewerkt_door": None,
+                  "laatst_getest_op": None, "laatst_status": None, "laatst_melding": None}
+
+    monkeypatch.setattr(contracts, "test_sleutel", lambda k: (True, "Werkt"))
+    r1 = client.put("/api/systeem/anthropic", json={"api_key": "sk-ant-abcdefghijklmnop"}).json()
+    assert r1["ingesteld"] is True
+    assert r1["bron"] == "database"
+    assert r1["gemaskeerd"] == "sk-ant-abc…mnop"
+    assert "sk-ant-abcdefghijklmnop" not in json.dumps(r1)
+    assert r1["laatst_status"] == "ok"
+
+    monkeypatch.setattr(contracts, "test_sleutel", lambda k: (False, "Ongeldige sleutel (authenticatie mislukt)"))
+    r2 = client.post("/api/systeem/anthropic/test").json()
+    assert r2["ingesteld"] is True and r2["gemaskeerd"] == r1["gemaskeerd"]
+    assert r2["laatst_status"] == "fout"
+    assert "Ongeldige sleutel" in r2["laatst_melding"]
+
+    r3 = client.put("/api/systeem/anthropic", json={"api_key": ""}).json()
+    assert r3["ingesteld"] is False and r3["bron"] == "geen"
 
 
 # --------------------------------------------------------------- YTD-overlap
