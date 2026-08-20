@@ -21,6 +21,13 @@ jobs:
       - run: python -m pip install -r console/backend/requirements.txt
       # Console-tests draaien vanuit hun eigen map: ze zetten sys.path op
       # backend/ en importeren modules op naam.
+      #
+      # De tests die op ÉCHTE retailerbestanden draaien (exacte merktotalen,
+      # de ICI-decompositie tegen de auditcijfers) slaan hier over: die
+      # bestanden bevatten commercieel gevoelige verkoopdata en horen niet in
+      # de repo. Staan ze op de runner, zet dan CONSOLE_FIXTURES_DIR naar die
+      # map én CONSOLE_REAL_FIXTURES=1 — dan is ontbreken een harde fout in
+      # plaats van een stille skip. Zie tests/echte_bestanden.py.
       - run: python -m pytest -q tests
         working-directory: console/backend
       - run: python -m compileall -q console/backend

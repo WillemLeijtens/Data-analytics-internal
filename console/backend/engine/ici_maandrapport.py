@@ -24,6 +24,7 @@ import re
 
 from openpyxl import load_workbook
 
+from .cellen import als_identifier
 from .periods import PeriodError, parse_period
 
 MONTH_RE = re.compile(r"^\d{6}$")
@@ -148,7 +149,12 @@ def parse_workbook(content: bytes) -> dict:
                     continue
                 if not store.replace(".", "").isdigit():
                     break                       # einde blok (bijv. totaalregel)
-                store = str(int(float(store)))
+                # De cijfertoets hierboven bepaalt of dit nog een winkelrij
+                # is; de WAARDE komt uit als_identifier(), want
+                # str(int(float(...))) maakte van winkelcode "0042" stil "42".
+                store = als_identifier(store)
+                if store is None:
+                    break
                 naam = _norm(r[name_col] if name_col < len(r) else None) or None
                 for j, periode in months:
                     v = _to_number(r[j] if j < len(r) else None)

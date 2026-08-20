@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from test_parser_flow import upload  # noqa: E402
 
-U = Path("/root/.claude/uploads/54377bab-ac94-5cbf-8750-c3a4d90899e0")
+from echte_bestanden import MAP as U, vereist  # noqa: E402
 REAL_ICI = U / "fc6fc987-Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__4.xlsx"
 
 
@@ -110,7 +110,7 @@ def test_rollend_venster_houdt_het_gemiddelde_op_periodeniveau(client):
     assert serie["winkels"][-1] == 10
 
 
-@pytest.mark.skipif(not REAL_ICI.exists(), reason="echt sample-bestand niet aanwezig")
+@vereist(REAL_ICI)
 def test_echte_ici_decompositie_reproduceert_auditcijfers(client):
     upload(client, REAL_ICI.name[9:], REAL_ICI.read_bytes())
     t = client.get("/api/ici-paris-xl/dashboard").json()["tijdlijn"]

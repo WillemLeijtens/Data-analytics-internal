@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 
 import openpyxl
 
+from .cellen import als_identifier
+
 
 @dataclass
 class ParsedFile:
@@ -340,24 +342,14 @@ def _parse_feed(result, candidates, brand, country, banner, country3):
     facts_start = len(result.facts)
 
     for r in range(data_start, data_end + 1):
-        sku = ws.cell(row=r, column=sku_col).value
-        if sku is None:
+        raw_sku = ws.cell(row=r, column=sku_col).value
+        if raw_sku is None:
             continue
-        if isinstance(sku, str):
-            # Een tekstcel behoudt een echte leidende nul (Excel-getallen
-            # kunnen dat sowieso nooit, dus alleen tekst is hier het risico).
-            # str(int(...)) zou "007" stilzwijgend tot "7" maken.
-            sku = sku.strip()
-            if re.fullmatch(r"\d+\.0+", sku):
-                sku = sku.split(".", 1)[0]
-            if not sku:
-                continue
-        else:
-            try:
-                sku = str(int(sku))
-            except (TypeError, ValueError):
-                result.warnings.append(f"Rij {r}: SKU {sku!r} is geen nummer — overgeslagen.")
-                continue
+        sku = als_identifier(raw_sku)
+        if sku is None:
+            result.warnings.append(
+                f"Rij {r}: SKU {raw_sku!r} is geen bruikbare identifier — overgeslagen.")
+            continue
 
         row_brand = brand
         if brand_col:

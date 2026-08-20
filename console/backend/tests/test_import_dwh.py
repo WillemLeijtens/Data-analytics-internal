@@ -13,10 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from test_parser_flow import upload  # noqa: E402
 
-REAL_SAMPLE = Path(
-    "/root/.claude/uploads/54377bab-ac94-5cbf-8750-c3a4d90899e0/"
-    "aa516215-DWH__Sales_volume__sales_value_per_week_per_article_"
-    "Alessendro_Depend_KVNL_5696_1175350483788269736.xlsx")
+from echte_bestanden import MAP, vereist  # noqa: E402
+
+REAL_SAMPLE = MAP / ("aa516215-DWH__Sales_volume__sales_value_per_week_per_article_"
+                     "Alessendro_Depend_KVNL_5696_1175350483788269736.xlsx")
 
 
 @pytest.fixture()
@@ -119,7 +119,7 @@ def test_unknown_upload_stays_visible_on_retailer_tab(client):
         "PROFIEL NODIG moet op de retailer-tab zichtbaar zijn"
 
 
-@pytest.mark.skipif(not REAL_SAMPLE.exists(), reason="echt sample-bestand niet aanwezig")
+@vereist(REAL_SAMPLE)
 def test_real_dwh_sample_full_counts(client):
     r = upload(client, REAL_SAMPLE.name[9:], REAL_SAMPLE.read_bytes())
     assert r["status"] == "ingelezen"
@@ -133,7 +133,7 @@ def test_real_dwh_sample_full_counts(client):
     assert len(art["artikelen"]) == 156
 
 
-@pytest.mark.skipif(not REAL_SAMPLE.exists(), reason="echt sample-bestand niet aanwezig")
+@vereist(REAL_SAMPLE)
 def test_real_file_with_mangled_name_still_recognised(client):
     """Mailclients en downloads plakken voorvoegsels aan bestandsnamen; de
     inhoudsherkenning moet het bestand dan alsnog bij kruidvat brengen."""
