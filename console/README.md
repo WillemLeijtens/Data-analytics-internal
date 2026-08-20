@@ -422,6 +422,21 @@ blind doorgevoerd, de navigatie in deze app is toch al een vaste,
 interne enum-set (retailer-id's + schermnamen), dus de praktische
 exploiteerbaarheid is laag; `npm audit` volgen als dit ooit verandert.
 
+**Tests op échte retailerbestanden.** Een deel van de suite verankert de
+cijfers aan echte aanleverbestanden (exacte merktotalen over 4566 regels, de
+ICI-decompositie tegen de auditcijfers). Die bestanden staan **niet** in de
+repo — het is commercieel gevoelige verkoopdata. Zonder die bestanden slaan
+die tests over; dat is precies waarom een groene CI-run ze eerst stilzwijgend
+oversloeg. Om ze wél af te dwingen:
+
+```bash
+CONSOLE_FIXTURES_DIR=/pad/naar/de/bestanden \
+CONSOLE_REAL_FIXTURES=1 python -m pytest -q tests
+```
+
+Ontbreekt er dan één, dan faalt de run luid in plaats van stil over te slaan.
+Zie `tests/echte_bestanden.py`.
+
 Frontend heeft sinds kort ook geautomatiseerde tests (Vitest +
 Testing Library, `npm test` in `console/frontend`, draait mee in CI):
 `src/api.ts` (foutafhandeling — het kanaal waar élke foutmelding in de app

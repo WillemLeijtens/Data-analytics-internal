@@ -36,6 +36,7 @@ import re
 
 from openpyxl import load_workbook
 
+from .cellen import als_identifier
 from .periods import parse_period
 
 WEEK_HDR_RE = re.compile(r"^(\d{6})\s*\(Ending\s+(\d{2}/\d{2}/\d{4})\)$")
@@ -212,14 +213,24 @@ def parse_workbook(content: bytes) -> dict:
                 "over dezelfde periode — import afgebroken")
 
     facts: list[dict] = []
+    warnings: list[str] = []
+    # Een lege Sales- of Units-cel werd stilzwijgend als 0 geboekt: "niets
+    # verkocht" is dan niet te onderscheiden van "niet geleverd", en dat
+    # verschil stuurt wél de volume-KPI, de rotatie en de prijsindex aan.
+    # Zelfde melding als de Kruidvat-parser al gaf.
+    lege_cellen = 0
     for r in rows[sub_i + 1:]:
         upc_raw = r[col_upc] if col_upc < len(r) else ""
         merk_raw = _norm(r[col_merk] if col_merk < len(r) else "")
-        # Disclaimer- en lege regels onder de tabel hebben geen UPC+merk.
-        n = _num(upc_raw)
-        if n is None or not merk_raw:
+        # Disclaimer- en lege regels onder de tabel hebben geen UPC+merk. De
+        # numerieke toets blijft staan: hij bepaalt of dit überhaupt een
+        # datarij is. De WAARDE komt daarna uit als_identifier(), want
+        # str(int(...)) maakte van UPC "012345678905" stil "12345678905".
+        if _num(upc_raw) is None or not merk_raw:
             continue
-        upc = str(int(n))
+        upc = als_identifier(upc_raw)
+        if upc is None:
+            continue
         merk = BRAND_SUFFIX_RE.sub("", merk_raw).strip().upper()
         naam = _norm(r[col_naam] if col_naam < len(r) else "") or None
         for periode, j in weekcols:
@@ -227,6 +238,8 @@ def parse_workbook(content: bytes) -> dict:
             units = _num(r[j + 1] if j + 1 < len(r) else None)
             if sales is None and units is None:
                 continue                       # geen verkoop die week
+            if sales is None or units is None:
+                lege_cellen += 1
             facts.append({
                 "periode": periode, "land": "NL", "banner": None,
                 "winkel_id": None, "winkel_naam": None,
@@ -252,6 +265,12 @@ def parse_workbook(content: bytes) -> dict:
             f"{len(merken)} merk(en): {', '.join(sorted(merken))}; "
             "import afgebroken")
 
+    if lege_cellen:
+        warnings.append(
+            f"{lege_cellen} Sales/Units-cel(len) waren leeg terwijl de andere "
+            "helft van het paar wél gevuld was, en zijn als 0 geboekt — "
+            "controleer het bronbestand voordat je hierop stuurt.")
+
     return {"facts": facts, "periode_type": "week",
             "periodes": sorted({f["periode"] for f in facts}),
-            "warnings": []}
+            "warnings": warnings}

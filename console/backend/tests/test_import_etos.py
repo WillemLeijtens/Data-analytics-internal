@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from test_parser_flow import upload  # noqa: E402
 
-U = Path("/root/.claude/uploads/54377bab-ac94-5cbf-8750-c3a4d90899e0")
+from echte_bestanden import MAP as U, vereist  # noqa: E402
 REAL_ETOS = U / "b9ccb189-Data_Grid_57018_widget.xlsx"
 REAL_KV = U / "d62acf54-DWH__Sales_volume__sales_Tweezerman_KVNL_1299_1734396111539283577.xlsx"
 REAL_ICI = U / "fc6fc987-Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__4.xlsx"
@@ -66,7 +66,7 @@ def _herbouw(content: bytes, muteer) -> bytes:
 
 # ---------------------------------------------------------------- echt bestand
 
-@pytest.mark.skipif(not REAL_ETOS.exists(), reason="echt sample-bestand niet aanwezig")
+@vereist(REAL_ETOS)
 def test_real_etos_full_counts(client):
     """Alle cijfers uit het echte bestand, gepind tegen een onafhankelijke
     telling (som van alle gevulde Sales/Units-cellen, buiten de parser om):
@@ -103,14 +103,13 @@ def test_real_etos_full_counts(client):
     assert promo["methode"] == "prijsindex"
 
 
-@pytest.mark.skipif(not REAL_ETOS.exists(), reason="echt sample-bestand niet aanwezig")
+@vereist(REAL_ETOS)
 def test_real_etos_renamed_still_recognised(client):
     r = upload(client, "kopie van rapportage etos (3).xlsx", REAL_ETOS.read_bytes())
     assert r["status"] == "ingelezen" and r["retailer_id"] == "etos"
 
 
-@pytest.mark.skipif(not (REAL_ETOS.exists() and REAL_KV.exists() and REAL_ICI.exists()),
-                    reason="echte sample-bestanden niet aanwezig")
+@vereist(REAL_ETOS, REAL_KV, REAL_ICI)
 def test_three_real_retailers_one_batch(client):
     r = client.post("/api/import", files=[
         ("files", (REAL_ETOS.name[9:], REAL_ETOS.read_bytes())),
@@ -132,7 +131,7 @@ def test_three_real_retailers_one_batch(client):
 
 # ---------------------------------------------------------------- historie
 
-@pytest.mark.skipif(not HISTORIE_AANWEZIG, reason="historiebestanden niet aanwezig")
+@vereist(*[U / naam for naam, *_ in REAL_HISTORIE])
 def test_real_historie_alle_scopes(client):
     """De vier echte historiebestanden gebruiken andere Time-scopes
     (Fiscal Quarter met weekrange, 2 Fiscal Quarters, 9 Fiscal Periods).
@@ -154,8 +153,7 @@ def test_real_historie_alle_scopes(client):
             assert tot["v"] == volume, naam
 
 
-@pytest.mark.skipif(not (HISTORIE_AANWEZIG and REAL_ETOS.exists()),
-                    reason="niet alle echte bestanden aanwezig")
+@vereist(REAL_ETOS, *[U / naam for naam, *_ in REAL_HISTORIE])
 def test_alle_vijf_bestanden_samen_geeft_meerjarige_analyse(client):
     """2024 + 3×2025 + YTD 2026 in één batch: geen dubbeltelling over de
     bestanden heen, en de jaar-op-jaar-vergelijking komt tot leven."""
@@ -341,3 +339,46 @@ def test_bootstrap_laadt_nieuw_profiel_op_bestaande_database(client, tmp_path):
     with db.get_conn() as conn:
         assert conn.execute("SELECT COUNT(*) c FROM parser_profiles "
                             "WHERE retailer_id='kruidvat'").fetchone()["c"] == n_kv
+
+
+# ------------------------------------------------- identifiers en lege cellen
+
+def test_upc_met_leidende_nul_blijft_intact(client):
+    """Auditbevinding H-1: `str(int(n))` maakte van UPC '012345678905' stil
+    '12345678905'. Een identifier is geen getal — de leidende nul is
+    betekenisdragend en koppelt het artikel aan de bron."""
+    import seed
+    from engine import etos_datagrid
+
+    artikelen = [{"upc": "012345678905", "naam": "TEST", "merk": "TWEEZERMAN",
+                  "merk_nr": "2278", "weeks": {"202632": (100.0, 10)}}]
+    content = seed.make_etos_xlsx(artikelen, weeks=["202632"])
+    parsed = etos_datagrid.parse_workbook(content)
+    assert {f["artikel_ean"] for f in parsed["facts"]} == {"012345678905"}
+
+
+def test_lege_units_cel_wordt_gemeld_niet_stil_op_nul_geboekt(client):
+    """Auditbevinding H-2: sales gevuld, units leeg -> volume 0 zonder enig
+    signaal. 'Niets verkocht' mag niet ononderscheidbaar zijn van 'niet
+    geleverd': dat verschil stuurt de volume-KPI, de rotatie en de
+    prijsindex aan. De Kruidvat-parser waarschuwde hier al wel voor."""
+    import seed
+    from engine import etos_datagrid
+
+    artikelen = [{"upc": "120727773", "naam": "LASH CURLER", "merk": "TWEEZERMAN",
+                  "merk_nr": "2278",
+                  "weeks": {"202631": (197.5, 10), "202632": (395.0, None)}}]
+    content = seed.make_etos_xlsx(artikelen, weeks=["202631", "202632"])
+    parsed = etos_datagrid.parse_workbook(content)
+
+    per_periode = {f["periode"]: f for f in parsed["facts"]}
+    assert per_periode["2026-W32"]["omzet"] == 395.0
+    assert per_periode["2026-W32"]["volume"] == 0
+    assert parsed["warnings"], "een leeg gelaten Units-cel hoort gemeld te worden"
+    assert "leeg" in parsed["warnings"][0].lower()
+
+
+def test_volledig_gevuld_bestand_geeft_geen_waarschuwing(client):
+    """Tegenproef: de waarschuwing mag niet bij elk normaal bestand afgaan."""
+    from engine import etos_datagrid
+    assert etos_datagrid.parse_workbook(_demo())["warnings"] == []

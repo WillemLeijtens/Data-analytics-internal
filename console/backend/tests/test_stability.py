@@ -426,3 +426,39 @@ def test_cleanup_duplicates_keeps_the_latest_correction(client, monkeypatch):
     # Idempotent: nog een keer draaien verandert niets meer.
     cleanup_duplicates.main()
     assert client.get("/api/kruidvat/dashboard").json()["kpi"]["omzet"]["waarde"] == 999.0
+
+
+def test_fractioneel_aantal_wordt_geweigerd_niet_stil_afgerond(client):
+    """Auditbevinding M-1: `int(round(value))` veranderde de data zonder
+    signaal, en round() rondt halven naar EVEN af — 10,5 werd 10 maar 11,5
+    werd 12. Volume telt stuks; is het aantal niet heel, dan klopt er iets
+    aan de bron en hoort de gebruiker dat te horen."""
+    from engine import parser as P
+    from engine.profile import Profile
+
+    prof = Profile(id=1, retailer_id="douglas", version=1, status="live",
+                   definition=douglas_definition())
+    for aantal in (10.5, 11.5, 0.4, 2.5):
+        f = make_xlsx(DG_HEADERS, [["2026-W32", "A1", "TWEEZERMAN", aantal, 100.0]])
+        with pytest.raises(P.ParseError) as exc:
+            P.parse_file("Douglas_Abverkauf_KW32.xlsx", f, prof)
+        fouten = exc.value.row_errors
+        assert fouten and "niet heel" in fouten[0]["fout"], \
+            f"aantal {aantal} hoort geweigerd te worden, kreeg {fouten}"
+
+    # En via de importroute levert het een nette fout op, geen half resultaat.
+    ship_profile("douglas", douglas_definition())
+    f = make_xlsx(DG_HEADERS, [["2026-W32", "A1", "TWEEZERMAN", 10.5, 100.0]])
+    r = upload(client, "Douglas_Abverkauf_KW32.xlsx", f)
+    assert r["status"] == "error"
+    assert client.get("/api/douglas/dashboard").json().get("empty") is not False
+
+
+def test_heel_aantal_als_float_blijft_gewoon_werken(client):
+    """Tegenproef: 10.0 uit een Excel-getalcel is gewoon 10 stuks en mag
+    niet ineens geweigerd worden."""
+    ship_profile("douglas", douglas_definition())
+    f = make_xlsx(DG_HEADERS, [["2026-W32", "A1", "TWEEZERMAN", 10.0, 100.0]])
+    r = upload(client, "Douglas_Abverkauf_KW32.xlsx", f)
+    assert r["status"] == "ingelezen"
+    assert client.get("/api/douglas/dashboard").json()["kpi"]["volume"]["waarde"] == 10

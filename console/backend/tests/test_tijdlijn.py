@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from test_parser_flow import upload  # noqa: E402
 
-U = Path("/root/.claude/uploads/54377bab-ac94-5cbf-8750-c3a4d90899e0")
+from echte_bestanden import MAP as U, vereist  # noqa: E402
 REAL_ICI = U / "fc6fc987-Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__4.xlsx"
 
 
@@ -110,7 +110,7 @@ def test_rollend_venster_houdt_het_gemiddelde_op_periodeniveau(client):
     assert serie["winkels"][-1] == 10
 
 
-@pytest.mark.skipif(not REAL_ICI.exists(), reason="echt sample-bestand niet aanwezig")
+@vereist(REAL_ICI)
 def test_echte_ici_decompositie_reproduceert_auditcijfers(client):
     upload(client, REAL_ICI.name[9:], REAL_ICI.read_bytes())
     t = client.get("/api/ici-paris-xl/dashboard").json()["tijdlijn"]
@@ -145,3 +145,28 @@ def test_winkelaantal_endpoint_valideert(client):
     # En verwijderen kan.
     assert client.delete(f"/api/kruidvat/winkelaantallen/{op_die_datum[0]['id']}").status_code == 200
     assert client.get("/api/kruidvat/instellingen").json()["winkels_historie"] == []
+
+
+def test_decompositie_klopt_ook_bij_lage_omzet_per_winkel(client):
+    """Auditbevinding L-1: omzet/winkel werd op centen afgerond vóórdat de
+    percentages eruit kwamen. Bij lage bedragen per winkel liep de
+    multiplicatieve identiteit daardoor tot een hele procentpunt uit de pas
+    (€ 0,30 per winkel: omzet +20% = winkels +10% x perwinkel +10%).
+
+    De bestaande test hierboven gebruikt € 2,00 per winkel, waar de afronding
+    toevallig exact is — daarom viel het niet op."""
+    # 500 winkels, € 150 omzet -> € 0,30 per winkel; +20% omzet, +10% winkels.
+    upload(client, "DWH__Sales_Tweezerman_KVNL_laag.xlsx",
+           _kv({"202520": (10, 150.0), "202620": (10, 180.0)}))
+    for aantal, vanaf in ((500, "2025-01-01"), (550, "2026-01-01")):
+        client.post("/api/kruidvat/winkelaantallen", json={
+            "merk": "TWEEZERMAN", "land": "NL", "banner": "KV",
+            "aantal_winkels": aantal, "geldig_vanaf": vanaf})
+    d = client.get("/api/kruidvat/dashboard").json()["tijdlijn"]["decompositie"]["totaal"]
+    assert d is not None, "decompositie hoort berekend te kunnen worden"
+    samengesteld = ((1 + d["winkels_pct"] / 100) * (1 + d["per_winkel_pct"] / 100) - 1) * 100
+    # Alleen nog de weergave-afronding (1 decimaal per factor) mag afwijken.
+    assert samengesteld == pytest.approx(d["omzet_pct"], abs=0.11), (
+        f"identiteit gaat niet op: omzet {d['omzet_pct']}% vs samengesteld "
+        f"{samengesteld:.4f}% uit winkels {d['winkels_pct']}% x "
+        f"perwinkel {d['per_winkel_pct']}%")

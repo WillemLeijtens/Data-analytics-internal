@@ -36,12 +36,19 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
   const [detail, setDetail] = useState<any | null>(null);
   const [pending, setPending] = useState<Pending[]>([]);
   const [uploadResults, setUploadResults] = useState<any[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [laadFout, setLaadFout] = useState<string | null>(null);
+  const [actieFout, setActieFout] = useState<string | null>(null);
+  const error = actieFout ?? laadFout;
 
+  // Twee losse fouten, want ze hebben verschillende levensduur: een
+  // geslaagde verversing van de LIJST wiste eerder ook de melding van een
+  // upload die net was mislukt. Koos je een bestand terwijl de lijst nog
+  // laadde, dan verdween die melding voordat je hem kon lezen — en een stil
+  // verdwenen foutmelding is precies wat deze app nergens hoort te doen.
   const refresh = () =>
     apiGet(`/imports${ctx.retailer !== "alle" ? `?retailer_id=${ctx.retailer}` : ""}`)
-      .then((r) => { setRows(r); setError(null); })
-      .catch((e) => setError(String(e?.message ?? e)));
+      .then((r) => { setRows(r); setLaadFout(null); })
+      .catch((e) => setLaadFout(String(e?.message ?? e)));
   useEffect(() => { refresh(); }, [ctx.retailer]);
 
   /** Stap 1: kijk in het bestand, sla nog niets op. */
@@ -55,9 +62,9 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
     try {
       const r = await apiSend<{ results: any[] }>("/import/controle", "POST", fd);
       setPending(lijst.map((file, i) => ({ file, preview: r.results[i] })));
-      setError(null);
+      setActieFout(null);
     } catch (e: any) {
-      setError(`Controleren mislukt: ${e?.message ?? e}`);
+      setActieFout(`Controleren mislukt: ${e?.message ?? e}`);
     } finally {
       setBusy(false);
     }
@@ -71,9 +78,9 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
     try {
       const r = await apiSend<{ results: any[] }>("/import", "POST", fd);
       setUploadResults((prev) => [...prev, ...(r.results ?? [])]);
-      setError(null);
+      setActieFout(null);
     } catch (e: any) {
-      setError(`Import mislukt: ${e?.message ?? e}`);
+      setActieFout(`Import mislukt: ${e?.message ?? e}`);
     } finally {
       setPending((p) => p.filter((x) => x !== item));
       setBusy(false);

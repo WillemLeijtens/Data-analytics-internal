@@ -550,7 +550,11 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
     per_store_prior = comp_prior_agg["omzet"] / stores_prior if stores_prior else None
 
     def delta(now, prev):
-        return round((now - prev) / prev * 100, 1) if prev else None
+        # `prev > 0`, niet `prev`: bij een negatieve basis (per saldo meer
+        # retouren dan verkoop) draait het percentage van betekenis om —
+        # van -100 naar -50 is een verbetering, maar (n-p)/p geeft dan -50%.
+        # Geen percentage is eerlijker dan een omgekeerd leesbaar percentage.
+        return round((now - prev) / prev * 100, 1) if prev and prev > 0 else None
 
     # YTD per merk, op regelniveau. Elke regel gebruikt het EIGEN venster van
     # dat merk (1..tot_periode, op beide jaren toegepast) zodat de regel
@@ -663,11 +667,12 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
             # Zonder winkelniveau is er geen venster: ruw == gladgestreken.
             ruwe_tellingen = {p: v[0] for p, v in tellingen.items()}
         omzet, winkels, per_winkel, bron = [], [], [], []
-        winkels_ruw, per_winkel_ruw = [], []
+        winkels_ruw, per_winkel_ruw, omzet_ruw = [], [], []
         for i, p in enumerate(tijdlijn_periodes):
             aantal, herkomst = tellingen.get(p, (None, "aangenomen"))
             o = omzet_p.get(p, 0.0)
             omzet.append(round(o, 2))
+            omzet_ruw.append(o)
             winkels.append(aantal)
             # Bij een voortschrijdend winkelaantal hoort een voortschrijdende
             # omzet: 1 maand omzet delen door 3 maanden winkels zou het
@@ -684,7 +689,10 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
             per_winkel_ruw.append(round(o / ruw, 2) if ruw else None)
         return {"omzet": omzet, "winkels": winkels,
                 "per_winkel": per_winkel, "bron": bron,
-                "winkels_ruw": winkels_ruw, "per_winkel_ruw": per_winkel_ruw}
+                "winkels_ruw": winkels_ruw, "per_winkel_ruw": per_winkel_ruw,
+                # Alleen voor decomponeer(): op centen afgeronde bedragen
+                # laten de multiplicatieve identiteit niet meer opgaan.
+                "omzet_ruw": omzet_ruw}
 
     per_merk_reeks = []
     for m in sorted({r["merk"] for r in rows}, key=lambda x: (x is None, x or "")):
@@ -694,14 +702,20 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
 
     def decomponeer(serie: dict, nu_i: int, toen_i: int) -> dict | None:
         """omzet_t/omzet_0 = (winkels_t/winkels_0) x (perwinkel_t/perwinkel_0).
-        Exact multiplicatief, dus de drie percentages sluiten op elkaar aan."""
+
+        Rekent op ONGERONDE bedragen. De weergavereeksen zijn op centen
+        afgerond, en omzet/winkel daaruit overnemen brak de identiteit: bij
+        een lage omzet per winkel (€ 0,30) liep het verschil op tot een hele
+        procentpunt. Nu is omzet/winkel per definitie o/w, dus de drie
+        percentages sluiten op elkaar aan op de afronding van de weergave na
+        (elk hooguit 0,05 pp)."""
         if nu_i < 0 or toen_i < 0:
             return None
-        o_nu, o_toen = serie["omzet"][nu_i], serie["omzet"][toen_i]
+        o_nu, o_toen = serie["omzet_ruw"][nu_i], serie["omzet_ruw"][toen_i]
         w_nu, w_toen = serie["winkels_ruw"][nu_i], serie["winkels_ruw"][toen_i]
-        p_nu, p_toen = serie["per_winkel_ruw"][nu_i], serie["per_winkel_ruw"][toen_i]
-        if not (o_toen and w_nu and w_toen and p_nu and p_toen):
+        if not (o_nu and o_toen and w_nu and w_toen):
             return None
+        p_nu, p_toen = o_nu / w_nu, o_toen / w_toen
         pct = lambda a, b: round((a / b - 1) * 100, 1)  # noqa: E731
         return {"omzet_pct": pct(o_nu, o_toen), "winkels_pct": pct(w_nu, w_toen),
                 "per_winkel_pct": pct(p_nu, p_toen),

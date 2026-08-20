@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from test_parser_flow import upload  # noqa: E402
 
-U = Path("/root/.claude/uploads/54377bab-ac94-5cbf-8750-c3a4d90899e0")
+from echte_bestanden import MAP as U, vereist  # noqa: E402
 REAL_ICI = U / "fc6fc987-Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__4.xlsx"
 REAL_KV = U / "d62acf54-DWH__Sales_volume__sales_Tweezerman_KVNL_1299_1734396111539283577.xlsx"
 
@@ -49,8 +49,7 @@ def test_generated_ici_report_imports(client):
     assert len(promo["suggesties"]) == 4    # 2 merken x 2 maanden
 
 
-@pytest.mark.skipif(not (REAL_ICI.exists() and REAL_KV.exists()),
-                    reason="echte sample-bestanden niet aanwezig")
+@vereist(REAL_ICI, REAL_KV)
 def test_both_real_files_one_batch_no_cross_contamination(client):
     """De kernvraag: meerdere bestanden tegelijk, elk bij de juiste retailer,
     zonder dat ICI-data bij Kruidvat belandt of andersom."""
@@ -87,7 +86,7 @@ def test_both_real_files_one_batch_no_cross_contamination(client):
     assert {b["merk"] for b in ici["kpi"]["omzet"]["breakdown"]} == {"TWEEZERMAN", "DEPEND"}
 
 
-@pytest.mark.skipif(not REAL_ICI.exists(), reason="echt sample-bestand niet aanwezig")
+@vereist(REAL_ICI)
 def test_real_ici_reconciles_with_its_own_brand_tab(client):
     r = upload(client, "hernoemd-ici-rapport (kopie).xlsx", REAL_ICI.read_bytes())
     assert r["status"] == "ingelezen" and r["retailer_id"] == "ici-paris-xl"
