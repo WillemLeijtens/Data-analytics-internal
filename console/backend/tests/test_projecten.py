@@ -143,6 +143,7 @@ def test_aanmaken_opslaan_en_logboek(client):
     assert [k["soort"] for k in d["kosten"]] == \
         ["listing_fee", "coop", "marketing", "display", "logistiek", "verpakking",
          "bijdrage_leverancier"]
+    assert d["status"] == "concept"       # nieuwe projecten starten als concept
     assert d["log"][0]["actie"] == "aangemaakt" and d["log"][0]["door"] == "Willem"
 
     d["producten"] = [PRODUCT]
@@ -161,6 +162,39 @@ def test_aanmaken_opslaan_en_logboek(client):
     assert lijst[0]["naam"] == "Actie week 40"
     assert lijst[0]["eenmalig"]["marge"] == pytest.approx(1240.0)
     assert lijst[0]["looptijd_weken"] == 4
+
+
+def test_status_markeren_als_definitief(client):
+    """Een label, geen slot: definitief blijft gewoon bewerkbaar."""
+    d = client.post("/api/projecten", json={"naam": "P"}).json()
+    r = client.put(f"/api/projecten/{d['id']}", json={**d, "status": "definitief"})
+    assert r.json()["status"] == "definitief"
+    assert client.get(f"/api/projecten/{d['id']}").json()["status"] == "definitief"
+    assert client.get("/api/projecten").json()[0]["status"] == "definitief"
+
+
+def test_onbekende_status_wordt_geweigerd(client):
+    d = client.post("/api/projecten", json={"naam": "P"}).json()
+    r = client.put(f"/api/projecten/{d['id']}", json={**d, "status": "goedgekeurd"})
+    assert r.status_code == 422
+
+
+def test_snelle_autosaves_van_dezelfde_persoon_vullen_één_logregel_bij(client):
+    """Automatisch opslaan mag niet één logregel per toetsaanslag geven:
+    binnen 5 minuten door dezelfde persoon ververst hetzelfde logregel."""
+    d = client.post("/api/projecten", json={"naam": "P", "door": "Willem"}).json()
+    assert len(d["log"]) == 1                      # alleen 'aangemaakt'
+    for i in range(3):
+        d = client.put(f"/api/projecten/{d['id']}",
+                       json={**d, "omschrijving": f"versie {i}", "door": "Willem"}).json()
+    # 'aangemaakt' + één (ververste) 'gewijzigd'-regel — geen drie extra.
+    assert len(d["log"]) == 2
+    assert d["log"][0]["actie"].startswith("gewijzigd")
+
+    # Een andere persoon start wél een nieuwe regel.
+    d = client.put(f"/api/projecten/{d['id']}", json={**d, "door": "Sanne"}).json()
+    assert len(d["log"]) == 3
+    assert d["log"][0]["door"] == "Sanne"
 
 
 def test_gatewayheader_wint_van_het_naamveld(client):

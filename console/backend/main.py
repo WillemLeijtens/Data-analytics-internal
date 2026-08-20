@@ -688,6 +688,7 @@ class ProjectBody(BaseModel):
     omschrijving: str | None = None
     start_datum: str | None = None
     eind_datum: str | None = None
+    status: str = "concept"       # concept | definitief — label, geen slot
     producten: list[dict] = []
     kosten: list[dict] = []
     door: str | None = None       # naam voor het logboek (zie _gebruiker)
@@ -711,7 +712,7 @@ def list_projecten():
             d = _project_detail(conn, row["id"])
             b = d["berekening"]
             out.append({
-                "id": row["id"], "naam": row["naam"],
+                "id": row["id"], "naam": row["naam"], "status": row["status"],
                 "retailer_id": row["retailer_id"],
                 "retailer_naam": namen.get(row["retailer_id"]),
                 "start_datum": row["start_datum"], "eind_datum": row["eind_datum"],
@@ -731,9 +732,9 @@ def create_project(body: ProjectBody, request: Request):
         wie = _gebruiker(request, body.door)
         cur = conn.execute(
             "INSERT INTO projecten (naam, retailer_id, omschrijving, start_datum, "
-            "eind_datum, aangemaakt_door) VALUES (?,?,?,?,?,?)",
+            "eind_datum, status, aangemaakt_door) VALUES (?,?,?,?,?,?,?)",
             (body.naam.strip(), body.retailer_id, body.omschrijving,
-             body.start_datum, body.eind_datum, wie))
+             body.start_datum, body.eind_datum, body.status, wie))
         project_id = cur.lastrowid
         # Elk project start met de vaste kostenregels: bedragen leeg, schakel
         # op de gebruikelijke stand. Weglaten wat niet speelt kan altijd nog.
@@ -757,16 +758,21 @@ def get_project(project_id: int):
 @app.put("/api/projecten/{project_id}")
 def save_project(project_id: int, body: ProjectBody, request: Request):
     """Alles-in-één opslaan, atomair: velden, producten en kosten in één
-    transactie vervangen — zelfde patroon als Instellingen."""
+    transactie vervangen — zelfde patroon als Instellingen.
+
+    Het scherm slaat automatisch op (geen 'Opslaan'-knop meer, gedebounced
+    op elke wijziging), dus dit endpoint kan tientallen keren per minuut
+    binnenkomen terwijl iemand typt. Zie het log-blok onderaan voor hoe dat
+    het logboek niet laat volstromen met één regel per toetsaanslag."""
     with db.get_conn() as conn:
         _project_or_404(conn, project_id)
         _valideer_project(conn, body)
         wie = _gebruiker(request, body.door)
         conn.execute(
             "UPDATE projecten SET naam=?, retailer_id=?, omschrijving=?, start_datum=?, "
-            "eind_datum=?, gewijzigd_op=datetime('now'), gewijzigd_door=? WHERE id=?",
+            "eind_datum=?, status=?, gewijzigd_op=datetime('now'), gewijzigd_door=? WHERE id=?",
             (body.naam.strip(), body.retailer_id, body.omschrijving,
-             body.start_datum, body.eind_datum, wie, project_id))
+             body.start_datum, body.eind_datum, body.status, wie, project_id))
         conn.execute("DELETE FROM project_producten WHERE project_id=?", (project_id,))
         conn.executemany(
             "INSERT INTO project_producten (project_id, volgorde, naam, kostprijs, "
@@ -783,11 +789,25 @@ def save_project(project_id: int, body: ProjectBody, request: Request):
             [(project_id, i, k["soort"], k["label"].strip(), k.get("bedrag"),
               1 if k.get("terugkerend") else 0)
              for i, k in enumerate(body.kosten)])
-        conn.execute(
-            "INSERT INTO project_log (project_id, door, actie) VALUES (?,?,?)",
-            (project_id, wie,
-             f"gewijzigd — {len(body.producten)} product(en), "
-             f"{len(body.kosten)} kostenregel(s)"))
+        # Automatisch opslaan mag het logboek niet laten volstromen: ligt de
+        # laatste 'gewijzigd'-regel van DEZELFDE persoon nog geen 5 minuten
+        # terug, dan wordt die regel ververst (nieuwe tijd, nieuwe telling)
+        # in plaats van dat er een nieuwe bijkomt. Een andere persoon, of
+        # een stilte van 5+ minuten, begint gewoon een nieuwe regel — het
+        # logboek blijft dan nog steeds "wie deed wanneer iets" vertellen,
+        # niet "wie typte om welke seconde een letter".
+        actie = (f"gewijzigd — {len(body.producten)} product(en), "
+                 f"{len(body.kosten)} kostenregel(s)")
+        ver = conn.execute(
+            "UPDATE project_log SET op=datetime('now'), actie=? "
+            "WHERE id = (SELECT id FROM project_log WHERE project_id=? AND door=? "
+            "AND actie LIKE 'gewijzigd%' AND op >= datetime('now','-5 minutes') "
+            "ORDER BY op DESC, id DESC LIMIT 1)",
+            (actie, project_id, wie))
+        if not ver.rowcount:
+            conn.execute(
+                "INSERT INTO project_log (project_id, door, actie) VALUES (?,?,?)",
+                (project_id, wie, actie))
         return _project_detail(conn, project_id)
 
 

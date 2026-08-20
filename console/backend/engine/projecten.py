@@ -161,10 +161,15 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict]) -> dict:
     }
 
 
+STATUSSEN = {"concept", "definitief"}
+
+
 def valideer(project: dict, producten: list[dict], kosten: list[dict]) -> None:
     """Raise ValueError vóór er iets aan de database verandert."""
     if not str(project.get("naam") or "").strip():
         raise ValueError("projectnaam is verplicht")
+    if project.get("status") not in STATUSSEN:
+        raise ValueError(f"status moet concept of definitief zijn, niet {project.get('status')!r}")
     for veld in ("start_datum", "eind_datum"):
         w = project.get(veld)
         if w:

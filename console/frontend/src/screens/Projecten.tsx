@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiGet, apiSend, fmtEur } from "../api";
 import { ShellCtx } from "../App";
 import { LoadState, Uitleg } from "../components/shared";
@@ -100,7 +100,6 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
   const [lijst, setLijst] = useState<any[] | null>(null);
   const [gekozen, setGekozen] = useState<number | null>(null);
   const [d, setD] = useState<any | null>(null);          // het open project
-  const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Naam voor het logboek: per browser bewaard, één keer invullen — tenzij
   // het portaal zelf al een identiteit meestuurt (gateway-header), dan is
@@ -119,11 +118,66 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
     .catch((e) => setError(String(e?.message ?? e)));
   useEffect(() => { laadLijst(); }, []);
 
-  const open = (id: number) => {
-    setGekozen(id); setD(null); setMsg(null);
-    apiGet(`/projecten/${id}`).then(setD).catch((e) => setError(String(e?.message ?? e)));
+  // ------------------------------------------------------- automatisch opslaan
+  // Geen "Opslaan"-knop: elke wijziging aan naam, producten, kosten, status
+  // etc. wordt gedebounced (700 ms na de laatste toets) automatisch
+  // opgeslagen. `laatOpgeslagen` bewaart de laatst BEVESTIGDE staat, zodat
+  // het effect hieronder niet blijft opslaan zolang er niets nieuws is en
+  // een net geladen/aangemaakt project niet meteen zichzelf terugstuurt.
+  const laatOpgeslagen = useRef<string | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "bezig" | "opgeslagen" | "fout">("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const snapshotVan = (data: any) => JSON.stringify({
+    naam: data.naam, retailer_id: data.retailer_id, omschrijving: data.omschrijving,
+    start_datum: data.start_datum, eind_datum: data.eind_datum, status: data.status,
+    producten: data.producten, kosten: data.kosten,
+  });
+
+  const opslaanNu = async (data: any) => {
+    setSaveStatus("bezig");
+    try {
+      const r = await apiSend<any>(`/projecten/${data.id}`, "PUT", { ...data, door: naam || null });
+      laatOpgeslagen.current = snapshotVan(data);
+      // Alleen de servermetadata (logboek, gewijzigd-op/door) overnemen, niet
+      // de hele respons: is er tijdens de aanvraag alweer verder getypt, dan
+      // mag dat niet overschreven worden door het oudere antwoord.
+      setD((huidig: any) => (huidig && huidig.id === r.id)
+        ? { ...huidig, log: r.log, gewijzigd_op: r.gewijzigd_op, gewijzigd_door: r.gewijzigd_door }
+        : huidig);
+      setSaveStatus("opgeslagen"); setSaveError(null);
+    } catch (e: any) {
+      setSaveStatus("fout"); setSaveError(String(e?.message ?? e));
+    }
   };
-  const sluit = () => { setGekozen(null); setD(null); setMsg(null); laadLijst(); };
+
+  useEffect(() => {
+    if (!d) return;
+    const snap = snapshotVan(d);
+    if (snap === laatOpgeslagen.current) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => opslaanNu(d), 700);
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d]);
+
+  const open = (id: number) => {
+    setGekozen(id); setD(null); setSaveStatus("idle"); setSaveError(null);
+    apiGet<any>(`/projecten/${id}`).then((r) => {
+      laatOpgeslagen.current = snapshotVan(r);
+      setD(r);
+    }).catch((e) => setError(String(e?.message ?? e)));
+  };
+  const sluit = async () => {
+    // Staat er nog een gedebouncede wijziging klaar, dan meteen wegschrijven
+    // — anders raakt de laatste toetsaanslag kwijt bij het navigeren weg.
+    if (d && snapshotVan(d) !== laatOpgeslagen.current) {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      await opslaanNu(d);
+    }
+    setGekozen(null); setD(null); setSaveStatus("idle"); setSaveError(null); laadLijst();
+  };
 
   const nieuw = async () => {
     try {
@@ -132,21 +186,16 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
         retailer_id: ctx.retailer !== "alle" ? ctx.retailer : null,
         door: naam || null,
       });
-      setLijst(null); setGekozen(p.id); setD(p);
+      laatOpgeslagen.current = snapshotVan(p);
+      setLijst(null); setGekozen(p.id); setSaveStatus("idle"); setD(p);
     } catch (e: any) { setError(String(e?.message ?? e)); }
-  };
-
-  const opslaan = async () => {
-    try {
-      const r = await apiSend<any>(`/projecten/${d.id}`, "PUT", { ...d, door: naam || null });
-      setD(r); setMsg("Opgeslagen.");
-    } catch (e: any) { setMsg(`Opslaan mislukt — er is niets gewijzigd. (${e?.message ?? e})`); }
   };
 
   const verwijder = async () => {
     if (!window.confirm(`Project "${d.naam}" definitief verwijderen?`)) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
     await apiSend(`/projecten/${d.id}`, "DELETE");
-    sluit();
+    setGekozen(null); setD(null); setSaveStatus("idle"); setSaveError(null); laadLijst();
   };
 
   const zetVeld = (k: string, v: any) => setD({ ...d, [k]: v });
@@ -210,7 +259,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
         </div>
         <table className="data">
           <thead><tr>
-            <th>Project</th><th>Retailer</th><th>Looptijd</th>
+            <th>Project</th><th>Status</th><th>Retailer</th><th>Looptijd</th>
             <th style={{ textAlign: "right" }}>Eenmalige marge</th>
             <th style={{ textAlign: "right" }}>Terugkerende marge</th>
             <th>Laatst gewijzigd</th>
@@ -219,6 +268,8 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
             {lijst.map((p) => (
               <tr key={p.id} className="click" onClick={() => open(p.id)}>
                 <td>{p.naam}<br /><span className="sub">{p.aantal_producten} product{p.aantal_producten === 1 ? "" : "en"}</span></td>
+                <td><span className={`tag ${p.status === "definitief" ? "pos" : ""}`}>
+                  {p.status === "definitief" ? "Definitief" : "Concept"}</span></td>
                 <td>{p.retailer_naam ?? "—"}</td>
                 <td className="sub">{looptijdTekst(p.start_datum, p.eind_datum)}</td>
                 <Cel><Geld v={p.eenmalig.marge} accent />
@@ -230,7 +281,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                 <td className="sub">{tijd(p.gewijzigd_op ?? p.aangemaakt_op)} · {p.gewijzigd_door ?? p.aangemaakt_door ?? "onbekend"}</td>
               </tr>
             ))}
-            {!lijst.length && <tr><td colSpan={6} className="sub">
+            {!lijst.length && <tr><td colSpan={7} className="sub">
               Nog geen projecten — maak het eerste aan met de knop hierboven.</td></tr>}
           </tbody>
         </table>
@@ -254,6 +305,15 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
           <label className="sub">Projectnaam<br />
             <input type="text" size={26} value={d.naam}
               onChange={(e) => zetVeld("naam", e.target.value)} /></label>
+          <span className="sub">Status
+            <Uitleg tekst="Een label, geen slot: 'definitief' blijft gewoon bewerkbaar. Handig om in de lijst te zien welke doorrekening nog rijpt en welke rond is." /><br />
+            <div className="seg">
+              <button className={d.status !== "definitief" ? "on" : ""}
+                onClick={() => zetVeld("status", "concept")}>Concept</button>
+              <button className={d.status === "definitief" ? "on" : ""}
+                onClick={() => zetVeld("status", "definitief")}>Definitief</button>
+            </div>
+          </span>
           <label className="sub">Retailer
             <Uitleg tekst="Alleen ter herkenning in de lijst; de berekening verandert er niet door." /><br />
             <select value={d.retailer_id ?? ""}
@@ -416,8 +476,16 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
       </div>
 
       <div style={{ display: "flex", gap: 14, alignItems: "center", marginTop: 18, flexWrap: "wrap" }}>
-        <button className="btn" onClick={opslaan}>Opslaan</button>
-        <span className="sub">{msg ?? "Wijzigingen staan pas vast na Opslaan."}</span>
+        {/* Geen "Opslaan"-knop meer: elke wijziging schrijft zichzelf
+            gedebounced weg. Deze regel is het enige bewijs daarvan. */}
+        <span className="sub">
+          {saveStatus === "bezig" && "Bezig met opslaan…"}
+          {saveStatus === "opgeslagen" && "Automatisch opgeslagen."}
+          {saveStatus === "fout" && (
+            <span className="sig-red">Niet opgeslagen — {saveError}</span>
+          )}
+          {saveStatus === "idle" && "Wijzigingen worden automatisch opgeslagen."}
+        </span>
         <span className="sub" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center" }}>
           {portaalNaam ? (
             <>Ingelogd als <b style={{ marginLeft: 4 }}>{portaalNaam}</b></>
