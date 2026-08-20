@@ -81,3 +81,56 @@ def test_kop_per_soort_pad(client):
                           ("/kruidvat/dashboard", "no-cache, must-revalidate")):
         r = client.get(pad)
         assert r.headers["cache-control"] == verwacht, (pad, r.headers["cache-control"])
+
+
+# ------------------------------------------------------- analysecache
+
+def test_analysecache_serveert_nooit_verouderde_cijfers(client):
+    """Auditbevinding M-2: de analyses kosten ~28 ms per 1000 feitregels en
+    elke schermwissel rekende alles opnieuw. De cache haalt dat weg, maar mag
+    NOOIT een verouderd cijfer teruggeven — dataintegriteit gaat voor
+    snelheid.
+
+    De eerste opzet keek naar de bestandstijd van de database; in WAL-modus
+    raakt elke LEZENDE verbinding het -wal-bestand, dus die stempel veranderde
+    bij elk verzoek en de cache raakte nooit (0% winst). De tweede opzet had
+    een handmatige tabellijst en vergat meteen contract_documents. Nu komen de
+    tabellen uit sqlite_master, zodat een vergeten tabel geen stille fout kan
+    zijn."""
+    import seed
+
+    def laad(weeks):
+        upload(client, f"DWH__Sales_Tweezerman_KVNL_{'-'.join(weeks)}.xlsx",
+               seed.make_dwh_xlsx([{"sku": "31210001", "gtin": "4049469072773",
+                                    "desc": "Slant", "brand": "TWEEZERMAN",
+                                    "weeks": {w: (10, 100.0) for w in weeks}}]))
+
+    laad(["202631"])
+    eerst = client.get("/api/kruidvat/dashboard").json()["kpi"]["omzet"]["waarde"]
+    # Tweede identieke verzoek: mag hetzelfde antwoord geven (cache of niet).
+    assert client.get("/api/kruidvat/dashboard").json()["kpi"]["omzet"]["waarde"] == eerst
+
+    # Nu verandert de data -> het antwoord MOET meebewegen.
+    laad(["202631", "202632"])
+    daarna = client.get("/api/kruidvat/dashboard").json()
+    assert daarna["laatste_periode"] == "2026-W32"
+    assert daarna["kpi"]["omzet"]["waarde"] == 100.0     # week 32 apart
+
+
+def test_analysecache_ziet_een_gewijzigd_contract(client):
+    """contract_documents voedt het contractsignaal op het Overzicht, maar
+    zat niet in de eerste (handmatige) tabellijst van de cache — een geüpload
+    contract ververste het Overzicht toen niet. Deze test dekt precies dat."""
+    import db as db_mod
+
+    voor = next(c for c in client.get("/api/overview").json()["retailers"]
+                if c["id"] == "ici-paris-xl")["signalen"]["contract"]["signaal"]
+    with db_mod.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO contract_documents (retailer_id, naam, type, geldig_tot, signaal)"
+            " VALUES ('ici-paris-xl','Testcontract','contract','2020-01-01','grey')")
+    na = next(c for c in client.get("/api/overview").json()["retailers"]
+              if c["id"] == "ici-paris-xl")["signalen"]["contract"]["signaal"]
+    assert (voor, na) != (na, na) or voor != "grey", \
+        "het Overzicht hoort een nieuw contract direct te zien"
+    assert na == "red", f"verlopen contract hoort rood te zijn, kreeg {na}"

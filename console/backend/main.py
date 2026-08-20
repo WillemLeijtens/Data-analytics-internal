@@ -171,10 +171,66 @@ def _retailer_or_404(conn, retailer_id: str):
 @app.get("/api/overview")
 def overview():
     with db.get_conn() as conn:
-        return signals.overview(conn)
+        return _gecachet(("overview",), lambda: signals.overview(conn), conn)
 
 
 # ---------------------------------------------------------------- analyses
+
+# De analyses lezen álle feiten van een retailer in geheugen en lopen daar
+# een stuk of tien keer overheen. Gemeten: ~28 ms per 1000 feitregels, dus
+# 104k regels kost bijna drie seconden — en elke schermwissel rekent alles
+# opnieuw. Deze cache haalt de herhaalkosten weg zonder aan de rekenlogica
+# te komen.
+#
+# Invalidatie is bewust op de DATA gebaseerd, niet op een teller die dit
+# proces zelf bijhoudt: seed.py, cleanup_demo.py, cleanup_duplicates.py en
+# tools/ schrijven buiten dit proces om. Een teller zou die missen en
+# stilzwijgend verouderde cijfers blijven tonen — precies het soort stille
+# fout dat deze app juist probeert te vermijden.
+#
+# Ook NIET op de bestandstijd van de database: in WAL-modus raakt élke
+# lezende verbinding het -wal-bestand, waardoor de stempel bij elk verzoek
+# verandert en de cache nooit raakt (gemeten: 0% winst).
+#
+# Wel: een telling per tabel. COUNT(*) én MAX(rowid), want alleen MAX mist
+# een verwijdering (cleanup_duplicates) en alleen COUNT mist een even groot
+# verwijder-en-invoegen (de herlevering van feiten).
+#
+# De tabellen worden UIT DE DATABASE gehaald, niet uit een lijst hier. Een
+# handmatige lijst was de eerste opzet en die miste meteen
+# contract_documents, waardoor een geüpload contract het Overzicht niet
+# ververste. Een tabel vergeten mag geen stille fout kunnen zijn.
+#
+# De datum hoort er ook bij: `is_afgesloten()` bepaalt of de laatste periode
+# nog loopt, en dat verandert met de klok en niet met de data. Zonder de
+# datum zou een dashboard van gisteren vandaag nog "week loopt nog" melden.
+_ANALYSE_CACHE: dict = {}
+_CACHE_MAX = 64
+
+
+def _data_versie(conn) -> tuple:
+    from engine.periods import _vandaag_nl
+
+    tabellen = [r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+    vraag = " UNION ALL ".join(
+        f"SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM {t}" for t in tabellen)
+    tellingen = tuple(tuple(r) for r in conn.execute(vraag)) if tabellen else ()
+    return (_vandaag_nl().isoformat(), tellingen)
+
+
+def _gecachet(sleutel: tuple, bereken, conn):
+    versie = _data_versie(conn)
+    gevonden = _ANALYSE_CACHE.get(sleutel)
+    if gevonden is not None and gevonden[0] == versie:
+        return gevonden[1]
+    uitkomst = bereken()
+    if len(_ANALYSE_CACHE) >= _CACHE_MAX:
+        _ANALYSE_CACHE.clear()          # klein en zeldzaam: geen LRU nodig
+    _ANALYSE_CACHE[sleutel] = (versie, uitkomst)
+    return uitkomst
+
 
 @app.get("/api/{retailer_id}/dashboard")
 def dashboard(retailer_id: str, merk: str | None = None, land: str | None = None,
@@ -182,21 +238,28 @@ def dashboard(retailer_id: str, merk: str | None = None, land: str | None = None
     split = lambda v: v.split(",") if v else None  # noqa: E731
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-        return analytics.dashboard(conn, retailer_id, split(merk), split(land), split(banner))
+        return _gecachet(
+            ("dashboard", retailer_id, merk, land, banner),
+            lambda: analytics.dashboard(conn, retailer_id,
+                                        split(merk), split(land), split(banner)), conn)
 
 
 @app.get("/api/{retailer_id}/artikelen")
 def artikelen(retailer_id: str, merk: str | None = None):
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-        return analytics.articles(conn, retailer_id, merk.split(",") if merk else None)
+        return _gecachet(
+            ("artikelen", retailer_id, merk),
+            lambda: analytics.articles(conn, retailer_id,
+                                       merk.split(",") if merk else None), conn)
 
 
 @app.get("/api/{retailer_id}/promoties")
 def promoties(retailer_id: str):
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-        return analytics.promotions(conn, retailer_id)
+        return _gecachet(("promoties", retailer_id),
+                         lambda: analytics.promotions(conn, retailer_id), conn)
 
 
 class PromoConfirmations(BaseModel):
@@ -233,7 +296,8 @@ def save_promoties(retailer_id: str, body: PromoConfirmations):
 def assortiment(retailer_id: str):
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-        return analytics.assortment(conn, retailer_id)
+        return _gecachet(("assortiment", retailer_id),
+                         lambda: analytics.assortment(conn, retailer_id), conn)
 
 
 # ---------------------------------------------------------------- import

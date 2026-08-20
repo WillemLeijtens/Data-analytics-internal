@@ -21,7 +21,10 @@ import re
 from .periods import PeriodError, parse_period
 from .profile import Profile, capabilities
 
-EAN_RE = re.compile(r"\d{8}$|\d{13}$")
+# EAN-8, UPC-A (12) en EAN-13. UPC-A stond er eerst niet bij, waardoor een
+# retailer die 12-cijferige codes levert een volledige importweigering zou
+# krijgen — terwijl dat een volstrekt normale artikelcode is.
+EAN_RE = re.compile(r"\d{8}$|\d{12}$|\d{13}$")
 
 
 class ParseError(Exception):
