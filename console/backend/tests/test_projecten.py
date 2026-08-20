@@ -169,6 +169,18 @@ def test_gatewayheader_wint_van_het_naamveld(client):
     assert r.json()["log"][0]["door"] == "willem@leijtensimport.com"
 
 
+def test_wie_ben_ik_meldt_het_portaal_als_er_een_header_staat(client):
+    """Zodat het scherm het handmatige naamveld kan laten verdwijnen zodra
+    het portaal een identiteit meestuurt."""
+    r = client.get("/api/wie-ben-ik", headers={"Remote-User": "willem@leijtensimport.com"})
+    assert r.json() == {"naam": "willem@leijtensimport.com", "bron": "portaal"}
+
+
+def test_wie_ben_ik_valt_terug_op_handmatig_zonder_header(client):
+    r = client.get("/api/wie-ben-ik")
+    assert r.json() == {"naam": None, "bron": "handmatig"}
+
+
 def test_validatie_wijst_onzin_af(client):
     p = client.post("/api/projecten", json={"naam": "P"}).json()
     fout = client.put(f"/api/projecten/{p['id']}", json={

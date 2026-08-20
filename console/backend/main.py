@@ -648,6 +648,18 @@ def _gebruiker(request: Request, door: str | None) -> str:
     return "onbekend"
 
 
+@app.get("/api/wie-ben-ik")
+def wie_ben_ik(request: Request):
+    """Zodat het scherm het handmatige naamveld kan laten verdwijnen zodra
+    het portaal een identiteit meestuurt — automatisch waar het kan,
+    handmatig als terugval waar het (nog) niet kan."""
+    for h in _GEBRUIKER_HEADERS:
+        w = request.headers.get(h)
+        if w and w.strip():
+            return {"naam": w.strip()[:80], "bron": "portaal"}
+    return {"naam": None, "bron": "handmatig"}
+
+
 def _project_or_404(conn, project_id: int):
     row = conn.execute("SELECT * FROM projecten WHERE id=?", (project_id,)).fetchone()
     if not row:

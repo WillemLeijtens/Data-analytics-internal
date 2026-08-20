@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { BRAND_COLORS, apiGet, fmtEur, fmtNum, merkKleur } from "../api";
 import { ThemaModus, bepaalThema, bewaarModus, leesModus, pasToe, volgSysteem } from "../theme";
@@ -446,18 +447,92 @@ export function ArtikelSignalen({ status, reden, dekking }:
   );
 }
 
-/** ?-icoontje met uitleg bij een veldlabel. Native title-tooltip: werkt
- *  overal, ook voor schermlezers via aria-label. */
+/** ?-icoontje met uitleg bij een veldlabel.
+ *
+ *  Geen native `title`-tooltip: die reageert niet op tikken/tappen (geen
+ *  touch-apparaat vuurt een title-tooltip af) en vereist minutieus
+ *  stilhouden van de muis — een klik die niets laat zien voelt dan als
+ *  "leeg". In plaats daarvan een echte knop met een popover die naar
+ *  `document.body` portaalt: dat omzeilt zowel `overflow:hidden` op de
+ *  tabellen waar de meeste Uitleg-icoontjes in staan als de uppercase/
+ *  letter-spacing die tabelkoppen op hun inhoud zetten (portaal-content
+ *  erft niet van zijn React-ouder, maar van waar hij in de DOM landt).
+ *  Hover toont hem op desktop; klik/tap zet hem "vast" (blijft staan ook
+ *  als de muis weggaat), dus werkt ook gegarandeerd op touch. Hover en
+ *  vastzetten zijn bewust APARTE state: bij een klik is de muis al over
+ *  het icoontje (dat vuurt eerst een hover), en één gecombineerde
+ *  aan/uit-vlag zou een klik-na-hover meteen weer dichttoggelen — precies
+ *  het geflikker dat een simpele toggle hier zou veroorzaken. Sluit bij
+ *  klik ernaast, Escape of scrollen. */
 export function Uitleg({ tekst }: { tekst: string }) {
+  const [hover, setHover] = useState(false);
+  const [vast, setVast] = useState(false);
+  const open = hover || vast;
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const knopRef = useRef<HTMLButtonElement>(null);
+  const bolRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!open || !knopRef.current) return;
+    const icoon = knopRef.current.getBoundingClientRect();
+    const bol = bolRef.current;
+    const breedte = bol?.offsetWidth ?? 240;
+    const hoogte = bol?.offsetHeight ?? 40;
+    const marge = 10;
+    let left = icoon.left + icoon.width / 2 - breedte / 2;
+    left = Math.max(marge, Math.min(left, window.innerWidth - breedte - marge));
+    // Onder het icoon, tenzij dat niet meer past — dan erboven.
+    const onder = icoon.bottom + 8;
+    const boven = icoon.top - hoogte - 8;
+    const top = onder + hoogte > window.innerHeight - marge && boven > marge ? boven : onder;
+    setPos({ left, top });
+  }, [open, tekst]);
+
+  useEffect(() => {
+    if (!open) return;
+    const sluit = (e: MouseEvent) => {
+      const doel = e.target as Node;
+      if (knopRef.current?.contains(doel) || bolRef.current?.contains(doel)) return;
+      setHover(false); setVast(false);
+    };
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { setHover(false); setVast(false); }
+    };
+    const scroll = () => { setHover(false); setVast(false); };
+    document.addEventListener("mousedown", sluit);
+    document.addEventListener("keydown", escape);
+    window.addEventListener("scroll", scroll, true);
+    return () => {
+      document.removeEventListener("mousedown", sluit);
+      document.removeEventListener("keydown", escape);
+      window.removeEventListener("scroll", scroll, true);
+    };
+  }, [open]);
+
+  useEffect(() => { if (!open) setPos(null); }, [open]);
+
   return (
-    <span title={tekst} aria-label={tekst} role="img" tabIndex={0}
-      style={{
-        display: "inline-flex", alignItems: "center", justifyContent: "center",
-        width: 14, height: 14, marginLeft: 5, borderRadius: "50%",
-        border: "1px solid var(--t-fg3)", color: "var(--t-fg3)",
-        fontSize: 9.5, fontWeight: 700, cursor: "help", verticalAlign: "-2px",
-        userSelect: "none",
-      }}>?</span>
+    <>
+      <button type="button" ref={knopRef} aria-label={`Uitleg: ${tekst}`}
+        aria-expanded={open}
+        onClick={(e) => { e.stopPropagation(); setVast((v) => !v); }}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        style={{
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          width: 14, height: 14, marginLeft: 5, borderRadius: "50%", padding: 0,
+          border: "1px solid var(--t-fg3)", color: "var(--t-fg3)", background: "transparent",
+          fontSize: 9.5, fontWeight: 700, lineHeight: 1, cursor: "help",
+          verticalAlign: "-2px",
+        }}>?</button>
+      {open && createPortal(
+        <div ref={bolRef} role="tooltip" className="uitleg-bol" style={{
+          left: pos?.left ?? -9999, top: pos?.top ?? -9999,
+          visibility: pos ? "visible" : "hidden",
+        }}>{tekst}</div>,
+        document.body,
+      )}
+    </>
   );
 }
 

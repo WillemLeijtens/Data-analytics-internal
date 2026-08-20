@@ -102,9 +102,17 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
   const [d, setD] = useState<any | null>(null);          // het open project
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Naam voor het logboek: per browser bewaard, één keer invullen.
+  // Naam voor het logboek: per browser bewaard, één keer invullen — tenzij
+  // het portaal zelf al een identiteit meestuurt (gateway-header), dan is
+  // er niets om in te vullen en toont het scherm die naam alleen-lezen.
   const [naam, setNaam] = useState(() => localStorage.getItem("bl-naam") ?? "");
   useEffect(() => { localStorage.setItem("bl-naam", naam); }, [naam]);
+  const [portaalNaam, setPortaalNaam] = useState<string | null>(null);
+  useEffect(() => {
+    apiGet<{ naam: string | null; bron: string }>("/wie-ben-ik")
+      .then((r) => setPortaalNaam(r.bron === "portaal" ? r.naam : null))
+      .catch(() => setPortaalNaam(null));
+  }, []);
 
   const laadLijst = () => apiGet("/projecten")
     .then((r) => { setLijst(r); setError(null); })
@@ -152,11 +160,26 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
 
   const num = (v: any) => (v == null ? "" : v);
   const invoer = (lijstNaam: "producten" | "kosten", i: number, veld: string,
-                  breed = 74, stap?: string) => (
-    <input type="number" min={0} step={stap ?? "0.01"} style={{ width: breed }}
-      value={num(d[lijstNaam][i][veld])} aria-label={veld}
-      onChange={(e) => zetRij(lijstNaam, i, veld, e.target.value === "" ? null : +e.target.value)} />
-  );
+                  breed = 74, stap?: string, geld = false) => {
+    const input = (
+      <input type="number" min={0} step={stap ?? "0.01"}
+        style={{ width: breed, paddingLeft: geld ? 16 : undefined }}
+        value={num(d[lijstNaam][i][veld])} aria-label={veld}
+        onChange={(e) => zetRij(lijstNaam, i, veld, e.target.value === "" ? null : +e.target.value)} />
+    );
+    // Geldvelden krijgen een €-prefix in het vak zelf; aantallen (winkels,
+    // stuks, rotatie) blijven kale getallen — dat zijn geen prijzen.
+    if (!geld) return input;
+    return (
+      <span style={{ position: "relative", display: "inline-block" }}>
+        <span aria-hidden="true" style={{
+          position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)",
+          fontSize: 11, color: "var(--t-fg3)", pointerEvents: "none",
+        }}>€</span>
+        {input}
+      </span>
+    );
+  };
 
   /* ------------------------------------------------------------- lijst */
   if (gekozen == null) {
@@ -173,10 +196,16 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
         <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", margin: "16px 0" }}>
           <button className="btn" onClick={nieuw}>+ Nieuw project</button>
           <span className="sub" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center" }}>
-            Jouw naam voor het logboek
-            <Uitleg tekst="Wordt vastgelegd bij aanmaken en wijzigen, zodat het logboek laat zien wie wat deed. Eén keer invullen; blijft in deze browser bewaard." />
-            <input type="text" placeholder="bijv. Willem" size={12} style={{ marginLeft: 8 }}
-              value={naam} onChange={(e) => setNaam(e.target.value)} />
+            {portaalNaam ? (
+              // Het portaal stuurt zelf een identiteit mee: niets om in te
+              // vullen, en niets wat afwijkend ingevuld zou kunnen worden.
+              <>Ingelogd als <b style={{ marginLeft: 4 }}>{portaalNaam}</b></>
+            ) : (
+              <>Jouw naam voor het logboek
+                <Uitleg tekst="Wordt vastgelegd bij aanmaken en wijzigen, zodat het logboek laat zien wie wat deed. Eén keer invullen; blijft in deze browser bewaard." />
+                <input type="text" placeholder="bijv. Willem" size={12} style={{ marginLeft: 8 }}
+                  value={naam} onChange={(e) => setNaam(e.target.value)} /></>
+            )}
           </span>
         </div>
         <table className="data">
@@ -268,12 +297,12 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
               <tr key={i}>
                 <td><input type="text" size={16} value={p.naam} aria-label="Productnaam"
                   onChange={(e) => zetRij("producten", i, "naam", e.target.value)} /></td>
-                <td>{invoer("producten", i, "kostprijs")}</td>
-                <td>{invoer("producten", i, "verkoopprijs")}</td>
+                <td>{invoer("producten", i, "kostprijs", 74, undefined, true)}</td>
+                <td>{invoer("producten", i, "verkoopprijs", 74, undefined, true)}</td>
                 <td>{invoer("producten", i, "aantal_winkels", 64, "1")}</td>
                 <td>{invoer("producten", i, "stuks_per_winkel", 64, "1")}</td>
                 <td>{invoer("producten", i, "rotatie_per_winkel_per_week", 64, "0.1")}</td>
-                <td>{invoer("producten", i, "verpakking_per_stuk")}</td>
+                <td>{invoer("producten", i, "verpakking_per_stuk", 74, undefined, true)}</td>
                 <Cel>{fmtEur(b.rijen[i].eenmalig_omzet)}<br />
                   <span className={b.rijen[i].eenmalig_marge >= 0 ? "sig-green" : "sig-red"}>
                     {fmtEur(b.rijen[i].eenmalig_marge)}</span></Cel>
@@ -319,7 +348,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                     + telt op bij de marge
                   </span>
                 )}</td>
-              <td>{invoer("kosten", i, "bedrag", 96)}</td>
+              <td>{invoer("kosten", i, "bedrag", 96, undefined, true)}</td>
               <td>
                 <div className="seg">
                   <button className={!k.terugkerend ? "on" : ""}
@@ -390,10 +419,14 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
         <button className="btn" onClick={opslaan}>Opslaan</button>
         <span className="sub">{msg ?? "Wijzigingen staan pas vast na Opslaan."}</span>
         <span className="sub" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center" }}>
-          Jouw naam
-          <Uitleg tekst="Komt in het logboek bij deze wijziging." />
-          <input type="text" placeholder="bijv. Willem" size={10} style={{ marginLeft: 8 }}
-            value={naam} onChange={(e) => setNaam(e.target.value)} />
+          {portaalNaam ? (
+            <>Ingelogd als <b style={{ marginLeft: 4 }}>{portaalNaam}</b></>
+          ) : (
+            <>Jouw naam
+              <Uitleg tekst="Komt in het logboek bij deze wijziging." />
+              <input type="text" placeholder="bijv. Willem" size={10} style={{ marginLeft: 8 }}
+                value={naam} onChange={(e) => setNaam(e.target.value)} /></>
+          )}
         </span>
         <button className="chip off" onClick={verwijder}>project verwijderen</button>
       </div>

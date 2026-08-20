@@ -220,3 +220,14 @@ input[type="text"], input[type="number"], input[type="url"] {
   position: absolute; background: var(--t-fg); color: var(--t-bg); border-radius: 6px;
   padding: 7px 10px; font-size: 11px; pointer-events: none; white-space: nowrap; z-index: 5;
 }
+/* Popover van het Uitleg-icoontje (?): naar document.body geportaald, dus
+   onafhankelijk van overflow:hidden en van de uppercase/letter-spacing die
+   tabelkoppen op hun inhoud erven. Terugloop i.p.v. white-space:nowrap,
+   want deze teksten zijn hele zinnen, geen chart-waarden. */
+.uitleg-bol {
+  position: fixed; z-index: 60; max-width: 260px; width: max-content;
+  background: var(--t-fg); color: var(--t-bg); border-radius: 8px;
+  padding: 9px 12px; font: 400 12px "Montserrat", sans-serif; line-height: 1.4;
+  letter-spacing: normal; text-transform: none; text-align: left;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); pointer-events: none;
+}
