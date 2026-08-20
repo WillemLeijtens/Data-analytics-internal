@@ -425,7 +425,15 @@ def parse_file(filename: str, content: bytes, profile: Profile) -> dict:
                 if target in ("volume", "omzet"):
                     value = parse_number(raw, decimal)
                     if target == "volume":
-                        value = int(round(value))
+                        # Stil afronden verandert de data zonder dat iemand
+                        # het ziet, en round() rondt halven naar EVEN af: 10,5
+                        # werd 10 maar 11,5 werd 12. Een aantal stuks hoort
+                        # geheel te zijn; is het dat niet, dan klopt er iets
+                        # aan de bron en moet de gebruiker dat weten.
+                        if value != int(value):
+                            raise ValueError(
+                                f"aantal {value!r} is niet heel; volume telt stuks")
+                        value = int(value)
                 else:
                     value = str(raw).strip()
                     if normalize == "upper":

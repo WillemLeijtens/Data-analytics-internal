@@ -13,6 +13,7 @@ zodat hij niet terug kan komen:
 
 import datetime as dt
 import importlib
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -861,3 +862,34 @@ def test_merk_zonder_vorig_jaar_blijft_niet_vergelijkbaar(client):
     assert y["basis"]["niet_vergelijkbaar"] == ["TWEEZERMAN"]
     regel = next(r for r in y["per_merk"] if r["merk"] == "TWEEZERMAN")
     assert regel["reden"] == "geen 2025"
+
+
+# ------------------------------------------------------- negatieve basis
+
+def test_yoy_delta_bij_negatieve_basis_geeft_geen_percentage():
+    """Auditbevinding L-2: `(nu - vorig) / vorig` draait van betekenis om bij
+    een negatieve basis. Van -100 naar -50 is een VERBETERING, maar de formule
+    geeft dan -50%. Geen percentage is eerlijker dan een omgekeerd leesbaar
+    percentage. Nul was al correct afgevangen; negatief nu ook.
+
+    Negatieve omzet is bereikbaar: de parsers accepteren correctierijen."""
+    import importlib
+    import sys as _sys
+
+    _sys.modules.pop("db", None)
+    _sys.modules.pop("main", None)
+    mod = importlib.import_module("engine.analytics")
+
+    # delta() is een closure in dashboard(); dezelfde regel hier nagerekend
+    # zodat de conventie expliciet vastligt.
+    def delta(now, prev):
+        return round((now - prev) / prev * 100, 1) if prev and prev > 0 else None
+
+    assert delta(120, 100) == 20.0
+    assert delta(0, 100) == -100.0
+    assert delta(100, 0) is None          # groei vanuit nul is ongedefinieerd
+    assert delta(0, 0) is None
+    assert delta(-50, -100) is None       # was -50,0 en las als achteruitgang
+    assert delta(50, -100) is None
+    assert "prev > 0" in inspect.getsource(mod.dashboard), \
+        "dashboard.delta() hoort de negatieve basis af te vangen"
