@@ -262,6 +262,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
             <th style={{ textAlign: "right" }}>Eenmalige marge</th>
             <th style={{ textAlign: "right" }}>Terugkerende marge</th>
             <th>Laatst gewijzigd</th>
+            <th></th>
           </tr></thead>
           <tbody>
             {lijst.map((p) => (
@@ -278,9 +279,18 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                   {p.terugkerend.marge_pct != null && <><br />
                     <span className="sub">{p.terugkerend.marge_pct.toLocaleString("nl-NL")}%</span></>}</Cel>
                 <td className="sub">{tijd(p.gewijzigd_op ?? p.aangemaakt_op)} · {p.gewijzigd_door ?? p.aangemaakt_door ?? "onbekend"}</td>
+                <td>
+                  <button className="chip off" title="Project verwijderen"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      if (!window.confirm(`Project "${p.naam}" definitief verwijderen?`)) return;
+                      await apiSend(`/projecten/${p.id}`, "DELETE");
+                      laadLijst();
+                    }}>✕</button>
+                </td>
               </tr>
             ))}
-            {!lijst.length && <tr><td colSpan={7} className="sub">
+            {!lijst.length && <tr><td colSpan={8} className="sub">
               Nog geen projecten — maak het eerste aan met de knop hierboven.</td></tr>}
           </tbody>
         </table>
