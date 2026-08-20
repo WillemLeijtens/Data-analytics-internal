@@ -70,7 +70,18 @@ def run_import(conn, filename: str, content: bytes) -> dict:
 
     A re-upload of a file whose facts are already loaded must never destroy
     those facts on a FAILED attempt (e.g. after a profile change): the old
-    import is only replaced once the new parse has fully succeeded."""
+    import is only replaced once the new parse has fully succeeded.
+
+    Concurrency note: two simultaneous uploads of the SAME, never-before-seen
+    file could both pass the `existing is None` check before either commits.
+    That's not a silent-duplicate-data risk — `imports.file_hash` has a
+    UNIQUE index (migrations/001_schema.sql), so SQLite's own writer
+    serialization means the second INSERT raises an IntegrityError rather
+    than creating a duplicate row. main.py's do_import() catches that as any
+    other unexpected exception (safe generic message to the client, full
+    detail logged) — the caller just needs to retry the "failed" upload,
+    which then sees the now-committed row and behaves like any other
+    re-upload of an already-loaded file. No additional locking needed."""
     h = file_hash(content)
     profiles = get_profiles(conn)
     profile = parser_mod.detect(filename, content, profiles)
