@@ -296,10 +296,11 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
   if (land.length) q.set("land", land.join(","));
   if (banner.length) q.set("banner", banner.join(","));
   const { data, error, reload } = useApi(`/${ctx.retailer}/dashboard?${q}`);
-  // Mijlpalen hangen aan de retailer, niet aan de filterkeuze: "introductie
-  // nieuw item" blijft hetzelfde punt op de tijdas, welk merk je ook aanvinkt.
-  const { data: mijlpalen, reload: herlaadMijlpalen } =
-    useApi<Milestone[]>(`/${ctx.retailer}/milestones`);
+  // Mijlpalen volgen het merkfilter: staat er een merk aan, dan hoor je
+  // alleen de mijlpalen van dat merk te zien — anders verklaart een markering
+  // een piek die in deze selectie niet bestaat. Zonder filter komt alles mee.
+  const { data: mijlpalen, reload: herlaadMijlpalen } = useApi<Milestone[]>(
+    `/${ctx.retailer}/milestones${merk.length ? `?merk=${merk.join(",")}` : ""}`);
 
   if (!data) return <LoadState error={error} reload={reload} />;
   if (!data.available) return <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />;
@@ -518,6 +519,9 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
         <TrendChart series={data.trend.series[effMetric] ?? {}} years={data.trend.jaren}
           isEuro={effMetric !== "volume"} periodWord={pWord}
           mijlpalen={mijlpalen ?? []}
+          // Filtert de gebruiker op merk, dan zijn dát de merken die in beeld
+          // zijn; anders alles waar deze retailer data van heeft.
+          merken={merk.length ? merk : filters.merk}
           onMijlpaal={async (m) => {
             await apiSend(`/${ctx.retailer}/milestones`, "POST", m);
             herlaadMijlpalen();

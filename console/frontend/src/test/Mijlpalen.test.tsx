@@ -9,13 +9,19 @@ import { TrendChart } from "../components/shared";
 
 const series = { 2025: { 10: 100, 11: 120, 12: 90 }, 2026: { 10: 130, 11: 140, 12: 150 } };
 const jaren = [2025, 2026];
+const MERKEN = ["ALESSANDRO", "TWEEZERMAN"];
 
 function mijlpaal(over: Partial<Milestone> = {}): Milestone {
   return {
     id: 1, jaar: 2025, periode_nummer: 11, tekst: "introductie nieuw item",
-    aangemaakt_op: "2026-01-01 10:00:00", aangemaakt_door: "Willem", ...over,
+    merk: "TWEEZERMAN", aangemaakt_op: "2026-01-01 10:00:00",
+    aangemaakt_door: "Willem", ...over,
   };
 }
+
+/** De regels onder de grafiek. Niet screen.getByText: de <title> van de svg
+ *  bevat dezelfde tekst (voor de browsertooltip), dus die matcht ook. */
+const lijst = () => screen.queryAllByRole("listitem").map((li) => li.textContent ?? "");
 
 /** jsdom geeft SVG's een lege bounding box; zonder deze stub is elke
  *  x-berekening NaN en zegt een kliktest niets. */
@@ -36,12 +42,13 @@ describe("TrendChart — mijlpalen", () => {
     stubBreedte();
     const onMijlpaal = vi.fn().mockResolvedValue(undefined);
     render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
-      mijlpalen={[]} onMijlpaal={onMijlpaal} />);
+      mijlpalen={[]} merken={MERKEN} onMijlpaal={onMijlpaal} />);
 
     // Uiterst rechts in de grafiek: dat is week 12, de laatste periode.
     fireEvent.click(screen.getByRole("img"), { clientX: 830 });
     expect(screen.getByText(/mijlpaal op week 12/i)).toBeInTheDocument();
 
+    fireEvent.change(screen.getByLabelText("Merk"), { target: { value: "TWEEZERMAN" } });
     fireEvent.change(screen.getByLabelText("Wat gebeurde er?"),
       { target: { value: "introductie nieuw item" } });
     fireEvent.click(screen.getByRole("button", { name: "Plaatsen" }));
@@ -49,6 +56,7 @@ describe("TrendChart — mijlpalen", () => {
     await waitFor(() => expect(onMijlpaal).toHaveBeenCalledWith({
       // Standaard het laatste jaar van de grafiek; de select laat 'm wijzigen.
       jaar: 2026, periode_nummer: 12, tekst: "introductie nieuw item",
+      merk: "TWEEZERMAN",
     }));
   });
 
@@ -56,9 +64,10 @@ describe("TrendChart — mijlpalen", () => {
     stubBreedte();
     const onMijlpaal = vi.fn().mockResolvedValue(undefined);
     render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
-      mijlpalen={[]} onMijlpaal={onMijlpaal} />);
+      mijlpalen={[]} merken={MERKEN} onMijlpaal={onMijlpaal} />);
     fireEvent.click(screen.getByRole("img"), { clientX: 830 });
     fireEvent.change(screen.getByLabelText("Jaar"), { target: { value: "2025" } });
+    fireEvent.change(screen.getByLabelText("Merk"), { target: { value: "ALESSANDRO" } });
     fireEvent.change(screen.getByLabelText("Wat gebeurde er?"), { target: { value: "folder" } });
     fireEvent.click(screen.getByRole("button", { name: "Plaatsen" }));
     await waitFor(() => expect(onMijlpaal.mock.calls[0][0].jaar).toBe(2025));
@@ -72,7 +81,7 @@ describe("TrendChart — mijlpalen", () => {
     // klik zelf is hier niet na te spelen — de klasse wél.
     stubBreedte();
     render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
-      mijlpalen={[]} onMijlpaal={vi.fn()} />);
+      mijlpalen={[]} merken={MERKEN} onMijlpaal={vi.fn()} />);
     fireEvent.click(screen.getByRole("img"), { clientX: 830 });
     const formulier = screen.getByRole("dialog", { name: "Mijlpaal plaatsen" });
     expect(formulier).toHaveClass("chart-popover");
@@ -82,19 +91,40 @@ describe("TrendChart — mijlpalen", () => {
   it("een lege omschrijving is niet te plaatsen", () => {
     stubBreedte();
     render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
-      mijlpalen={[]} onMijlpaal={vi.fn()} />);
+      mijlpalen={[]} merken={MERKEN} onMijlpaal={vi.fn()} />);
     fireEvent.click(screen.getByRole("img"), { clientX: 830 });
+    fireEvent.change(screen.getByLabelText("Merk"), { target: { value: "TWEEZERMAN" } });
     expect(screen.getByRole("button", { name: "Plaatsen" })).toBeDisabled();
+  });
+
+  it("zonder merk is een mijlpaal niet te plaatsen", () => {
+    // Een mijlpaal zonder merk staat op elke grafiek, ook op die van een merk
+    // waar niets gebeurde.
+    stubBreedte();
+    render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
+      mijlpalen={[]} merken={MERKEN} onMijlpaal={vi.fn()} />);
+    fireEvent.click(screen.getByRole("img"), { clientX: 830 });
+    fireEvent.change(screen.getByLabelText("Wat gebeurde er?"), { target: { value: "iets" } });
+    expect(screen.getByLabelText("Merk")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Plaatsen" })).toBeDisabled();
+  });
+
+  it("is er maar één merk in beeld, dan is de keuze al gemaakt", () => {
+    stubBreedte();
+    render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
+      mijlpalen={[]} merken={["TWEEZERMAN"]} onMijlpaal={vi.fn()} />);
+    fireEvent.click(screen.getByRole("img"), { clientX: 830 });
+    expect(screen.getByLabelText("Merk")).toHaveValue("TWEEZERMAN");
   });
 
   it("het schuifje zet de mijlpalen uit en weer aan", () => {
     render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
       mijlpalen={[mijlpaal()]} onMijlpaal={vi.fn()} />);
-    expect(screen.getByText("introductie nieuw item")).toBeInTheDocument();
+    expect(lijst()).toHaveLength(1);
     fireEvent.click(screen.getByRole("switch"));
-    expect(screen.queryByText("introductie nieuw item")).not.toBeInTheDocument();
+    expect(lijst()).toEqual([]);
     fireEvent.click(screen.getByRole("switch"));
-    expect(screen.getByText("introductie nieuw item")).toBeInTheDocument();
+    expect(lijst()).toHaveLength(1);
   });
 
   it("filteren op jaar laat alleen dat jaar staan", () => {
@@ -102,18 +132,24 @@ describe("TrendChart — mijlpalen", () => {
       mijlpalen={[mijlpaal(), mijlpaal({ id: 2, jaar: 2026, tekst: "prijsverhoging" })]}
       onMijlpaal={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "2026" }));
-    expect(screen.getByText("prijsverhoging")).toBeInTheDocument();
-    expect(screen.queryByText("introductie nieuw item")).not.toBeInTheDocument();
+    expect(lijst().join()).toMatch(/prijsverhoging/);
+    expect(lijst().join()).not.toMatch(/introductie nieuw item/);
     // Nog eens klikken haalt het filter er weer af.
     fireEvent.click(screen.getByRole("button", { name: "2026" }));
-    expect(screen.getByText("introductie nieuw item")).toBeInTheDocument();
+    expect(lijst()).toHaveLength(2);
   });
 
   it("een mijlpaal buiten de getoonde weken verdwijnt niet, maar wordt gemeld", () => {
     render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
       mijlpalen={[mijlpaal({ periode_nummer: 45 })]} onMijlpaal={vi.fn()} />);
-    expect(screen.getByText("introductie nieuw item")).toBeInTheDocument();
-    expect(screen.getByText(/buiten de getoonde periodes/i)).toBeInTheDocument();
+    expect(lijst()[0]).toMatch(/introductie nieuw item/);
+    expect(lijst()[0]).toMatch(/buiten de getoonde periodes/i);
+  });
+
+  it("de lijst noemt het merk waar de mijlpaal bij hoort", () => {
+    render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
+      mijlpalen={[mijlpaal()]} merken={MERKEN} onMijlpaal={vi.fn()} />);
+    expect(lijst()[0]).toMatch(/TWEEZERMAN — introductie nieuw item/);
   });
 
   it("verwijderen gaat via de lijst", () => {

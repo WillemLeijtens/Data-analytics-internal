@@ -350,19 +350,35 @@ def beoordeel_datagat(retailer_id: str, body: DatagatOordeelBody, request: Reque
 # ---------------------------------------------------------------- milestones
 
 @app.get("/api/{retailer_id}/milestones")
-def lees_milestones(retailer_id: str):
+def lees_milestones(retailer_id: str, merk: str | None = None):
+    """De mijlpalen van deze retailer, desgewenst beperkt tot een merkselectie.
+
+    Zonder merkfilter komt alles terug. Mét filter alleen de gekozen merken —
+    plus de mijlpalen zonder merk: die dateren van vóór de merkkolom, gelden
+    retailer-breed, en horen dus bij elke selectie."""
+    gekozen = [m for m in (merk or "").split(",") if m]
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-        return [dict(r) for r in conn.execute(
+        rijen = [dict(r) for r in conn.execute(
             "SELECT * FROM milestones WHERE retailer_id=? "
             "ORDER BY jaar, periode_nummer", (retailer_id,))]
+    if not gekozen:
+        return rijen
+    return [r for r in rijen if r["merk"] is None or r["merk"] in gekozen]
 
 
 class MilestoneBody(BaseModel):
     jaar: int
     periode_nummer: int
     tekst: str
+    merk: str
     door: str | None = None
+
+
+def _merken_met_data(conn, retailer_id: str) -> set[str]:
+    return {r[0] for r in conn.execute(
+        "SELECT DISTINCT merk FROM sellout_facts WHERE retailer_id=? AND merk IS NOT NULL",
+        (retailer_id,))}
 
 
 @app.post("/api/{retailer_id}/milestones")
@@ -372,12 +388,20 @@ def maak_milestone(retailer_id: str, body: MilestoneBody, request: Request):
         raise HTTPException(422, "een mijlpaal heeft een omschrijving nodig")
     if not 1 <= body.periode_nummer <= 53:
         raise HTTPException(422, f"periodenummer {body.periode_nummer} valt buiten 1–53")
+    merk = body.merk.strip()
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
+        # Alleen merken waarvan deze retailer ook echt data heeft: een mijlpaal
+        # op een merk zonder lijn is een markering die nergens bij hoort, en
+        # verdwijnt zodra iemand op merk filtert.
+        bekend = _merken_met_data(conn, retailer_id)
+        if merk not in bekend:
+            raise HTTPException(422, f"onbekend merk {merk!r} voor deze retailer; "
+                                     f"kies uit: {', '.join(sorted(bekend)) or 'geen'}")
         cur = conn.execute(
             "INSERT INTO milestones (retailer_id, jaar, periode_nummer, tekst, "
-            "aangemaakt_door) VALUES (?,?,?,?,?)",
-            (retailer_id, body.jaar, body.periode_nummer, tekst[:200],
+            "merk, aangemaakt_door) VALUES (?,?,?,?,?,?)",
+            (retailer_id, body.jaar, body.periode_nummer, tekst[:200], merk,
              _gebruiker(request, body.door)))
         return dict(conn.execute("SELECT * FROM milestones WHERE id=?",
                                  (cur.lastrowid,)).fetchone())

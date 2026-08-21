@@ -107,10 +107,13 @@ export function DeltaTag({ pct }: { pct: number | null }) {
 type Series = Record<number, Record<number, number>>; // year -> periodNum -> value
 
 export function TrendChart({ series, years, isEuro, periodWord,
-  mijlpalen, onMijlpaal, onMijlpaalWeg }:
+  mijlpalen, merken, onMijlpaal, onMijlpaalWeg }:
   { series: Series; years: number[]; isEuro: boolean; periodWord: string;
     mijlpalen?: Milestone[];
-    onMijlpaal?: (m: { jaar: number; periode_nummer: number; tekst: string }) => Promise<void>;
+    /** Merken waarvan deze retailer data heeft — de enige geldige keuzes. */
+    merken?: string[];
+    onMijlpaal?: (m: { jaar: number; periode_nummer: number; tekst: string;
+                       merk: string }) => Promise<void>;
     onMijlpaalWeg?: (id: number) => Promise<void> }) {
   const W = 860, H = 260, PAD = 42;
   const [hover, setHover] = useState<number | null>(null);
@@ -121,6 +124,7 @@ export function TrendChart({ series, years, isEuro, periodWord,
   const [mijlpaalJaar, setMijlpaalJaar] = useState<number | null>(null);
   const [nieuw, setNieuw] = useState<{ jaar: number; periode: number } | null>(null);
   const [tekst, setTekst] = useState("");
+  const [merk, setMerk] = useState("");
   const [bezig, setBezig] = useState(false);
   const [fout, setFout] = useState<string | null>(null);
   const ref = useRef<SVGSVGElement>(null);
@@ -161,12 +165,14 @@ export function TrendChart({ series, years, isEuro, periodWord,
   // vermelding, zodat een mijlpaal niet spoorloos verdwijnt.
   const opDeAs = (m: Milestone) => m.periode_nummer >= minX && m.periode_nummer <= maxX;
 
+  const merkKeuzes = merken ?? [];
   const plaats = async () => {
-    if (!nieuw || !onMijlpaal || !tekst.trim()) return;
+    if (!nieuw || !onMijlpaal || !tekst.trim() || !merk) return;
     setBezig(true);
     setFout(null);
     try {
-      await onMijlpaal({ jaar: nieuw.jaar, periode_nummer: nieuw.periode, tekst: tekst.trim() });
+      await onMijlpaal({ jaar: nieuw.jaar, periode_nummer: nieuw.periode,
+                         tekst: tekst.trim(), merk });
       setNieuw(null);
       setTekst("");
     } catch (e: any) {
@@ -191,6 +197,10 @@ export function TrendChart({ series, years, isEuro, periodWord,
           // het jaar waarover je iets vastlegt. Aanpasbaar in het formulier.
           setNieuw({ jaar: years[years.length - 1], periode });
           setTekst("");
+          // Is er maar één merk in beeld (of gefilterd op één), dan is de
+          // keuze al gemaakt; anders bewust leeg, zodat niemand per ongeluk
+          // het verkeerde merk vastlegt.
+          setMerk(merkKeuzes.length === 1 ? merkKeuzes[0] : "");
           setFout(null);
         } : undefined}>
         <title>{`${isEuro ? "Omzet" : "Volume"} per ${periodWord.toLowerCase()}, jaar op jaar (${years.join(", ")})`}</title>
@@ -222,7 +232,8 @@ export function TrendChart({ series, years, isEuro, periodWord,
                 genoeg om de lijnen niet te overstemmen. */}
             <path d={`M${x(m.periode_nummer)},${PAD - 11} l4,4 l-4,4 l-4,-4 z`}
               fill={jaarKleur(m.jaar)} />
-            <title>{`${periodWord} ${m.periode_nummer} ${m.jaar} — ${m.tekst}`}</title>
+            <title>{`${periodWord} ${m.periode_nummer} ${m.jaar}`
+              + (m.merk ? ` · ${m.merk}` : "") + ` — ${m.tekst}`}</title>
           </g>
         ))}
         {nieuw && (
@@ -247,7 +258,8 @@ export function TrendChart({ series, years, isEuro, periodWord,
           ))}
           {zichtbaar.filter((m) => m.periode_nummer === hover).map((m) => (
             <div key={m.id} style={{ marginTop: 4 }}>
-              <span style={{ color: jaarKleur(m.jaar) }}>◆</span> {m.jaar}: {m.tekst}
+              <span style={{ color: jaarKleur(m.jaar) }}>◆</span> {m.jaar}
+              {m.merk ? ` · ${m.merk}` : ""}: {m.tekst}
             </div>
           ))}
           {/* Zonder deze regel weet niemand dat de grafiek klikbaar is. */}
@@ -266,17 +278,31 @@ export function TrendChart({ series, years, isEuro, periodWord,
               onChange={(e) => setNieuw({ ...nieuw, jaar: Number(e.target.value) })}>
               {years.map((yr) => <option key={yr} value={yr}>{yr}</option>)}
             </select>
-            <input autoFocus value={tekst} placeholder="wat gebeurde er?" aria-label="Wat gebeurde er?"
-              style={{ flex: 1, minWidth: 0 }} maxLength={200}
-              onChange={(e) => setTekst(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") plaats();
-                if (e.key === "Escape") setNieuw(null);
-              }} />
+            {merkKeuzes.length ? (
+              <select value={merk} aria-label="Merk" style={{ flex: 1, minWidth: 0 }}
+                onChange={(e) => setMerk(e.target.value)}>
+                <option value="">merk kiezen…</option>
+                {merkKeuzes.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            ) : (
+              // Liever dit dan een lege dropdown met een knop die het altijd
+              // weigert: dan zoek je naar wat je fout doet.
+              <span className="sub" style={{ flex: 1 }}>
+                deze retailer levert geen merken, dus er is niets om een
+                mijlpaal aan te hangen
+              </span>
+            )}
           </div>
+          <input autoFocus value={tekst} placeholder="wat gebeurde er?" aria-label="Wat gebeurde er?"
+            style={{ width: "100%", boxSizing: "border-box", marginBottom: 8 }} maxLength={200}
+            onChange={(e) => setTekst(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") plaats();
+              if (e.key === "Escape") setNieuw(null);
+            }} />
           {fout && <p className="sub sig-red">{fout}</p>}
           <div style={{ display: "flex", gap: 6 }}>
-            <button className="btn" disabled={bezig || !tekst.trim()} onClick={plaats}>
+            <button className="btn" disabled={bezig || !tekst.trim() || !merk} onClick={plaats}>
               {bezig ? "Bezig…" : "Plaatsen"}
             </button>
             <button className="btn ghost" onClick={() => setNieuw(null)}>Annuleren</button>
@@ -314,7 +340,10 @@ export function TrendChart({ series, years, isEuro, periodWord,
               <span className="mono" style={{ whiteSpace: "nowrap" }}>
                 {periodWord.toLowerCase()} {m.periode_nummer} {m.jaar}
               </span>
-              <span style={{ color: "var(--t-fg)" }}>{m.tekst}</span>
+              {m.merk && <BrandDot merk={m.merk} />}
+              <span style={{ color: "var(--t-fg)" }}>
+                {m.merk ? `${m.merk} — ${m.tekst}` : m.tekst}
+              </span>
               {!opDeAs(m) && <span>· buiten de getoonde periodes</span>}
               {onMijlpaalWeg && (
                 <button className="btn ghost" style={{ marginLeft: "auto", padding: "1px 8px" }}
