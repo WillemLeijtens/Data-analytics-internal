@@ -209,16 +209,41 @@ _ANALYSE_CACHE: dict = {}
 _CACHE_MAX = 64
 
 
+# Boven dit aantal rijen wordt een tabel niet op inhoud gehashd. Feitentabellen
+# (honderdduizenden rijen) groeien alleen door inserts, en die ziet de telling
+# hieronder al. Instellingentabellen zijn klein en worden wél IN PLAATS
+# bijgewerkt; die moeten op inhoud vergeleken worden.
+_KLEIN = 200
+
+# De sleutel van de Anthropic-config staat in dit tabelletje. In de
+# cachesleutel zetten voegt niets toe en zou hem onnodig ronddragen; de
+# analyses hangen er ook niet van af.
+_NIET_HASHEN = {"anthropic_config"}
+
+
 def _data_versie(conn) -> tuple:
     from engine.periods import _vandaag_nl
 
     tabellen = [r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' "
         "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+    if not tabellen:
+        return (_vandaag_nl().isoformat(), (), ())
     vraag = " UNION ALL ".join(
         f"SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM {t}" for t in tabellen)
-    tellingen = tuple(tuple(r) for r in conn.execute(vraag)) if tabellen else ()
-    return (_vandaag_nl().isoformat(), tellingen)
+    tellingen = tuple(tuple(r) for r in conn.execute(vraag))
+
+    # Alleen tellen en MAX(rowid) volstaat niet: een UPDATE op een bestaande
+    # rij verandert geen van beide. Een drempel die van 2 naar 6 gaat zou dan
+    # onzichtbaar blijven en het dashboard oude cijfers blijven tonen — precies
+    # wat er gebeurde toen de winkelsignaal-drempels erbij kwamen. Kleine
+    # tabellen gaan daarom op inhoud mee.
+    inhoud = []
+    for naam, (aantal, _) in zip(tabellen, tellingen):
+        if naam in _NIET_HASHEN or aantal > _KLEIN:
+            continue
+        inhoud.append((naam, tuple(tuple(r) for r in conn.execute(f"SELECT * FROM {naam}"))))
+    return (_vandaag_nl().isoformat(), tellingen, tuple(inhoud))
 
 
 def _gecachet(sleutel: tuple, bereken, conn):
@@ -744,6 +769,11 @@ def get_settings(retailer_id: str):
             # winnen in schermen die het wél gebruiken. Het jaar staat erbij,
             # want dit is het aantal winkels MET omzet in dat jaar.
             "feed_winkels": _getelde_winkels(conn, retailer_id),
+            # Vanaf hoeveel lege periodes een winkel "let op" is en vanaf
+            # hoeveel "gestopt". In PERIODES, dus bij een weekfeed betekent 2
+            # iets heel anders dan bij een maandfeed.
+            "winkelsignaal": dict(zip(("letop_vanaf", "gestopt_vanaf"),
+                                      analytics.signaal_drempels(conn, retailer_id))),
             "artikel_winkels": [dict(r) for r in conn.execute(
                 "SELECT merk, land, banner, artikel_ean, aantal_winkels "
                 "FROM artikel_winkelaantallen WHERE retailer_id=?", (retailer_id,))],
@@ -768,6 +798,8 @@ class SettingsBody(BaseModel):
     # voor scopes die op artikelniveau staan; de rest wordt bewaard maar telt
     # niet mee, zodat terugschakelen niets weggooit.
     artikel_winkels: list[dict] | None = None
+    # {"letop_vanaf": n, "gestopt_vanaf": m} — beide in periodes.
+    winkelsignaal: dict | None = None
     rotatie_targets: list[dict] | None = None   # [{merk, stuks_per_winkel_per_week}]
     mail_rules: list[dict] | None = None        # [{naam, afzender, bijlage_glob, actief}]
 
@@ -790,6 +822,20 @@ def _validate_settings(body: "SettingsBody"):
         if a.get("aantal_winkels") is not None and a["aantal_winkels"] <= 0:
             raise ValueError("aantal_winkels moet groter dan nul zijn "
                              f"({a['merk']} {a['artikel_ean']})")
+    if body.winkelsignaal is not None:
+        w = body.winkelsignaal
+        letop, gestopt = w["letop_vanaf"], w["gestopt_vanaf"]
+        if not isinstance(letop, int) or not isinstance(gestopt, int):
+            raise ValueError("drempels zijn hele periodes")
+        if letop < 1:
+            raise ValueError("de 'let op'-drempel is minstens 1 periode; onder één "
+                             "lege periode valt er niets te signaleren")
+        if gestopt < letop:
+            raise ValueError("de 'gestopt'-drempel kan niet lager liggen dan de "
+                             "'let op'-drempel — dan zou 'let op' nooit voorkomen")
+        if gestopt > 104:
+            raise ValueError("een drempel van meer dan 104 periodes meldt in de "
+                             "praktijk nooit meer iets")
     for t in body.rotatie_targets or []:
         t["merk"], t["stuks_per_winkel_per_week"]
         if t["stuks_per_winkel_per_week"] is not None and t["stuks_per_winkel_per_week"] <= 0:
@@ -853,6 +899,17 @@ def save_settings(retailer_id: str, body: SettingsBody):
                   s.get("aantal_winkels"), s.get("target_per_winkel"),
                   s.get("niveau") or "merk")
                  for s in body.winkels_targets])
+        if body.winkelsignaal is not None:
+            conn.execute(
+                "INSERT INTO winkelsignaal_drempels (retailer_id, letop_vanaf, "
+                "gestopt_vanaf, bijgewerkt_op, bijgewerkt_door) VALUES (?,?,?,?,?) "
+                "ON CONFLICT(retailer_id) DO UPDATE SET letop_vanaf=excluded.letop_vanaf, "
+                "gestopt_vanaf=excluded.gestopt_vanaf, "
+                "bijgewerkt_op=excluded.bijgewerkt_op, "
+                "bijgewerkt_door=excluded.bijgewerkt_door",
+                (retailer_id, body.winkelsignaal["letop_vanaf"],
+                 body.winkelsignaal["gestopt_vanaf"],
+                 dt.datetime.now().isoformat(timespec="seconds"), None))
         if body.rotatie_targets is not None:
             conn.execute("DELETE FROM rotatie_targets WHERE retailer_id=?", (retailer_id,))
             conn.executemany(

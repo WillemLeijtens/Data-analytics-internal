@@ -255,6 +255,13 @@ ACTIEPUNT_GESTOPT = ("Neem contact op met de category manager om na te gaan "
 # winkels verkopen dan een enkele maand niets zonder dat er iets aan de hand
 # is. Pas vanaf twee opeenvolgende lege maanden noemen we het gestopt; de
 # winkels met één lege maand blijven wél zichtbaar, als signaal.
+#
+# Let op: die redenering gaat over MAANDEN, terwijl de drempel in PERIODES
+# telt. Bij een weekfeed (Etos) is twee lege weken niets — daar hoort een
+# hogere drempel. Per retailer instelbaar in Instellingen -> Doelstellingen
+# (tabel winkelsignaal_drempels); deze waarden gelden zolang niemand iets
+# heeft ingesteld, zodat bestaande installaties niet ineens anders rekenen.
+LETOP_VANAF = 1
 GESTOPT_VANAF = 2
 
 # Onder dit aantal niet-actieperiodes in hetzelfde jaar is een basislijn geen
@@ -266,7 +273,17 @@ MIN_BASISPERIODES = 3
 MIN_ACTIEVE_PERIODES = 4
 
 
-def winkelanalyse(rows, caps: dict, jaar: int) -> dict:
+def signaal_drempels(conn, retailer_id: str) -> tuple[int, int]:
+    """(let op vanaf, gestopt vanaf) in periodes, uit de instellingen."""
+    r = conn.execute(
+        "SELECT letop_vanaf, gestopt_vanaf FROM winkelsignaal_drempels WHERE retailer_id=?",
+        (retailer_id,)).fetchone()
+    return ((r["letop_vanaf"], r["gestopt_vanaf"]) if r
+            else (LETOP_VANAF, GESTOPT_VANAF))
+
+
+def winkelanalyse(rows, caps: dict, jaar: int,
+                  drempels: tuple[int, int] | None = None) -> dict:
     """Winkels die dit jaar stilgevallen zijn, en winkels die erbij kwamen.
 
     Per winkel én merk: een winkel kan het ene merk laten vallen en het
@@ -280,6 +297,7 @@ def winkelanalyse(rows, caps: dict, jaar: int) -> dict:
     moeten komen — op de echte ICI-data bijna een factor twee te hoog."""
     if not caps.get("winkel"):
         return {"beschikbaar": False}
+    letop_vanaf, gestopt_vanaf = drempels or (LETOP_VANAF, GESTOPT_VANAF)
 
     per: dict[tuple, dict] = {}
     for r in rows:
@@ -305,7 +323,8 @@ def winkelanalyse(rows, caps: dict, jaar: int) -> dict:
                              key=lambda m: (m is None, m))
     leeg_resultaat = {
         "beschikbaar": True, "jaar": jaar, "gestopt": [], "signalen": [],
-        "toegevoegd": [], "gemiste_omzet": 0.0, "gestopt_vanaf": GESTOPT_VANAF,
+        "toegevoegd": [], "gemiste_omzet": 0.0,
+        "gestopt_vanaf": gestopt_vanaf, "letop_vanaf": letop_vanaf,
         "historie_ontbreekt": zonder_historie, "actiepunt": ACTIEPUNT_GESTOPT}
     if not maanden:
         return leeg_resultaat
@@ -328,7 +347,13 @@ def winkelanalyse(rows, caps: dict, jaar: int) -> dict:
                 "gemist_zelfde_venster": sum(v for m, v in w["vorig"].items()
                                              if vanaf <= m <= laatste),
                 "omzet_vorig_jaar": vorig_totaal}
-            (gestopt if len(leeg) >= GESTOPT_VANAF else signalen).append(regel)
+            # Onder de "let op"-drempel valt de regel helemaal weg: bij een
+            # weekfeed is één lege week ruis, en een lijst vol ruis leert je
+            # het scherm te negeren.
+            if len(leeg) >= gestopt_vanaf:
+                gestopt.append(regel)
+            elif len(leeg) >= letop_vanaf:
+                signalen.append(regel)
         elif met_omzet and not vorig_totaal and w["merk"] in met_historie:
             toegevoegd.append({
                 "winkel_id": w["winkel_id"], "winkel_naam": w["winkel_naam"],
@@ -844,7 +869,8 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         },
         "trend": trend,
         "tijdlijn": tijdlijn,
-        "winkelanalyse": winkelanalyse(rows, caps, y_now),
+        "winkelanalyse": winkelanalyse(rows, caps, y_now,
+                                       signaal_drempels(conn, retailer_id)),
         "filters": filters,
         # Wat er in de aanlevering ontbreekt ("vanaf week 4 geen data voor
         # België"). Stond alleen in de artikelanalyse, terwijl het dashboard

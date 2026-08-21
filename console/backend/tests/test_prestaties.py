@@ -117,6 +117,31 @@ def test_analysecache_serveert_nooit_verouderde_cijfers(client):
     assert daarna["kpi"]["omzet"]["waarde"] == 100.0     # week 32 apart
 
 
+def test_analysecache_ziet_een_instelling_die_op_zijn_plek_wordt_bijgewerkt(client):
+    """Tellen en MAX(rowid) volstaan niet: een UPDATE op een bestaande rij
+    verandert geen van beide.
+
+    Gevonden toen de drempels voor stille winkels instelbaar werden — één rij
+    per retailer, bijgewerkt met ON CONFLICT DO UPDATE. Het dashboard bleef de
+    oude aantallen tonen, hoe je de drempel ook zette. Kleine tabellen gaan
+    daarom op INHOUD mee in de cachesleutel."""
+    import seed
+    upload(client, "Data_Grid_57018_widget.xlsx", seed.make_etos_xlsx([
+        {"upc": "120781690", "naam": "ART", "merk": "TWEEZERMAN", "merk_nr": 2278,
+         "winkel": f"ETOS {i} - 600{i}", "stad": "Sneek",
+         "weeks": {f"2026{w:02d}": (10.0, 1) for w in range(1, 11 - i * 3)}}
+        for i in range(1, 4)], winkels=True))
+
+    def gestopt():
+        return len(client.get("/api/etos/dashboard").json()["winkelanalyse"]["gestopt"])
+
+    voor = gestopt()
+    assert voor > 0
+    client.put("/api/etos/instellingen", json={
+        "winkelsignaal": {"letop_vanaf": 20, "gestopt_vanaf": 30}})
+    assert gestopt() < voor, "de nieuwe drempel moet meteen doorwerken"
+
+
 def test_analysecache_ziet_een_gewijzigd_contract(client):
     """contract_documents voedt het contractsignaal op het Overzicht, maar
     zat niet in de eerste (handmatige) tabellijst van de cache — een geüpload

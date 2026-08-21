@@ -233,6 +233,8 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   // Winkelaantallen per artikel. Blijven bewaard als een scope terug naar
   // merkniveau gaat: omschakelen mag geen invoer weggooien.
   const [aw, setAw] = useState<any[]>([]);
+  // Vanaf hoeveel lege periodes een winkel "let op" of "gestopt" heet.
+  const [ws, setWs] = useState<any | null>(null);
   // Welke rijen hun artikelen uitgeklapt tonen — schermstand, geen instelling.
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [rt, setRt] = useState<any[]>([]);
@@ -247,6 +249,7 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
     setData(d); setError(null);
     setWt(d.winkels_targets); setRt(d.rotatie_targets); setMail(d.mail_rules);
     setAw(d.artikel_winkels ?? []);
+    setWs(d.winkelsignaal ?? null);
   }).catch((e) => setError(String(e?.message ?? e)));
   useEffect(() => { setData(null); load(); setMsg(null); }, [ctx.retailer]);
 
@@ -274,7 +277,8 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   const saveAll = async () => {
     try {
       await apiSend(`/${ctx.retailer}/instellingen`, "PUT", {
-        winkels_targets: wt, artikel_winkels: aw, rotatie_targets: rt, mail_rules: mail,
+        winkels_targets: wt, artikel_winkels: aw, winkelsignaal: ws,
+        rotatie_targets: rt, mail_rules: mail,
       });
       setMsg("Alles opgeslagen."); load();
     } catch (e: any) {
@@ -568,6 +572,44 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
           </button>
         ))}
       </div>
+
+      {winkelsReadonly && ws && (
+        <>
+          <h3>Stille winkels</h3>
+          <p className="sub" style={{ marginTop: -6, maxWidth: 700 }}>
+            Vanaf hoeveel opeenvolgende {pWord}en zonder omzet een winkel op
+            het dashboard onder <b>Let op</b> valt, en vanaf hoeveel onder
+            <b> Gestopte winkels</b>. Wat daaronder blijft wordt niet gemeld.
+          </p>
+          <div className="card" style={{ display: "flex", gap: 22, flexWrap: "wrap",
+                                          alignItems: "flex-end" }}>
+            <label>
+              <span className="eyebrow">Let op vanaf</span>
+              <Uitleg tekst={`Nog geen conclusie, wel opvallend: deze winkel verkocht dit merk een aantal ${pWord}en niet meer. Minimaal 1.`} /><br />
+              <input type="number" min={1} max={104} size={5} value={ws.letop_vanaf}
+                aria-label="Let op vanaf"
+                onChange={(e) => setWs({ ...ws, letop_vanaf: +e.target.value })} /> {pWord}en
+            </label>
+            <label>
+              <span className="eyebrow">Gestopt vanaf</span>
+              <Uitleg tekst={`Vanaf hier telt de winkel als gestopt en telt zijn gemiste omzet mee in het totaal. Kan niet lager liggen dan de 'let op'-drempel.`} /><br />
+              <input type="number" min={ws.letop_vanaf} max={104} size={5}
+                value={ws.gestopt_vanaf} aria-label="Gestopt vanaf"
+                onChange={(e) => setWs({ ...ws, gestopt_vanaf: +e.target.value })} /> {pWord}en
+            </label>
+            {/* De standaard is geredeneerd in maanden; bij een weekfeed is
+                twee lege weken niets. Dat hoort hier te staan, niet in een
+                commit-bericht. */}
+            {pWord === "week" && ws.gestopt_vanaf <= 2 && (
+              <span className="sub" style={{ flex: "1 1 260px", color: "var(--warn)" }}>
+                Deze feed levert per week. Twee lege weken is bij een
+                langzaamloper normaal — op een echte export leverde die
+                instelling honderden meldingen op met € 0 gemiste omzet.
+              </span>
+            )}
+          </div>
+        </>
+      )}
 
       <h3>Rotatietarget</h3>
       {caps?.artikel ? (

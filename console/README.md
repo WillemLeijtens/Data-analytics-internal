@@ -415,6 +415,36 @@ jaar. Over jaren heen middelen vergelijkt door omzetregimes heen (Kruidvat
 2024: € 33k/week, 2025: € 47k). Onder drie basisperiodes volgt geen
 percentage maar "te weinig basisperiodes".
 
+### Stille winkels: wanneer heet een winkel gestopt?
+
+Per **winkel x merk**-combinatie, in `engine/analytics.winkelanalyse()`:
+
+1. geen omzet in de laatste periode die de feed levert;
+2. er wás eerder omzet — dit jaar of vorig jaar (anders is het geen stop maar
+   een winkel die het merk nooit voerde);
+3. het aantal periodes sinds de laatste periode mét omzet ligt op of boven de
+   **gestopt**-drempel. Zit het daaronder maar op of boven de **let op**-
+   drempel, dan verschijnt de regel onder "Let op"; daaronder wordt hij niet
+   gemeld.
+
+De gemiste omzet ernaast is wat diezelfde winkel in *dezelfde* periodes vorig
+jaar wél verkocht — niet het hele vorige jaar, want dat telt periodes mee die
+dit jaar nog moeten komen.
+
+Beide drempels zijn **per retailer instelbaar** (Instellingen →
+Doelstellingen → Stille winkels; tabel `winkelsignaal_drempels`). Dat is nodig
+omdat ze in PERIODES tellen terwijl de oorspronkelijke keuze (1 en 2) in
+maanden geredeneerd was. Op de echte Etos-weekexport gaf die standaard 363
+"gestopte" winkel/merk-regels; met 4 en 6 blijven er 77 over, met 8 en 13 nog
+19. Zonder ingestelde rij blijft 1 en 2 gelden, zodat bestaande installaties
+niet ineens andere aantallen tonen.
+
+**Cache-let-op**: deze tabel wordt IN PLAATS bijgewerkt (één rij per retailer).
+Tellen en `MAX(rowid)` veranderen daar niet van, dus de analysecache zou een
+gewijzigde drempel niet zien. Daarom gaan kleine tabellen (< 200 rijen) op
+inhoud mee in de cachesleutel; feitentabellen groeien alleen door inserts en
+blijven op tellen. Kosten gemeten op 48k feiten: 2,5 ms per verzoek.
+
 ### Percentages: na te rekenen uit wat er staat
 
 Eén regel door de hele app: **een percentage staat naast de twee getallen
