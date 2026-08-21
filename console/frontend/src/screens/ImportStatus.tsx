@@ -1,5 +1,5 @@
 import { ShellCtx } from "../App";
-import { LoadState, useApi } from "../components/shared";
+import { DatagatenPaneel, LoadState, useApi } from "../components/shared";
 
 export default function ImportStatus({ ctx }: { ctx: ShellCtx }) {
   const { data, error, reload } = useApi<any[]>(
@@ -40,6 +40,9 @@ export default function ImportStatus({ ctx }: { ctx: ShellCtx }) {
               <span style={{ textAlign: "right" }}>{f.rijen} rijen</span>
             </div>
           ))}
+          {/* Meerjarige gaten horen bij de aanleverstatus: het gaat over wat
+              er níet binnenkwam. */}
+          <DatagatenPaneel retailer={r.retailer} />
         </div>
       ))}
     </>

@@ -33,10 +33,26 @@ MAP = Path(os.environ.get("CONSOLE_FIXTURES_DIR") or STANDAARD_MAP)
 VERPLICHT = os.environ.get("CONSOLE_REAL_FIXTURES", "").strip() == "1"
 
 
+def bruikbaar(pad: Path) -> bool:
+    """Bestaat het bestand én mogen we erbij?
+
+    `Path.exists()` GOOIT als een bovenliggende map onleesbaar is — en dat is
+    precies wat er in GitHub Actions gebeurt: het standaardpad hieronder ligt
+    onder /root (mode 700) terwijl de job als `runner` draait. Dan is de
+    uitkomst geen False maar een PermissionError, die de hele collectie van
+    de testrun afbreekt. Geen toegang is hier hetzelfde als niet aanwezig:
+    het bestand is onbruikbaar, en de test hoort over te slaan.
+    """
+    try:
+        return pad.exists()
+    except OSError:
+        return False
+
+
 def vereist(*paden: Path):
     """Decorator: sla over als de bestanden ontbreken — tenzij ze verplicht
     zijn gesteld, dan is ontbreken een fout."""
-    ontbreekt = [p.name for p in paden if not p.exists()]
+    ontbreekt = [p.name for p in paden if not bruikbaar(p)]
     if not ontbreekt:
         return pytest.mark.skipif(False, reason="")
     if VERPLICHT:

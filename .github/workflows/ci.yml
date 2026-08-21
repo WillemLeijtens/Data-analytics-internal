@@ -41,7 +41,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # 22, niet 20: jsdom trekt undici binnen, en die gebruikt
+          # `webidl.util.markAsUncloneable` — dat bestaat pas vanaf Node 22.
+          # Op 20 klapt elke vitest-run om bij het opzetten van de omgeving,
+          # nog vóór er één test draait.
+          node-version: "22"
           cache: npm
           cache-dependency-path: console/frontend/package-lock.json
       - run: npm ci

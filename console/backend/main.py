@@ -23,8 +23,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import db
-from engine import (analytics, contracts, importer, projecten, signals,
-                    winkelhistorie)
+from engine import (analytics, contracts, datagaten, importer, projecten,
+                    signals, winkelhistorie)
 from engine import parser as parser_mod
 from engine.periods import sort_key
 from engine.profile import active_profile, capabilities, get_profiles
@@ -299,6 +299,98 @@ def assortiment(retailer_id: str):
         _retailer_or_404(conn, retailer_id)
         return _gecachet(("assortiment", retailer_id),
                          lambda: analytics.assortment(conn, retailer_id), conn)
+
+
+# ---------------------------------------------------------------- datagaten
+
+@app.get("/api/{retailer_id}/datagaten")
+def lees_datagaten(retailer_id: str):
+    """Jaren die tussen twee leveringen ontbreken, met het eerder gegeven
+    oordeel. Zie engine/datagaten.py voor waarom dit niet uit de data zelf
+    op te maken is."""
+    with db.get_conn() as conn:
+        _retailer_or_404(conn, retailer_id)
+
+        def bereken():
+            caps, _ = analytics.retailer_caps(conn, retailer_id)
+            if caps is None:
+                return {"beschikbaar": False, "gaten": []}
+            rows = analytics.load_facts(conn, retailer_id)
+            return {"beschikbaar": True,
+                    "gaten": datagaten.met_oordeel(conn, retailer_id, rows, caps)}
+
+        return _gecachet(("datagaten", retailer_id), bereken, conn)
+
+
+class DatagatOordeelBody(BaseModel):
+    merk: str | None = None
+    land: str | None = None
+    banner: str | None = None
+    van_jaar: int
+    tot_jaar: int
+    oordeel: str                      # 'klopt' | 'klopt_niet'
+    toelichting: str | None = None
+    door: str | None = None
+
+
+@app.put("/api/{retailer_id}/datagaten")
+def beoordeel_datagat(retailer_id: str, body: DatagatOordeelBody, request: Request):
+    with db.get_conn() as conn:
+        _retailer_or_404(conn, retailer_id)
+        try:
+            datagaten.bewaar_oordeel(
+                conn, retailer_id, body.merk, body.land, body.banner,
+                body.van_jaar, body.tot_jaar, body.oordeel, body.toelichting,
+                _gebruiker(request, body.door))
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        return {"ok": True}
+
+
+# ---------------------------------------------------------------- milestones
+
+@app.get("/api/{retailer_id}/milestones")
+def lees_milestones(retailer_id: str):
+    with db.get_conn() as conn:
+        _retailer_or_404(conn, retailer_id)
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM milestones WHERE retailer_id=? "
+            "ORDER BY jaar, periode_nummer", (retailer_id,))]
+
+
+class MilestoneBody(BaseModel):
+    jaar: int
+    periode_nummer: int
+    tekst: str
+    door: str | None = None
+
+
+@app.post("/api/{retailer_id}/milestones")
+def maak_milestone(retailer_id: str, body: MilestoneBody, request: Request):
+    tekst = body.tekst.strip()
+    if not tekst:
+        raise HTTPException(422, "een mijlpaal heeft een omschrijving nodig")
+    if not 1 <= body.periode_nummer <= 53:
+        raise HTTPException(422, f"periodenummer {body.periode_nummer} valt buiten 1–53")
+    with db.get_conn() as conn:
+        _retailer_or_404(conn, retailer_id)
+        cur = conn.execute(
+            "INSERT INTO milestones (retailer_id, jaar, periode_nummer, tekst, "
+            "aangemaakt_door) VALUES (?,?,?,?,?)",
+            (retailer_id, body.jaar, body.periode_nummer, tekst[:200],
+             _gebruiker(request, body.door)))
+        return dict(conn.execute("SELECT * FROM milestones WHERE id=?",
+                                 (cur.lastrowid,)).fetchone())
+
+
+@app.delete("/api/{retailer_id}/milestones/{milestone_id}")
+def verwijder_milestone(retailer_id: str, milestone_id: int):
+    with db.get_conn() as conn:
+        cur = conn.execute("DELETE FROM milestones WHERE id=? AND retailer_id=?",
+                           (milestone_id, retailer_id))
+        if not cur.rowcount:
+            raise HTTPException(404, "mijlpaal niet gevonden")
+        return {"ok": True}
 
 
 # ---------------------------------------------------------------- import
