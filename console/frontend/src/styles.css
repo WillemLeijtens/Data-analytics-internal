@@ -220,6 +220,19 @@ input[type="text"], input[type="number"], input[type="url"] {
   position: absolute; background: var(--t-fg); color: var(--t-bg); border-radius: 6px;
   padding: 7px 10px; font-size: 11px; pointer-events: none; white-space: nowrap; z-index: 5;
 }
+/* Formuliertje om een mijlpaal te zetten, op de plek waar je in de grafiek
+   klikte. Bewust NIET .tooltip: die heeft pointer-events:none (nodig, anders
+   blokkeert een hover-tooltip de grafiek eronder) en daardoor gingen kliks op
+   het jaarveld dwars door het formulier heen naar de grafiek, die dan een
+   nieuwe week opende. Dit is een echte popover: klikbaar, met terugloop en de
+   kleuren van een kaart in plaats van de omgekeerde tooltipkleuren. */
+.chart-popover {
+  position: absolute; z-index: 6; width: 250px; text-align: left;
+  background: var(--t-card); color: var(--t-fg);
+  border: 1px solid var(--t-border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 12px 14px; font-size: 12px;
+}
+
 /* Popover van het Uitleg-icoontje (?): naar document.body geportaald, dus
    onafhankelijk van overflow:hidden en van de uppercase/letter-spacing die
    tabelkoppen op hun inhoud erven. Terugloop i.p.v. white-space:nowrap,
