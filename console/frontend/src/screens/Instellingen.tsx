@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { apiGet, apiSend } from "../api";
 import { ShellCtx } from "../App";
 import { EmptyProfileCard, LoadState, ThemaKeuze, Uitleg } from "../components/shared";
@@ -61,33 +61,9 @@ function MetingenBeheer({ retailer, rij, metingen, herlaad }:
   );
 }
 
-/** Handmatig een merk/land/formule-rij toevoegen, voor combinaties die (nog)
- *  niet in de feed zitten. */
-function HandmatigeRij({ onAdd }: { onAdd: (m: string, l: string | null, b: string | null) => void }) {
-  const [open, setOpen] = useState(false);
-  const [merk, setMerk] = useState("");
-  const [land, setLand] = useState("");
-  const [banner, setBanner] = useState("");
-  if (!open) {
-    return <button className="chip off" onClick={() => setOpen(true)}>+ handmatig een rij toevoegen</button>;
-  }
-  return (
-    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-      <input type="text" placeholder="Merk" size={12} aria-label="Merk"
-        value={merk} onChange={(e) => setMerk(e.target.value.toUpperCase())} />
-      <input type="text" placeholder="Land" size={4} aria-label="Land"
-        value={land} onChange={(e) => setLand(e.target.value.toUpperCase())} />
-      <input type="text" placeholder="Formule" size={6} aria-label="Formule (optioneel)"
-        value={banner} onChange={(e) => setBanner(e.target.value.toUpperCase())} />
-      <button className="btn ghost" disabled={!merk.trim()}
-        onClick={() => {
-          onAdd(merk.trim(), land.trim() || null, banner.trim() || null);
-          setMerk(""); setLand(""); setBanner(""); setOpen(false);
-        }}>Toevoegen</button>
-      <button className="chip off" onClick={() => setOpen(false)}>annuleer</button>
-    </span>
-  );
-}
+// De handmatige rij is bewust weg: een merk-land-combinatie die niet in de
+// feed zit heeft geen omzet om door een winkelaantal te delen, dus zo'n rij
+// deed niets behalve de tabel vullen. De keuzes komen nu uit de feed.
 
 /** Bedrijfsnormen: geldt voor de hele app, niet per retailer — het is een
  *  norm van ons, niet van hen. Twee drempels, want het zijn twee
@@ -254,6 +230,11 @@ function AnthropicSleutelKaart() {
 export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   const [data, setData] = useState<any>(null);
   const [wt, setWt] = useState<any[]>([]);
+  // Winkelaantallen per artikel. Blijven bewaard als een scope terug naar
+  // merkniveau gaat: omschakelen mag geen invoer weggooien.
+  const [aw, setAw] = useState<any[]>([]);
+  // Welke rijen hun artikelen uitgeklapt tonen — schermstand, geen instelling.
+  const [open, setOpen] = useState<Record<string, boolean>>({});
   const [rt, setRt] = useState<any[]>([]);
   const [mail, setMail] = useState<any[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
@@ -265,6 +246,7 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   const load = () => apiGet(`/${ctx.retailer}/instellingen`).then((d) => {
     setData(d); setError(null);
     setWt(d.winkels_targets); setRt(d.rotatie_targets); setMail(d.mail_rules);
+    setAw(d.artikel_winkels ?? []);
   }).catch((e) => setError(String(e?.message ?? e)));
   useEffect(() => { setData(null); load(); setMsg(null); }, [ctx.retailer]);
 
@@ -292,7 +274,7 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   const saveAll = async () => {
     try {
       await apiSend(`/${ctx.retailer}/instellingen`, "PUT", {
-        winkels_targets: wt, rotatie_targets: rt, mail_rules: mail,
+        winkels_targets: wt, artikel_winkels: aw, rotatie_targets: rt, mail_rules: mail,
       });
       setMsg("Alles opgeslagen."); load();
     } catch (e: any) {
@@ -330,10 +312,37 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
     vorigeMeting[k] = vorigeMeting[k] ? { ...vorigeMeting[k], vorig: vorigeMeting[k].nu } : {};
     vorigeMeting[k].nu = h;
   }
+  // De artikelen die deze retailer voor deze scope levert, met het
+  // ingestelde aantal. De lijst komt uit de feed: een artikel dat niet
+  // geleverd wordt kan ook geen winkelaantal hebben.
+  const artikelenVan = (s: any) => (data.feed_artikelen ?? [])
+    .filter((a: any) => wtKey(a) === wtKey(s));
+  const awKey = (a: any) => `${wtKey(a)}|${a.artikel_ean}`;
+  const awWaarde = (s: any, ean: string) =>
+    aw.find((a) => awKey(a) === `${wtKey(s)}|${ean}`)?.aantal_winkels ?? null;
+  const zetAw = (s: any, ean: string, waarde: number | null) => {
+    const sleutel = `${wtKey(s)}|${ean}`;
+    const rest = aw.filter((a) => awKey(a) !== sleutel);
+    setAw(waarde == null ? rest : [...rest, {
+      merk: s.merk, land: s.land, banner: s.banner ?? null,
+      artikel_ean: ean, aantal_winkels: waarde }]);
+  };
+  /** Het getal waarmee gerekend wordt: op artikelniveau het grootste artikel.
+   *  Spiegelt engine/winkelniveau.effectief() — zie daar waarom het grootste
+   *  en niet de som. */
+  const effectief = (s: any): number | null => {
+    if (s.niveau !== "artikel") return s.aantal_winkels ?? null;
+    const getallen = artikelenVan(s)
+      .map((a: any) => awWaarde(s, a.artikel_ean))
+      .filter((v: number | null): v is number => !!v && v > 0);
+    return getallen.length ? Math.max(...getallen) : null;
+  };
+
   const feedCombos = (data.feed_combinaties ?? []).filter(
     (c: any) => c.merk && !wt.some((s) => wtKey(s) === wtKey(c)));
   const addWt = (merk: string, land: string | null, banner: string | null) =>
-    setWt([...wt, { merk, land, banner, aantal_winkels: null, target_per_winkel: null }]);
+    setWt([...wt, { merk, land, banner, aantal_winkels: null,
+                    target_per_winkel: null, niveau: "merk" }]);
   const feedMerken = Array.from(new Set((data.feed_combinaties ?? [])
     .map((c: any) => c.merk).filter(Boolean))) as string[];
   const rtMerken = feedMerken.filter((m) => !rt.some((t) => t.merk === m));
@@ -423,15 +432,50 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
         </div>
       )}
 
-      <h2>Winkelaantallen en targets</h2>
+      <h2>Doelstellingen</h2>
+      <p className="sub" style={{ marginTop: -6, maxWidth: 720 }}>
+        Waar de analyses aan meten: het winkelbestand waar de omzet per winkel
+        door gedeeld wordt, het omzettarget per winkel, en het rotatietarget
+        per artikel.
+      </p>
+
+      <h3>Winkelaantallen en targets</h3>
       <table className="data">
-        <thead><tr><th>Merk</th><th>Land</th><th>Formule</th><th>Aantal winkels</th><th>Target € / winkel / {pWord}</th><th></th></tr></thead>
+        <thead><tr><th>Merk</th><th>Land</th><th>Formule</th><th>Niveau</th><th>Aantal winkels</th><th>Target € / winkel / {pWord}</th><th></th></tr></thead>
         <tbody>
           {wt.map((s, i) => (
-            <tr key={`${s.merk}${s.land}${s.banner}`}>
+            <Fragment key={`${s.merk}${s.land}${s.banner}`}>
+            <tr>
               <td>{s.merk}</td><td>{s.land}</td><td>{s.banner ?? "—"}</td>
+              <td>{winkelsReadonly ? <span className="sub">—</span> : (
+                <div className="seg">
+                  <button className={s.niveau !== "artikel" ? "on" : ""}
+                    onClick={() => upd(wt, setWt, i, "niveau", "merk")}>Merk</button>
+                  <button className={s.niveau === "artikel" ? "on" : ""}
+                    onClick={() => {
+                      upd(wt, setWt, i, "niveau", "artikel");
+                      setOpen({ ...open, [wtKey(s)]: true });
+                    }}>Artikel</button>
+                </div>
+              )}</td>
               <td>{winkelsReadonly
                 ? <span className="sub" title="Komt uit de aanlevering">uit feed</span>
+                : s.niveau === "artikel"
+                ? <>
+                    {/* Het merkgetal is hier een AFGELEIDE: het grootste
+                        artikel. Zie engine/winkelniveau.py voor waarom niet
+                        de som — en waarom dit het merkgemiddelde iets te
+                        hoog kan laten uitvallen als artikelen in
+                        verschillende winkels liggen. */}
+                    <b>{effectief(s) ?? "—"}</b>
+                    <Uitleg tekst="Afgeleid uit de artikelen hieronder: het aantal winkels van het grootste artikel. Niet de som — een winkel die twee artikelen voert zou dan dubbel tellen. Liggen artikelen juist in verschillende winkels, dan is het echte aantal hoger en valt de omzet per winkel op merkniveau iets te hoog uit." />
+                    <div className="sub" style={{ fontSize: 10.5 }}>
+                      <button className="chip off" style={{ fontSize: 10 }}
+                        onClick={() => setOpen({ ...open, [wtKey(s)]: !open[wtKey(s)] })}>
+                        {open[wtKey(s)] ? "verberg" : "toon"} {artikelenVan(s).length} artikelen
+                      </button>
+                    </div>
+                  </>
                 : <>
                     <input type="number" min={1} style={{ width: 90 }} value={s.aantal_winkels ?? ""}
                       aria-label={`Aantal winkels ${s.merk} ${s.land ?? ""} ${s.banner ?? ""}`}
@@ -461,10 +505,38 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
               <td><button className="chip off" title="Rij verwijderen (pas definitief na Alles opslaan)"
                 onClick={() => weg(wt, setWt, i)}>✕</button></td>
             </tr>
+            {/* Artikelniveau: de gekoppelde artikelen uit de feed, elk met
+                een eigen winkelaantal. Het merkgetal erboven volgt eruit. */}
+            {s.niveau === "artikel" && open[wtKey(s)] && (
+              artikelenVan(s).length
+                ? artikelenVan(s).map((a: any) => (
+                    <tr key={awKey(a)} className="sub">
+                      <td colSpan={3} style={{ paddingLeft: 26 }}>
+                        ↳ {a.artikel_naam || "naamloos"}
+                        <span className="mono" style={{ marginLeft: 8 }}>{a.artikel_ean}</span>
+                      </td>
+                      <td className="sub">artikel</td>
+                      <td>
+                        <input type="number" min={1} style={{ width: 90 }}
+                          value={awWaarde(s, a.artikel_ean) ?? ""}
+                          aria-label={`Aantal winkels ${a.artikel_naam || a.artikel_ean}`}
+                          onChange={(e) => zetAw(s, a.artikel_ean,
+                            e.target.value ? +e.target.value : null)} />
+                      </td>
+                      {/* Targets blijven op merk-landniveau: een target per
+                          artikel is een andere afspraak dan we maken. */}
+                      <td colSpan={2}></td>
+                    </tr>
+                  ))
+                : <tr><td colSpan={7} className="sub" style={{ paddingLeft: 26 }}>
+                    Geen artikelen in de feed voor deze combinatie — deze retailer
+                    levert geen artikelniveau, of er is nog niets geïmporteerd.
+                  </td></tr>
+            )}
+            </Fragment>
           ))}
           {!wt.length && !feedCombos.length && (
-            <tr><td colSpan={6} className="sub">Nog geen rijen — importeer eerst een bestand,
-              of voeg hieronder handmatig een rij toe.</td></tr>
+            <tr><td colSpan={7} className="sub">Nog geen rijen — importeer eerst een bestand.</td></tr>
           )}
         </tbody>
       </table>
@@ -475,10 +547,9 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
             + {c.merk}{c.land ? ` · ${c.land}` : ""}{c.banner ? ` · ${c.banner}` : ""}
           </button>
         ))}
-        <HandmatigeRij onAdd={addWt} />
       </div>
 
-      <h2>Rotatietarget</h2>
+      <h3>Rotatietarget</h3>
       {caps?.artikel ? (
         <>
           <table className="data" style={{ maxWidth: 640 }}>

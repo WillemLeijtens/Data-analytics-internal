@@ -261,7 +261,37 @@ Bij ICI Paris XL scheelt het per merk een factor — TWEEZERMAN ~145
 winkels, DEPEND ~139, en per maand nog veel minder.
 
 Zonder winkelniveau valt de teller terug op het handmatige aantal uit
-Instellingen (label `SCHATTING`).
+Instellingen → Doelstellingen (label `SCHATTING`). Dat kan per merk-land(-
+formule) op twee niveaus:
+
+* **Merkniveau** — één getal voor de hele combinatie. Zoals het altijd was.
+* **Artikelniveau** — een aantal per artikel uit de feed. Nodig zodra de
+  artikelen van een merk niet in evenveel winkels liggen: een basisitem in
+  800 filialen, een nieuwe kleur in 120. De rotatie en de omzet per winkel
+  van een artikel delen dan door de winkels van dát artikel; een artikel
+  zonder eigen getal valt terug op het merkgetal.
+
+**Statistisch voorbehoud bij het merkgemiddelde.** Het aantal winkels van een
+merk is de *vereniging* van de winkels per artikel. Uit losse aantallen is die
+vereniging niet te berekenen — je kent alleen de grenzen:
+
+    max(artikelen)  <=  merk  <=  min(som(artikelen), totaal filialen)
+
+De app neemt de **ondergrens**: het grootste artikel. Dat is exact juist zodra
+het smallere assortiment in dezelfde winkels ligt als het brede — de normale
+situatie, want een filiaal dat de nieuwe kleur voert heeft vrijwel altijd ook
+het basisitem. Liggen artikelen in verschillende winkels, dan is het echte
+aantal hoger en valt de omzet per winkel op merkniveau te **hoog** uit.
+Optellen zou de andere kant op fout zijn: elke winkel die twee artikelen voert
+telt dan dubbel en het gemiddelde zakt naar een fractie van de werkelijkheid.
+Van de twee grenzen is dit de veiligste, en de enige die klopt in het normale
+geval. Het scherm meldt bij het merkgetal dat het een afgeleide is.
+
+Wie het exact wil weten, heeft winkelniveau in de feed nodig — dan telt de app
+de winkels en komt er geen aanname aan te pas.
+
+Targets blijven op merk-landniveau: een target per artikel is een andere
+afspraak dan er met de retailer gemaakt wordt.
 
 ### Lopende periode
 
