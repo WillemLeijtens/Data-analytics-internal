@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Milestone, apiSend, fmtEur, fmtNum, merkKleur } from "../api";
 import { ShellCtx } from "../App";
-import { BrandDot, DatagatMelding, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, TijdlijnPanelen, TrendChart, useApi } from "../components/shared";
+import { BrandDot, DatagatMelding, DekkingsgatenKaart, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, TijdlijnPanelen, TrendChart, useApi } from "../components/shared";
 
 export type Verdeling = {
   label: string; merk?: string; waarde: number;
@@ -345,6 +345,7 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       <LevelStrip labels={data.labels} retailer={ctx.retailer}
         uitleg={data.labels.includes("OP MAANDNIVEAU") ? "Deze retailer levert per maand; alle analyses rekenen met maanden." : undefined} />
       <DatagatMelding retailer={ctx.retailer} go={ctx.go} />
+      <DekkingsgatenKaart gaten={data.dekkingsgaten} />
 
       <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap", margin: "16px 0 4px" }}>
         {filters.merk.length > 0 && (<span><span className="eyebrow">Merk </span><MultiChips all={filters.merk} sel={merk} onChange={setMerk} /></span>)}
@@ -530,15 +531,26 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
             await apiSend(`/${ctx.retailer}/milestones/${id}`, "DELETE");
             herlaadMijlpalen();
           }} />
-        {data.trend.feeds_achter?.length > 0 && (
+        {(() => {
           // De som zakt vanaf het punt waar een merk-feed stopt; zonder deze
-          // melding leest een achterlopende levering als omzetdaling.
-          <p className="sub" style={{ marginTop: 10 }}>
-            Let op: {data.trend.feeds_achter.map((f: any) =>
-              `${f.merk ?? "ONBEKEND"} loopt t/m ${f.laatste_periode}`).join("; ")} —
-            daarná telt de lijn zonder {data.trend.feeds_achter.length === 1 ? "dat merk" : "die merken"}.
-          </p>
-        )}
+          // melding leest een achterlopende levering als omzetdaling. Maar
+          // wat de kaart bovenaan al noemt, hoeft hier niet nóg eens: twee
+          // formuleringen van hetzelfde feit op één scherm leest als twee
+          // problemen. Eén periode achterlopen meldt de kaart bewust niet
+          // (normale levercadans) — die blijft hier dus wél staan, want de
+          // lijn zakt er wel degelijk van.
+          const gemeld = new Set((data.dekkingsgaten ?? [])
+            .filter((g: any) => g.soort === "stopt").map((g: any) => g.merk));
+          const rest = (data.trend.feeds_achter ?? []).filter((f: any) => !gemeld.has(f.merk));
+          if (!rest.length) return null;
+          return (
+            <p className="sub" style={{ marginTop: 10 }}>
+              Let op: {rest.map((f: any) =>
+                `${f.merk ?? "ONBEKEND"} loopt t/m ${f.laatste_periode}`).join("; ")} —
+              daarná telt de lijn zonder {rest.length === 1 ? "dat merk" : "die merken"}.
+            </p>
+          );
+        })()}
       </div>
 
       {data.tijdlijn?.periodes?.length > 1 && (
