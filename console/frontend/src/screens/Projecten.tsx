@@ -115,6 +115,32 @@ function Cel({ children }: { children: React.ReactNode }) {
 
 /** Het percentage prominent naast het bedrag: nettomarge leest in twee
  *  maten tegelijk. */
+/** Het margebedrag van een productregel met het percentage erachter, en een
+ *  rode driehoek zodra dat percentage de drempel voor DEZE kolom niet haalt.
+ *  Het percentage is de brutomarge per stuk en dus in beide kolommen gelijk;
+ *  de drempel waaraan het gehouden wordt verschilt wél per kolom. */
+export function MargeBedrag({ r, bedrag, soort }:
+  { r: { margePct: number | null; onderDrempel: { soort: string; drempel: number }[] };
+    bedrag: number; soort: "eenmalige omzet" | "terugkerende omzet" }) {
+  const onder = r.onderDrempel.find((o) => o.soort === soort);
+  const pct = r.margePct == null ? null
+    : r.margePct.toLocaleString("nl-NL", { maximumFractionDigits: 1 });
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5,
+                   justifyContent: "flex-end" }}>
+      {onder && (
+        <MargeWaarschuwing tekst={
+          `Brutomarge ${pct}% ligt onder de drempel van `
+          + `${onder.drempel.toLocaleString("nl-NL")}% voor ${soort}. `
+          + "De projectkosten komen er nog af, dus de nettomarge wordt lager."} />
+      )}
+      <span className={bedrag >= 0 ? "sig-green" : "sig-red"}>
+        {fmtEur(bedrag)}{pct != null && ` · ${pct}%`}
+      </span>
+    </span>
+  );
+}
+
 function PctTag({ v }: { v: number | null }) {
   if (v == null) return null;
   return <span className={`tag ${v >= 0 ? "pos" : "neg"}`} style={{ marginLeft: 8, verticalAlign: "6px" }}>
@@ -406,10 +432,10 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
             <th>Winkels<Uitleg tekst="Het aantal winkels dat aan dit project meedoet voor dit product." /></th>
             <th>Stuks / winkel<Uitleg tekst="De eerste vulling: hoeveel stuks elke winkel bij de start afneemt. Dit voedt de EENMALIGE omzet en marge." /></th>
             <th>Rotatie / winkel / wk<Uitleg tekst="De verwachte doorverkoop per winkel per week ná de eerste vulling. Dit voedt de TERUGKERENDE omzet en marge." /></th>
-            <th style={{ textAlign: "right" }}>Marge %
-              <Uitleg tekst="De brutomarge per stuk: (verkoopprijs − kostprijs) / verkoopprijs. Hetzelfde percentage voor de eerste vulling als voor de doorverkoop, want het is per stuk. De projectkosten zitten er nog niet in — die drukken op de nettomarge bij Resultaat." /></th>
-            <th style={{ textAlign: "right" }}>Eenmalig omzet / marge</th>
-            <th style={{ textAlign: "right" }}>Per week omzet / marge</th>
+            <th style={{ textAlign: "right" }}>Eenmalig omzet / marge
+              <Uitleg tekst="De eerste vulling: winkels x stuks per winkel, tegen verkoopprijs. Het percentage is de brutomarge per stuk — (verkoopprijs − kostprijs) / verkoopprijs — dus zonder de projectkosten; die drukken op de nettomarge bij Resultaat." /></th>
+            <th style={{ textAlign: "right" }}>Per week omzet / marge
+              <Uitleg tekst="De doorverkoop per week: winkels x rotatie, tegen verkoopprijs. Hetzelfde margepercentage als bij de vulling — het is per stuk — maar het wordt aan de drempel voor TERUGKERENDE omzet gehouden." /></th>
             <th></th>
           </tr></thead>
           <tbody>
@@ -422,33 +448,17 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                 <td>{invoer("producten", i, "aantal_winkels", 64, "1")}</td>
                 <td>{invoer("producten", i, "stuks_per_winkel", 64, "1")}</td>
                 <td>{invoer("producten", i, "rotatie_per_winkel_per_week", 64, "0.1")}</td>
-                <Cel>
-                  {b.rijen[i].margePct == null ? "—" : (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                      {b.rijen[i].onderDrempel.map((o) => (
-                        <MargeWaarschuwing key={o.soort} tekst={
-                          `Brutomarge ${b.rijen[i].margePct!.toLocaleString("nl-NL",
-                            { maximumFractionDigits: 1 })}% ligt onder de drempel van `
-                          + `${o.drempel.toLocaleString("nl-NL")}% voor ${o.soort}. `
-                          + "De projectkosten komen er nog af, dus de nettomarge wordt lager."} />
-                      ))}
-                      <span className={b.rijen[i].margePct! < 0 ? "sig-red" : ""}>
-                        {b.rijen[i].margePct!.toLocaleString("nl-NL", { maximumFractionDigits: 1 })}%
-                      </span>
-                    </span>
-                  )}
-                </Cel>
                 <Cel>{fmtEur(b.rijen[i].eenmalig_omzet)}<br />
-                  <span className={b.rijen[i].eenmalig_marge >= 0 ? "sig-green" : "sig-red"}>
-                    {fmtEur(b.rijen[i].eenmalig_marge)}</span></Cel>
+                  <MargeBedrag r={b.rijen[i]} bedrag={b.rijen[i].eenmalig_marge}
+                    soort="eenmalige omzet" /></Cel>
                 <Cel>{fmtEur(b.rijen[i].week_omzet)}<br />
-                  <span className={b.rijen[i].week_marge >= 0 ? "sig-green" : "sig-red"}>
-                    {fmtEur(b.rijen[i].week_marge)}</span></Cel>
+                  <MargeBedrag r={b.rijen[i]} bedrag={b.rijen[i].week_marge}
+                    soort="terugkerende omzet" /></Cel>
                 <td><button className="chip off" title="Product verwijderen"
                   onClick={() => wegRij("producten", i)}>✕</button></td>
               </tr>
             ))}
-            {!d.producten.length && <tr><td colSpan={10} className="sub">Nog geen producten.</td></tr>}
+            {!d.producten.length && <tr><td colSpan={9} className="sub">Nog geen producten.</td></tr>}
           </tbody>
         </table>
       </div>

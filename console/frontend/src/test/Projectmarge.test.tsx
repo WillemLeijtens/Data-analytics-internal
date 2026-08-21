@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { bereken } from "../screens/Projecten";
+import { render, screen } from "@testing-library/react";
+import { MargeBedrag, bereken } from "../screens/Projecten";
 
 // Dit is de berekening die tijdens het typen meeloopt; de backend rekent
 // hetzelfde bij het opslaan (engine/projecten.py, test_projecten.py). Twee
@@ -62,5 +63,36 @@ describe("projectmarge", () => {
     const b = bereken({}, [PRODUCT], [], { eenmalig: null, terugkerend: 90 });
     expect(b.terugkerend.marge).toBeNull();
     expect(b.terugkerend.voldoet).toBeNull();
+  });
+});
+
+// De driehoek hoort bij de kolom waarvan de drempel niet gehaald wordt: de
+// eenmalige vulling en de wekelijkse doorverkoop hebben elk hun eigen norm,
+// terwijl het percentage (brutomarge per stuk) in beide kolommen gelijk is.
+describe("MargeBedrag", () => {
+  const rij = (onder: { soort: string; drempel: number }[]) =>
+    ({ margePct: 60, onderDrempel: onder });
+
+  it("zet het percentage achter het bedrag", () => {
+    render(<MargeBedrag r={rij([])} bedrag={1800} soort="eenmalige omzet" />);
+    expect(screen.getByText(/60%/)).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("waarschuwt alleen in de kolom waarvan de drempel niet gehaald wordt", () => {
+    const r = rij([{ soort: "terugkerende omzet", drempel: 70 }]);
+    const { unmount } = render(<MargeBedrag r={r} bedrag={150} soort="eenmalige omzet" />);
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    unmount();
+
+    render(<MargeBedrag r={r} bedrag={150} soort="terugkerende omzet" />);
+    expect(screen.getByRole("img").getAttribute("title")).toMatch(
+      /Brutomarge 60% ligt onder de drempel van 70% voor terugkerende omzet/);
+  });
+
+  it("zonder percentage staat er alleen een bedrag", () => {
+    render(<MargeBedrag r={{ margePct: null, onderDrempel: [] }} bedrag={0}
+      soort="eenmalige omzet" />);
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });
 });
