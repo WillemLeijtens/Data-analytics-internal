@@ -78,15 +78,29 @@ export function EmptyProfileCard({ retailer, go }:
   );
 }
 
-/** Filterchips (merk/land/formule). Leeg = alles; klikken zet aan/uit. */
-export function MultiChips({ all, sel, onChange }:
-  { all: string[]; sel: string[]; onChange: (v: string[]) => void }) {
+/** Filterchips (merk/land/formule). Leeg = alles; klikken zet aan/uit.
+ *
+ *  `waarschuwing` hangt een rode driehoek aan één chip, met de uitleg als
+ *  hovertekst. Zo staat "van dit merk ontbreekt data" bij het merk zelf, in
+ *  plaats van in een losse melding waarin je moet opzoeken wie het betreft. */
+export function MultiChips({ all, sel, onChange, waarschuwing }:
+  { all: string[]; sel: string[]; onChange: (v: string[]) => void;
+    waarschuwing?: Record<string, string> }) {
   return (
     <span className="chips" style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
       {all.map((v) => (
         <button key={v} className={`chip ${sel.includes(v) ? "" : "off"}`}
           aria-pressed={sel.length === 0 || sel.includes(v)}
-          onClick={() => onChange(sel.includes(v) ? sel.filter((x) => x !== v) : [...sel, v])}>{v}</button>
+          onClick={() => onChange(sel.includes(v) ? sel.filter((x) => x !== v) : [...sel, v])}>
+          {waarschuwing?.[v] && (
+            <span title={waarschuwing[v]} aria-label={`Let op: ${waarschuwing[v]}`} role="img"
+              style={{ color: "var(--neg)", display: "inline-flex", verticalAlign: "middle",
+                       marginRight: 4 }}>
+              <Driehoek kleur="currentColor" />
+            </span>
+          )}
+          {v}
+        </button>
       ))}
     </span>
   );
@@ -480,38 +494,6 @@ export function DatagatenPaneel({ retailer }: { retailer: string }) {
   );
 }
 
-/** De aanlevering zelf, op het dashboard: welke feed is stilgevallen, begon
- *  later, of heeft gaten. Stond alleen als driehoekje per artikel in de
- *  artikelanalyse, maar de totalen op het dashboard worden er net zo goed
- *  door vertekend — en daar leest niemand het aan de cijfers af. */
-export function DekkingsgatenKaart({ gaten }: { gaten?: { soort: string; tekst: string }[] }) {
-  if (!gaten?.length) return null;
-  // "Stopt" eerst: een feed die is stilgevallen vertekent het meest recente
-  // cijfer, en dat is het getal waar iemand nú naar kijkt.
-  const volgorde: Record<string, number> = { stopt: 0, onderbroken: 1, begint_later: 2 };
-  const gesorteerd = [...gaten].sort(
-    (a, b) => (volgorde[a.soort] ?? 9) - (volgorde[b.soort] ?? 9));
-  return (
-    <div className="card" style={{ marginTop: 14 }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
-        <span style={{ color: "var(--neg)", display: "inline-flex" }}>
-          <Driehoek kleur="currentColor" />
-        </span>
-        <b>De aanlevering is niet compleet</b>
-      </div>
-      <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0 25px" }}>
-        {gesorteerd.map((g) => (
-          <li key={g.tekst} className="sub" style={{ padding: "2px 0" }}>{g.tekst}</li>
-        ))}
-      </ul>
-      <p className="sub" style={{ margin: "8px 0 0 25px" }}>
-        De totalen hierboven tellen alleen wat er ís: waar een feed ontbreekt,
-        staat een lager cijfer dan de werkelijkheid.
-      </p>
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------ Sparkline */
 
 export function Sparkline({ ytd, lytd, isEuro, periodWord, jaar }:
@@ -722,6 +704,18 @@ export function DekkingWaarschuwing({ dekking }: { dekking?: { tekst: string }[]
   return (
     <span title={melding} aria-label={`Let op: ${regels.join("; ")}`} role="img"
       style={{ color: "var(--neg)", display: "inline-flex", alignItems: "center" }}>
+      <Driehoek kleur="currentColor" />
+    </span>
+  );
+}
+
+/** De marge haalt de bedrijfsdrempel niet. Rood: net als een ontbrekende
+    feed is dit iets waarop je een beslissing bijstelt, niet een detail. */
+export function MargeWaarschuwing({ tekst }: { tekst: string }) {
+  return (
+    <span title={tekst} aria-label={`Let op: ${tekst}`} role="img"
+      style={{ color: "var(--neg)", display: "inline-flex", alignItems: "center",
+               verticalAlign: "middle" }}>
       <Driehoek kleur="currentColor" />
     </span>
   );

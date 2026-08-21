@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiGet, apiSend, fmtEur } from "../api";
 import { ShellCtx } from "../App";
-import { LoadState, Uitleg } from "../components/shared";
+import { LoadState, MargeWaarschuwing, Uitleg } from "../components/shared";
 
 /* De formules staan hier nog een keer, alleen voor directe feedback tijdens
    het typen; de backend (engine/projecten.py) is de geteste bron en levert
@@ -19,7 +19,14 @@ function looptijdWeken(start?: string | null, eind?: string | null): number | nu
 
 const wk = (weken: number) => weken.toLocaleString("nl-NL", { maximumFractionDigits: 1 });
 
-function bereken(proj: any, producten: any[], kosten: any[]) {
+/** De bedrijfsnorm uit Instellingen. null = niet ingesteld: dan meet dit
+ *  scherm niets en meldt het niets — geen drempel is geen goedkeuring. */
+type Drempels = { eenmalig: number | null; terugkerend: number | null };
+
+// Geëxporteerd om te testen: dit is de berekening die de gebruiker ziet
+// tijdens het typen (de backend rekent hetzelfde bij het opslaan).
+export function bereken(proj: any, producten: any[], kosten: any[],
+                 drempels: Drempels = { eenmalig: null, terugkerend: null }) {
   const rijen = producten.map((p) => {
     const margeStuk = n(p.verkoopprijs) - n(p.kostprijs);
     const stuksEenmalig = n(p.aantal_winkels) * n(p.stuks_per_winkel);
@@ -28,8 +35,19 @@ function bereken(proj: any, producten: any[], kosten: any[]) {
     // ontbrekende veld stil als €0 — dat kan de marge kunstmatig laten
     // lijken alsof kostprijs of verkoopprijs nul is (zie engine/projecten.py).
     const prijsOnvolledig = (p.kostprijs == null) !== (p.verkoopprijs == null);
+    // De brutomarge van het product: per stuk, dus hetzelfde voor de vulling
+    // als voor de doorverkoop. De projectkosten zitten er nog niet in.
+    const margePct = n(p.verkoopprijs) ? (margeStuk / n(p.verkoopprijs)) * 100 : null;
+    // Haalt de brutomarge de drempel al niet, dan haalt het project hem
+    // zeker niet: de kosten komen er nog af. Dat hoort hier gezegd te
+    // worden, bij het invullen, niet pas bij het totaal.
+    const onderDrempel = margePct == null ? [] : ([
+      { soort: "eenmalige omzet", drempel: drempels.eenmalig },
+      { soort: "terugkerende omzet", drempel: drempels.terugkerend },
+    ].filter((d) => d.drempel != null && margePct < d.drempel) as
+      { soort: string; drempel: number }[]);
     return {
-      prijsOnvolledig, naam: p.naam,
+      prijsOnvolledig, naam: p.naam, margePct, onderDrempel,
       eenmalig_omzet: stuksEenmalig * n(p.verkoopprijs),
       eenmalig_marge: stuksEenmalig * margeStuk,
       week_omzet: stuksWeek * n(p.verkoopprijs),
@@ -55,13 +73,21 @@ function bereken(proj: any, producten: any[], kosten: any[]) {
   const kostenBuitenBeeld = !weken && (kostenLooptijd || bijdrageLooptijd)
     ? kostenLooptijd - bijdrageLooptijd : 0;
   const pct = (m: number, o: number) => (o ? (m / o) * 100 : null);
+  /** null als er niets te meten valt: geen drempel, of nog geen marge om
+   *  tegen te houden. >= en niet >: precies de norm halen is de norm halen. */
+  const voldoet = (p: number | null, d: number | null) =>
+    d == null || p == null ? null : p >= d;
+  const eenPct = pct(eenMarge, eenOmzet);
+  const terugPct = terugMarge != null && terugOmzet ? pct(terugMarge, terugOmzet) : null;
   return {
     rijen, weken, kostenBuitenBeeld, waarschuwingen,
     eenmalig: { omzet: eenOmzet, productmarge: eenProductmarge, kosten: kostenEenmalig,
-                bijdrage: bijdrageEenmalig, marge: eenMarge, pct: pct(eenMarge, eenOmzet) },
+                bijdrage: bijdrageEenmalig, marge: eenMarge, pct: eenPct,
+                drempel: drempels.eenmalig, voldoet: voldoet(eenPct, drempels.eenmalig) },
     terugkerend: { weekOmzet, weekMarge, omzet: terugOmzet, kosten: kostenLooptijd,
                    bijdrage: bijdrageLooptijd, marge: terugMarge,
-                   pct: terugMarge != null && terugOmzet ? pct(terugMarge, terugOmzet) : null },
+                   pct: terugPct, drempel: drempels.terugkerend,
+                   voldoet: voldoet(terugPct, drempels.terugkerend) },
     totaal: { omzet: eenOmzet + (terugOmzet ?? 0), marge: eenMarge + (terugMarge ?? 0) },
   };
 }
@@ -118,6 +144,17 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
     apiGet<{ naam: string | null; bron: string }>("/wie-ben-ik")
       .then((r) => setPortaalNaam(r.bron === "portaal" ? r.naam : null))
       .catch(() => setPortaalNaam(null));
+  }, []);
+
+  // De bedrijfsnorm staat los van het project: één instelling, hier alleen
+  // gelezen. Faalt het laden, dan meet het scherm niets — beter dan meten
+  // tegen een drempel die misschien niet meer klopt.
+  const [drempels, setDrempels] = useState<Drempels>({ eenmalig: null, terugkerend: null });
+  useEffect(() => {
+    apiGet("/systeem/bedrijf")
+      .then((r) => setDrempels({ eenmalig: r.drempel_eenmalig_pct,
+                                 terugkerend: r.drempel_terugkerend_pct }))
+      .catch(() => setDrempels({ eenmalig: null, terugkerend: null }));
   }, []);
 
   const laadLijst = () => apiGet("/projecten")
@@ -308,7 +345,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
 
   /* ------------------------------------------------------------- editor */
   if (!d) return <LoadState error={error} reload={() => open(gekozen)} />;
-  const b = bereken(d, d.producten, d.kosten);
+  const b = bereken(d, d.producten, d.kosten, drempels);
 
   return (
     <>
@@ -369,6 +406,8 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
             <th>Winkels<Uitleg tekst="Het aantal winkels dat aan dit project meedoet voor dit product." /></th>
             <th>Stuks / winkel<Uitleg tekst="De eerste vulling: hoeveel stuks elke winkel bij de start afneemt. Dit voedt de EENMALIGE omzet en marge." /></th>
             <th>Rotatie / winkel / wk<Uitleg tekst="De verwachte doorverkoop per winkel per week ná de eerste vulling. Dit voedt de TERUGKERENDE omzet en marge." /></th>
+            <th style={{ textAlign: "right" }}>Marge %
+              <Uitleg tekst="De brutomarge per stuk: (verkoopprijs − kostprijs) / verkoopprijs. Hetzelfde percentage voor de eerste vulling als voor de doorverkoop, want het is per stuk. De projectkosten zitten er nog niet in — die drukken op de nettomarge bij Resultaat." /></th>
             <th style={{ textAlign: "right" }}>Eenmalig omzet / marge</th>
             <th style={{ textAlign: "right" }}>Per week omzet / marge</th>
             <th></th>
@@ -383,6 +422,22 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                 <td>{invoer("producten", i, "aantal_winkels", 64, "1")}</td>
                 <td>{invoer("producten", i, "stuks_per_winkel", 64, "1")}</td>
                 <td>{invoer("producten", i, "rotatie_per_winkel_per_week", 64, "0.1")}</td>
+                <Cel>
+                  {b.rijen[i].margePct == null ? "—" : (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                      {b.rijen[i].onderDrempel.map((o) => (
+                        <MargeWaarschuwing key={o.soort} tekst={
+                          `Brutomarge ${b.rijen[i].margePct!.toLocaleString("nl-NL",
+                            { maximumFractionDigits: 1 })}% ligt onder de drempel van `
+                          + `${o.drempel.toLocaleString("nl-NL")}% voor ${o.soort}. `
+                          + "De projectkosten komen er nog af, dus de nettomarge wordt lager."} />
+                      ))}
+                      <span className={b.rijen[i].margePct! < 0 ? "sig-red" : ""}>
+                        {b.rijen[i].margePct!.toLocaleString("nl-NL", { maximumFractionDigits: 1 })}%
+                      </span>
+                    </span>
+                  )}
+                </Cel>
                 <Cel>{fmtEur(b.rijen[i].eenmalig_omzet)}<br />
                   <span className={b.rijen[i].eenmalig_marge >= 0 ? "sig-green" : "sig-red"}>
                     {fmtEur(b.rijen[i].eenmalig_marge)}</span></Cel>
@@ -393,7 +448,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                   onClick={() => wegRij("producten", i)}>✕</button></td>
               </tr>
             ))}
-            {!d.producten.length && <tr><td colSpan={9} className="sub">Nog geen producten.</td></tr>}
+            {!d.producten.length && <tr><td colSpan={10} className="sub">Nog geen producten.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -462,15 +517,31 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
         <div className="card">
           <div className="kpi-label">Netto marge eenmalig — de vulling
             <Uitleg tekst="De eerste levering: winkels x stuks per winkel, tegen verkoopprijs. Nettomarge = productmarge min de eenmalige kosten, plus de eenmalige bijdrage leverancier. Het percentage is de nettomarge gedeeld door de eenmalige omzet." /></div>
-          <div className="kpi-value">{fmtEur(b.eenmalig.marge)}<PctTag v={b.eenmalig.pct} /></div>
+          <div className="kpi-value" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {b.eenmalig.voldoet === false && (
+              <MargeWaarschuwing tekst={
+                `${b.eenmalig.pct!.toLocaleString("nl-NL", { maximumFractionDigits: 1 })}% `
+                + `nettomarge haalt de drempel van ${b.eenmalig.drempel!.toLocaleString("nl-NL")}% `
+                + "voor eenmalige omzet niet (Instellingen → Bedrijfsnormen)."} />
+            )}
+            {fmtEur(b.eenmalig.marge)}<PctTag v={b.eenmalig.pct} />
+          </div>
           <div className="kpi-sub">omzet {fmtEur(b.eenmalig.omzet)}</div>
           <div className="kpi-sub">productmarge {fmtEur(b.eenmalig.productmarge)} − kosten {fmtEur(b.eenmalig.kosten)}{b.eenmalig.bijdrage > 0 && <> + bijdrage {fmtEur(b.eenmalig.bijdrage)}</>}</div>
         </div>
         <div className="card">
           <div className="kpi-label">Netto marge terugkerend — de doorverkoop
             <Uitleg tekst="Rotatie x winkels, per week en opgeteld over de looptijd — de verwachte herbevoorrading nadat de vulling in het schap ligt. Nettomarge = productmarge over de looptijd min de looptijdkosten, plus de looptijd-bijdrage leverancier. Het percentage is de nettomarge gedeeld door de terugkerende omzet. Zonder start- en einddatum is er alleen een weekbeeld." /></div>
-          <div className="kpi-value">{b.terugkerend.marge != null
-            ? <>{fmtEur(b.terugkerend.marge)}<PctTag v={b.terugkerend.pct} /></> : "—"}</div>
+          <div className="kpi-value" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {b.terugkerend.voldoet === false && (
+              <MargeWaarschuwing tekst={
+                `${b.terugkerend.pct!.toLocaleString("nl-NL", { maximumFractionDigits: 1 })}% `
+                + `nettomarge haalt de drempel van ${b.terugkerend.drempel!.toLocaleString("nl-NL")}% `
+                + "voor terugkerende omzet niet (Instellingen → Bedrijfsnormen)."} />
+            )}
+            {b.terugkerend.marge != null
+              ? <>{fmtEur(b.terugkerend.marge)}<PctTag v={b.terugkerend.pct} /></> : "—"}
+          </div>
           <div className="kpi-sub">
             {b.weken
               ? <>over {wk(b.weken)} wk · omzet {fmtEur(b.terugkerend.omzet!)} − kosten {fmtEur(b.terugkerend.kosten)}{b.terugkerend.bijdrage > 0 && <> + bijdrage {fmtEur(b.terugkerend.bijdrage)}</>}</>

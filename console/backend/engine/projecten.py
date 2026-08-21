@@ -81,6 +81,11 @@ def _product(p: dict) -> dict:
         # het scherm een waarschuwing tonen i.p.v. de marge stil te vertrouwen.
         "prijs_onvolledig": (kostprijs is None) != (verkoopprijs is None),
         "marge_per_stuk": round(marge_per_stuk, 4),
+        # De brutomarge van het product zelf: hetzelfde percentage voor de
+        # eenmalige vulling als voor de wekelijkse doorverkoop, want het is
+        # per stuk. De projectkosten zitten er nog NIET in — die drukken op
+        # de projectmarge verderop.
+        "marge_pct": _pct(marge_per_stuk, _n(verkoopprijs)),
         "eenmalig_stuks": round(stuks_eenmalig, 2),
         "eenmalig_omzet": round(stuks_eenmalig * _n(verkoopprijs), 2),
         "eenmalig_marge": round(stuks_eenmalig * marge_per_stuk, 2),
@@ -94,9 +99,37 @@ def _pct(marge: float, omzet: float) -> float | None:
     return round(marge / omzet * 100, 1) if omzet else None
 
 
-def bereken(project: dict, producten: list[dict], kosten: list[dict]) -> dict:
-    """De volledige doorrekening. Puur: geen database, geen klok."""
+def _voldoet(pct: float | None, drempel: float | None) -> bool | None:
+    """None als er niets te meten valt: geen drempel ingesteld, of nog geen
+    marge om tegen te houden. Geen drempel is geen goedkeuring."""
+    if drempel is None or pct is None:
+        return None
+    return pct >= drempel
+
+
+def bereken(project: dict, producten: list[dict], kosten: list[dict],
+            drempels: dict | None = None) -> dict:
+    """De volledige doorrekening. Puur: geen database, geen klok.
+
+    `drempels` is {"eenmalig": pct|None, "terugkerend": pct|None} — de
+    bedrijfsnorm uit de instellingen. Zonder drempel wordt er niets gemeten
+    en niets gemeld."""
+    drempels = drempels or {}
+    d_een = drempels.get("eenmalig")
+    d_terug = drempels.get("terugkerend")
     regels = [_product(p) for p in producten]
+
+    # Haalt een product de drempel op zijn BRUTOmarge al niet, dan haalt het
+    # project hem zeker niet: de kosten komen er nog af. Dat is precies het
+    # moment om het te zeggen — bij het invullen, niet pas bij het totaal.
+    for r in regels:
+        onder = []
+        if r["marge_pct"] is not None:
+            if d_een is not None and r["marge_pct"] < d_een:
+                onder.append({"soort": "eenmalig", "drempel_pct": d_een})
+            if d_terug is not None and r["marge_pct"] < d_terug:
+                onder.append({"soort": "terugkerend", "drempel_pct": d_terug})
+        r["onder_drempel"] = onder
     weken = looptijd_weken(project.get("start_datum"), project.get("eind_datum"))
 
     def kosten_en_bijdrage(terugkerend: bool) -> tuple[float, float]:
@@ -156,6 +189,8 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict]) -> dict:
             "bijdrage": round(bijdrage_eenmalig, 2),
             "marge": een_marge,
             "marge_pct": _pct(een_marge, een_omzet),
+            "drempel_pct": d_een,
+            "voldoet": _voldoet(_pct(een_marge, een_omzet), d_een),
         },
         "terugkerend": {
             "per_week": {"omzet": round(week_omzet, 2), "marge": round(week_marge, 2)},
@@ -166,6 +201,10 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict]) -> dict:
             "marge": terug_marge,
             "marge_pct": _pct(terug_marge, terug_omzet)
             if terug_marge is not None and terug_omzet else None,
+            "drempel_pct": d_terug,
+            "voldoet": _voldoet(
+                _pct(terug_marge, terug_omzet)
+                if terug_marge is not None and terug_omzet else None, d_terug),
         },
         "totaal": {
             "omzet": totaal_omzet,
