@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from test_parser_flow import upload  # noqa: E402
 
-from echte_bestanden import MAP as U, vereist  # noqa: E402
+from echte_bestanden import MAP as U, bruikbaar, vereist  # noqa: E402
 REAL_ETOS = U / "b9ccb189-Data_Grid_57018_widget.xlsx"
 REAL_KV = U / "d62acf54-DWH__Sales_volume__sales_Tweezerman_KVNL_1299_1734396111539283577.xlsx"
 REAL_ICI = U / "fc6fc987-Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__4.xlsx"
@@ -36,7 +36,9 @@ REAL_HISTORIE = [
     ("c62214ae-Data_Grid_57018_widget_2024.xlsx",
      685, 638163.13, 36463, "2024-W19", "2024-W52"),
 ]
-HISTORIE_AANWEZIG = all((U / naam).exists() for naam, *_ in REAL_HISTORIE)
+# Via bruikbaar(), niet .exists(): dat laatste gooit als de map onleesbaar
+# is (zie echte_bestanden.py) en breekt dan de hele collectie af.
+HISTORIE_AANWEZIG = all(bruikbaar(U / naam) for naam, *_ in REAL_HISTORIE)
 
 
 @pytest.fixture()

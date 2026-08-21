@@ -33,7 +33,7 @@ MAP = Path(os.environ.get("CONSOLE_FIXTURES_DIR") or STANDAARD_MAP)
 VERPLICHT = os.environ.get("CONSOLE_REAL_FIXTURES", "").strip() == "1"
 
 
-def _bruikbaar(pad: Path) -> bool:
+def bruikbaar(pad: Path) -> bool:
     """Bestaat het bestand én mogen we erbij?
 
     `Path.exists()` GOOIT als een bovenliggende map onleesbaar is — en dat is
@@ -52,7 +52,7 @@ def _bruikbaar(pad: Path) -> bool:
 def vereist(*paden: Path):
     """Decorator: sla over als de bestanden ontbreken — tenzij ze verplicht
     zijn gesteld, dan is ontbreken een fout."""
-    ontbreekt = [p.name for p in paden if not _bruikbaar(p)]
+    ontbreekt = [p.name for p in paden if not bruikbaar(p)]
     if not ontbreekt:
         return pytest.mark.skipif(False, reason="")
     if VERPLICHT:
