@@ -83,16 +83,62 @@ def _to_number(raw):
         return None
 
 
-def content_matches(content: bytes) -> bool:
-    """Herkenning op inhoud: een tabblad met een Store/Address-kopregel
-    gevolgd door minstens één YYYYMM-maandkolom."""
+def winkelnummers(content: bytes) -> set[int]:
+    """De winkelnummers in het rapport.
+
+    ICI nummert per land in een eigen reeks: België 5xxx, Nederland 6xxx en
+    7xxx, zonder één overlappend nummer (gecontroleerd op de echte bestanden
+    van juli 2026: BE 5004-5308 over 135 winkels, NL 6051-7995 over 151). Dat
+    maakt het winkelnummer een betrouwbaarder onderscheid dan de plaatsnaam:
+    stadsnamen komen in beide landen voor en dezelfde stad staat in het
+    bestand soms met verschillende accenten (LA LOUVIÈRE / LA LOUVIÉRE).
+    """
+    nummers: set[int] = set()
     try:
         wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
         for ws in wb.worksheets:
+            kolom = None
+            for row in ws.iter_rows(values_only=True):
+                vals = [_norm(c) for c in row]
+                if "Store" in vals and "Address" in vals:
+                    kolom = vals.index("Store")
+                    continue
+                if kolom is None or kolom >= len(row):
+                    continue
+                nr = als_identifier(row[kolom])
+                if nr and nr.isdigit():
+                    nummers.add(int(nr))
+    except Exception:  # noqa: BLE001 - onleesbaar bestand levert geen nummers
+        return set()
+    return nummers
+
+
+def content_matches(content: bytes, reeks: list | None = None) -> bool:
+    """Herkenning op inhoud: een tabblad met een Store/Address-kopregel
+    gevolgd door minstens één YYYYMM-maandkolom.
+
+    `reeks` ([van, tot]) beperkt de match tot rapporten waarvan de winkels in
+    die nummerreeks vallen. Zo blijven twee retailers met exact hetzelfde
+    formaat (ICI NL en BE) uit elkaar te houden, ook als het bestand hernoemd
+    is. ALLE winkels moeten erin passen: één winkel buiten de reeks betekent
+    dat de aanname niet meer klopt, en dan is niet-herkennen (en dus vragen)
+    beter dan een half kloppende gok.
+    """
+    try:
+        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        gevonden = False
+        for ws in wb.worksheets:
             for row in ws.iter_rows(min_row=1, max_row=12, values_only=True):
                 if _is_store_header(row) and _month_columns(row):
-                    return True
-        return False
+                    gevonden = True
+                    break
+            if gevonden:
+                break
+        if not gevonden or not reeks:
+            return gevonden
+        nummers = winkelnummers(content)
+        van, tot = int(reeks[0]), int(reeks[1])
+        return bool(nummers) and all(van <= n <= tot for n in nummers)
     except Exception:  # noqa: BLE001 - onleesbaar bestand matcht simpelweg niet
         return False
 

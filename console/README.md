@@ -230,8 +230,16 @@ Schema: zie `profiles/*.json` (PROMPT.md §3). Kernregels:
   twee retailers, elk met een eigen winkelbestand en een eigen tabblad. Het
   rapport noemt zelf geen land, dus dat staat in `constants.land` van het
   profiel — zonder dat zou Belgische omzet als Nederlandse in de analyses
-  belanden. Beide gebruiken dezelfde ingebouwde parser; de bestandsnaam
-  onderscheidt ze (`*ici?paris*.xlsx` tegenover `SO_*.xlsx`).
+  belanden. Beide gebruiken dezelfde ingebouwde parser; ze worden onderscheiden
+  op bestandsnaam (`*ici?paris*.xlsx` tegenover `SO_*.xlsx`) én, voor hernoemde
+  bestanden, op **winkelnummer** (`detection.winkelreeks`). ICI nummert per
+  land in een eigen reeks: BE 5xxx, NL 6xxx en 7xxx, zonder één overlappend
+  nummer (gecontroleerd op de echte bestanden van juli 2026: BE 5004–5308 over
+  135 winkels, NL 6051–7995 over 151). Dat is betrouwbaarder dan de plaatsnaam:
+  stadsnamen komen in beide landen voor en dezelfde stad staat er soms met
+  verschillende accenten in (LA LOUVIÈRE / LA LOUVIÉRE). Alle winkels moeten in
+  de reeks passen; past er één niet, dan is niet-herkennen (en dus vragen)
+  beter dan een half kloppende gok.
 - **Detectie**: filename-glob, met sheet/verplichte-headers als tiebreak, en
   voor ingebouwde parsers structuurherkenning van de inhoud (hernoemen mag).
   Nul matches ⇒ status **PROFIEL NODIG**. Concept-profielen doen nooit mee.
