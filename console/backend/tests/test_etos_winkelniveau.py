@@ -144,3 +144,91 @@ def test_zonder_winkelniveau_valt_er_niets_te_tellen(client):
     upload(client, "Data_Grid_57018_widget.xlsx", seed.make_etos_xlsx(
         [art("120781690", "TWEEZERMAN", {"202601": (29.99, 1)})]))
     assert client.get("/api/etos/instellingen").json()["feed_winkels"] == []
+
+
+# ------------------------------------------------- drempels voor de signalen
+
+def weken(client, winkel, actief):
+    """Eén artikel in één winkel, met omzet in de opgegeven weken van 2026
+    (de feed loopt t/m week 10)."""
+    import seed
+    return {"upc": "120781690", "naam": "ART", "merk": "TWEEZERMAN",
+            "merk_nr": 2278, "winkel": winkel, "stad": "Sneek",
+            "weeks": {f"2026{w:02d}": (10.0, 1) for w in actief}}
+
+
+def laad_stiltes(client):
+    """Drie winkels die op verschillende momenten stilvallen; de feed loopt
+    t/m week 10 (winkel A verkoopt daar nog)."""
+    import seed
+    upload(client, "Data_Grid_57018_stil.xlsx", seed.make_etos_xlsx([
+        weken(client, "ETOS A - 6001", range(1, 11)),          # loopt door
+        weken(client, "ETOS B - 6002", range(1, 10)),          # 1 week stil
+        weken(client, "ETOS C - 6003", range(1, 8)),           # 3 weken stil
+        weken(client, "ETOS D - 6004", range(1, 4)),           # 7 weken stil
+    ], winkels=True))
+
+
+def analyse(client):
+    return client.get("/api/etos/dashboard").json()["winkelanalyse"]
+
+
+def test_standaard_blijft_een_en_twee(client):
+    """Niets ingesteld = rekenen zoals voorheen, zodat een bestaande
+    installatie niet ineens andere aantallen toont."""
+    laad_stiltes(client)
+    w = analyse(client)
+    assert (w["letop_vanaf"], w["gestopt_vanaf"]) == (1, 2)
+    assert {g["winkel_naam"].split()[1] for g in w["gestopt"]} == {"C", "D"}
+    assert {g["winkel_naam"].split()[1] for g in w["signalen"]} == {"B"}
+
+
+def test_drempels_zijn_per_retailer_in_te_stellen(client):
+    """Bij een weekfeed is twee lege weken niets. Met 4 en 6 blijft alleen
+    over wat er echt uit ligt."""
+    laad_stiltes(client)
+    r = client.put("/api/etos/instellingen", json={
+        "winkelsignaal": {"letop_vanaf": 4, "gestopt_vanaf": 6}})
+    assert r.status_code == 200
+
+    w = analyse(client)
+    assert (w["letop_vanaf"], w["gestopt_vanaf"]) == (4, 6)
+    # D staat 7 weken stil -> gestopt. C staat er 3 -> onder de let op-drempel,
+    # dus helemaal geen melding meer. B (1 week) al helemaal niet.
+    assert {g["winkel_naam"].split()[1] for g in w["gestopt"]} == {"D"}
+    assert w["signalen"] == []
+
+
+def test_onder_de_letop_drempel_verdwijnt_de_regel(client):
+    """Een lijst vol ruis leert je het scherm te negeren; wat onder de
+    drempel valt hoort er dus niet in te staan."""
+    laad_stiltes(client)
+    client.put("/api/etos/instellingen", json={
+        "winkelsignaal": {"letop_vanaf": 3, "gestopt_vanaf": 5}})
+    w = analyse(client)
+    assert {g["winkel_naam"].split()[1] for g in w["gestopt"]} == {"D"}
+    assert {g["winkel_naam"].split()[1] for g in w["signalen"]} == {"C"}
+
+
+def test_gestopt_kan_niet_onder_let_op_liggen(client):
+    """Anders zou 'let op' nooit voorkomen en is de instelling zinloos."""
+    r = client.put("/api/etos/instellingen", json={
+        "winkelsignaal": {"letop_vanaf": 5, "gestopt_vanaf": 2}})
+    assert r.status_code == 422
+    assert "lager" in r.json()["detail"]
+
+
+def test_nul_is_geen_drempel(client):
+    r = client.put("/api/etos/instellingen", json={
+        "winkelsignaal": {"letop_vanaf": 0, "gestopt_vanaf": 2}})
+    assert r.status_code == 422
+
+
+def test_drempels_gelden_per_retailer(client):
+    """ICI rekent in maanden, Etos in weken — dus horen de instellingen
+    elkaar niet te raken."""
+    laad_stiltes(client)
+    client.put("/api/etos/instellingen", json={
+        "winkelsignaal": {"letop_vanaf": 4, "gestopt_vanaf": 6}})
+    ici = client.get("/api/ici-paris-xl/instellingen").json()["winkelsignaal"]
+    assert ici == {"letop_vanaf": 1, "gestopt_vanaf": 2}
