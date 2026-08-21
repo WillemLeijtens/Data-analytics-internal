@@ -196,7 +196,7 @@ def retailer_signals(conn, retailer_id: str) -> dict:
 
 
 def overview(conn) -> dict:
-    retailers = conn.execute("SELECT * FROM retailers ORDER BY rowid").fetchall()
+    retailers = conn.execute("SELECT * FROM retailers ORDER BY aangesloten DESC, rowid").fetchall()
     cards = []
     for r in retailers:
         prof = active_profile(conn, r["id"])

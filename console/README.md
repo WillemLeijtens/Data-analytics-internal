@@ -226,10 +226,22 @@ Schema: zie `profiles/*.json` (PROMPT.md §3). Kernregels:
   profiel komt zo ook op een bestaande installatie aan.
 - **Capabilities worden afgeleid** uit mapping + constants (of liggen bij een
   ingebouwde parser vast), nergens opgeslagen.
+- **ICI Paris XL levert NL en BE apart** (`ici-paris-xl` en `ici-paris-be`):
+  twee retailers, elk met een eigen winkelbestand en een eigen tabblad. Het
+  rapport noemt zelf geen land, dus dat staat in `constants.land` van het
+  profiel — zonder dat zou Belgische omzet als Nederlandse in de analyses
+  belanden. Beide gebruiken dezelfde ingebouwde parser; de bestandsnaam
+  onderscheidt ze (`*ici?paris*.xlsx` tegenover `SO_*.xlsx`).
 - **Detectie**: filename-glob, met sheet/verplichte-headers als tiebreak, en
   voor ingebouwde parsers structuurherkenning van de inhoud (hernoemen mag).
-  Nul of meerdere matches ⇒ status **PROFIEL NODIG**. Concept-profielen doen
-  nooit mee.
+  Nul matches ⇒ status **PROFIEL NODIG**. Concept-profielen doen nooit mee.
+  Bij **meerdere** matches raadt de app niet: de controlestap toont de
+  kandidaten en de gebruiker kiest ("Importeren als ICI Paris XL BE"). Die
+  keuze gaat als `retailer_id` mee met de import en wordt gecontroleerd tegen
+  de kandidaten, zodat een bestand nooit door een parser gedrukt kan worden
+  die het formaat niet aankan. Dit speelt bij een hernoemd ICI-rapport: NL en
+  BE zijn qua structuur identiek en alleen de aanleveraar weet welk land het
+  is.
 - **Versionering**: nieuwe versie naast de oude; oude versies blijven leesbaar;
   elke import logt de gebruikte versie. Een profiel in `test` leest wél in,
   maar de feiten zijn gevlagd: zichtbaar in de schermen van die retailer

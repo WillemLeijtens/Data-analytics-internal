@@ -70,11 +70,14 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
     }
   };
 
-  /** Stap 2: pas ná bevestiging echt importeren. */
-  const bevestig = async (item: Pending) => {
+  /** Stap 2: pas ná bevestiging echt importeren. `keuze` is alleen gevuld
+   *  als meerdere retailers hetzelfde bestandsformaat leveren (ICI NL en BE);
+   *  dan bepaalt de gebruiker voor welke het is. */
+  const bevestig = async (item: Pending, keuze?: string) => {
     setBusy(true);
     const fd = new FormData();
     fd.append("files", item.file);
+    if (keuze) fd.append("retailer_id", keuze);
     try {
       const r = await apiSend<{ results: any[] }>("/import", "POST", fd);
       setUploadResults((prev) => [...prev, ...(r.results ?? [])]);
@@ -147,6 +150,23 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
               // Onderscheid "parser nodig" van "bestand onleesbaar".
               <p className="sub" style={{ color: "var(--warn)" }}>{p.detail}</p>
             )}
+            {/* Meerdere retailers leveren dit formaat (ICI NL en BE zijn qua
+                structuur identiek). Niet gokken: laten kiezen. */}
+            {!!p.keuzes?.length && (
+              <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+                {p.keuzes.map((k: any) => (
+                  <button key={k.retailer_id} className="btn" disabled={busy}
+                    onClick={() => bevestig(item, k.retailer_id)}>
+                    Importeren als {k.retailer_naam ?? k.retailer_id}
+                  </button>
+                ))}
+                <button className="btn ghost" disabled={busy} onClick={() => annuleer(item)}
+                  style={{ color: "var(--neg)", borderColor: "var(--neg)" }}>
+                  <Kruis /> Niet importeren
+                </button>
+              </div>
+            )}
+            {!p.keuzes?.length && (
             <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
               <button className="btn" disabled={busy} onClick={() => bevestig(item)}
                 style={{ display: "inline-flex", alignItems: "center", gap: 8,
@@ -159,6 +179,7 @@ export default function ImportScreen({ ctx }: { ctx: ShellCtx }) {
                 <Kruis /> Nee, niet importeren
               </button>
             </div>
+            )}
           </div>
         );
       })}

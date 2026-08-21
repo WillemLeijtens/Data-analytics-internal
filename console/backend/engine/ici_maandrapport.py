@@ -97,7 +97,10 @@ def content_matches(content: bytes) -> bool:
         return False
 
 
-def parse_workbook(content: bytes) -> dict:
+def parse_workbook(content: bytes, land: str = "NL") -> dict:
+    """Het rapport zelf noemt geen land — ICI Paris XL levert NL en BE als
+    aparte bestanden met een eigen winkelbestand. Welk land het is, staat in
+    het profiel van de retailer (constants.land)."""
     wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
 
     facts: list[dict] = []
@@ -161,7 +164,7 @@ def parse_workbook(content: bytes) -> dict:
                     if v is None:
                         continue
                     facts.append({
-                        "periode": periode, "land": "NL", "banner": None,
+                        "periode": periode, "land": land, "banner": None,
                         "winkel_id": store, "winkel_naam": naam,
                         "merk": brand, "artikel_ean": None, "artikel_naam": None,
                         "volume": 0, "omzet": v,

@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -475,8 +475,18 @@ async def import_preview(files: list[UploadFile]):
                         "retailer_naam": None, "detail": str(e)})
             continue
         profile = parser_mod.detect(filename, content, profiles)
+        keuzes = []
         if profile:
             detail = None
+        elif len(kandidaten := parser_mod.kandidaten(filename, content, profiles)) > 1:
+            # Twee retailers herkennen dit bestand. Dat is geen ontbrekende
+            # parser maar een keuze die alleen de aanleveraar kan maken: een
+            # ICI-rapport van NL en van BE zijn qua structuur identiek.
+            keuzes = [{"retailer_id": k.retailer_id,
+                       "retailer_naam": namen.get(k.retailer_id),
+                       "profiel_versie": k.version} for k in kandidaten]
+            detail = ("Meerdere retailers leveren dit bestandsformaat — kies "
+                      "voor welke dit bestand is.")
         elif parser_mod.sniff(filename, content):
             detail = "Geen parser herkent dit bestandsformaat."
         else:
@@ -490,6 +500,7 @@ async def import_preview(files: list[UploadFile]):
             "retailer_id": profile.retailer_id if profile else None,
             "retailer_naam": namen.get(profile.retailer_id) if profile else None,
             "profiel_versie": profile.version if profile else None,
+            "keuzes": keuzes,
             "detail": detail,
         })
     return {"results": out}
@@ -528,16 +539,22 @@ def _bewaar_in_inbox(filename: str, content: bytes) -> str | None:
 
 
 @app.post("/api/import")
-async def do_import(files: list[UploadFile]):
+async def do_import(files: list[UploadFile],
+                    retailer_id: list[str] | None = Form(None)):
+    """`retailer_id` hoort bij `files` op positie: leeg (of "") betekent
+    "bepaal het zelf". Alleen nodig als meerdere profielen hetzelfde bestand
+    herkennen — ICI levert NL en BE in exact dezelfde vorm aan."""
     # One transaction PER FILE: a crash halfway through file 3 must not roll
     # back files 1 and 2 while the response still reports them as loaded.
     results = []
-    for f in files:
+    for i, f in enumerate(files):
         filename = _safe_filename(f)
+        keuze = (retailer_id[i].strip() if retailer_id and i < len(retailer_id)
+                 and retailer_id[i] else None)
         try:
             content = await _read_upload_limited(f)
             with db.get_conn() as conn:
-                uitkomst = importer.run_import(conn, filename, content)
+                uitkomst = importer.run_import(conn, filename, content, keuze)
             if uitkomst.get("status") in ("profiel_nodig", "error"):
                 pad = _bewaar_in_inbox(filename, content)
                 if pad:
@@ -585,7 +602,7 @@ def list_imports(retailer_id: str | None = None, limit: int = 50):
 def import_status(retailer_id: str | None = None):
     """Feed freshness per retailer: per merk (feed) the newest period."""
     with db.get_conn() as conn:
-        retailers = conn.execute("SELECT * FROM retailers ORDER BY rowid").fetchall()
+        retailers = conn.execute("SELECT * FROM retailers ORDER BY aangesloten DESC, rowid").fetchall()
         out = []
         for r in retailers:
             if retailer_id and r["id"] != retailer_id:

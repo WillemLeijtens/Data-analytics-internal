@@ -1,10 +1,10 @@
 {
-  "retailer_id": "ici-paris-xl",
-  "version": 3,
+  "retailer_id": "ici-paris-be",
+  "version": 1,
   "status": "live",
   "builtin": "ici_maandrapport",
   "detection": {
-    "filename_glob": "*ici?paris*.xlsx",
+    "filename_glob": "SO_*.xlsx",
     "sheet": null,
     "header_row": 1,
     "required_headers": [],
@@ -19,7 +19,7 @@
   },
   "mapping": [],
   "constants": {
-    "land": "NL"
+    "land": "BE"
   },
   "thresholds": {
     "promo_price_drop": 0.03

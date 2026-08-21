@@ -64,7 +64,8 @@ def _replace_redelivered_facts(conn, retailer_id: str, facts: list[dict]):
     conn.execute("DROP TABLE temp._nieuwe_sleutels")
 
 
-def run_import(conn, filename: str, content: bytes) -> dict:
+def run_import(conn, filename: str, content: bytes,
+               retailer_id: str | None = None) -> dict:
     """Import one file inside the caller's transaction. Returns a summary dict
     mirroring an `imports` row.
 
@@ -84,6 +85,13 @@ def run_import(conn, filename: str, content: bytes) -> dict:
     re-upload of an already-loaded file. No additional locking needed."""
     h = file_hash(content)
     profiles = get_profiles(conn)
+    if retailer_id:
+        # De gebruiker heeft gekozen tussen profielen die dit bestand allebei
+        # herkennen (ICI NL en BE hebben dezelfde structuur). Alleen kiezen
+        # uit de kandidaten: een willekeurige retailer meesturen mag een
+        # bestand niet bij een parser krijgen die het niet aankan.
+        profiles = [p for p in parser_mod.kandidaten(filename, content, profiles)
+                    if p.retailer_id == retailer_id]
     profile = parser_mod.detect(filename, content, profiles)
 
     existing = conn.execute(
