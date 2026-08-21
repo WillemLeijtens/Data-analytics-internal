@@ -374,6 +374,23 @@ terugval (bv. vlak na een verse deploy); de in-app-sleutel wint als beide
 gezet zijn. Zonder geldige sleutel geeft een upload een nette 422 en blijft
 de rest van de app gewoon werken.
 
+### Dekkingsgaten (wat er in het laatste jaar ontbreekt)
+
+`engine/dekking.py` meldt per scope (merk x land x formule) wat er binnen het
+laatste jaar ontbreekt: een feed die stopt, later begint, of een gat heeft.
+Die meldingen hangen als driehoekje bij de artikelen die het aangaat, in de
+artikel- en assortimentsanalyse, én staan als kaart boven aan het dashboard
+(`dekkingsgaten` in de dashboardrespons — de sleutel `dekking` is daar al
+bezet door het YTD-venster per jaar). Het dashboard is waar de totalen gelezen
+worden, en juist daar bepaalt een stilgevallen feed of het cijfer nog iets
+betekent; aan het getal zelf is dat niet te zien.
+
+De melding onder de trendgrafiek ("X loopt t/m week Y — daarná telt de lijn
+zonder dat merk") laat weg wat de kaart al noemt: twee formuleringen van
+hetzelfde feit op één scherm lezen als twee problemen. Eén periode achterlopen
+meldt de kaart bewust niet (normale levercadans, zie `dekking.py`), dus die
+blijft onder de grafiek staan — de lijn zakt er wel degelijk van.
+
 ### Datagaten (meerjarige gaten in de aanlevering)
 
 `engine/dekking.py` vindt gaten *binnen* het laatste jaar — het filtert daar

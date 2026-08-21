@@ -793,6 +793,13 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         "tijdlijn": tijdlijn,
         "winkelanalyse": winkelanalyse(rows, caps, y_now),
         "filters": filters,
+        # Wat er in de aanlevering ontbreekt ("vanaf week 4 geen data voor
+        # België"). Stond alleen in de artikelanalyse, terwijl het dashboard
+        # de plek is waar de totalen worden gelezen — en juist daar bepaalt
+        # een stilgevallen feed of het cijfer nog iets betekent.
+        # Let op: de sleutel "dekking" is hierboven al bezet (het YTD-venster
+        # per jaar), vandaar deze naam.
+        "dekkingsgaten": dekking_mod.gaten(rows, caps),
     }
 
 

@@ -106,6 +106,42 @@ def test_assortiment_meldt_hetzelfde(client):
     assert _teksten(data["artikelen"][0]) == ["vanaf week 3 geen data voor België"]
 
 
+def test_dashboard_meldt_hetzelfde(client):
+    """Het dashboard is de plek waar de totalen gelezen worden; juist daar
+    bepaalt een stilgevallen feed of het cijfer nog iets betekent. Tot nu
+    stond de melding alleen in de artikel- en assortimentsanalyse."""
+    _kv(client, "nl.xlsx", "NLD", range(1, 11), sku="111")
+    _kv(client, "be.xlsx", "BEL", range(1, 3), sku="111")
+
+    data = client.get("/api/kruidvat/dashboard").json()
+    assert [g["tekst"] for g in data["dekkingsgaten"]] == \
+        ["vanaf week 3 geen data voor België"]
+    # Niet onder "dekking": die sleutel is bezet door het YTD-venster per jaar.
+    # JSON-sleutels zijn strings, ook als het jaartal een getal was.
+    assert "van" in data["ytd"]["dekking"][str(data["ytd"]["jaar"])]
+
+
+def test_dashboard_zonder_gaten_meldt_niets(client):
+    _kv(client, "nl.xlsx", "NLD", range(1, 11), sku="111")
+    _kv(client, "be.xlsx", "BEL", range(1, 11), sku="111")
+    assert client.get("/api/kruidvat/dashboard").json()["dekkingsgaten"] == []
+
+
+def test_dashboard_volgt_het_merkfilter(client):
+    """Filter je op één merk, dan gaat de melding over dat merk — anders
+    waarschuwt het scherm over een feed die niet in beeld is."""
+    _kv(client, "nl.xlsx", "NLD", range(1, 11), sku="111", merk="DEPEND")
+    _kv(client, "be.xlsx", "BEL", range(1, 3), sku="111", merk="DEPEND")
+    _kv(client, "nl2.xlsx", "NLD", range(1, 11), sku="222", merk="TWEEZERMAN")
+    _kv(client, "be2.xlsx", "BEL", range(1, 11), sku="222", merk="TWEEZERMAN")
+
+    alles = client.get("/api/kruidvat/dashboard").json()["dekkingsgaten"]
+    assert [g["merk"] for g in alles] == ["DEPEND"]
+
+    tw = client.get("/api/kruidvat/dashboard?merk=TWEEZERMAN").json()["dekkingsgaten"]
+    assert tw == []
+
+
 # ------------------------------------------------------------- formulering
 
 def test_maandfeed_zegt_maand():

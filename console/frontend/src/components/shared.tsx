@@ -480,6 +480,38 @@ export function DatagatenPaneel({ retailer }: { retailer: string }) {
   );
 }
 
+/** De aanlevering zelf, op het dashboard: welke feed is stilgevallen, begon
+ *  later, of heeft gaten. Stond alleen als driehoekje per artikel in de
+ *  artikelanalyse, maar de totalen op het dashboard worden er net zo goed
+ *  door vertekend — en daar leest niemand het aan de cijfers af. */
+export function DekkingsgatenKaart({ gaten }: { gaten?: { soort: string; tekst: string }[] }) {
+  if (!gaten?.length) return null;
+  // "Stopt" eerst: een feed die is stilgevallen vertekent het meest recente
+  // cijfer, en dat is het getal waar iemand nú naar kijkt.
+  const volgorde: Record<string, number> = { stopt: 0, onderbroken: 1, begint_later: 2 };
+  const gesorteerd = [...gaten].sort(
+    (a, b) => (volgorde[a.soort] ?? 9) - (volgorde[b.soort] ?? 9));
+  return (
+    <div className="card" style={{ marginTop: 14 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+        <span style={{ color: "var(--neg)", display: "inline-flex" }}>
+          <Driehoek kleur="currentColor" />
+        </span>
+        <b>De aanlevering is niet compleet</b>
+      </div>
+      <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0 25px" }}>
+        {gesorteerd.map((g) => (
+          <li key={g.tekst} className="sub" style={{ padding: "2px 0" }}>{g.tekst}</li>
+        ))}
+      </ul>
+      <p className="sub" style={{ margin: "8px 0 0 25px" }}>
+        De totalen hierboven tellen alleen wat er ís: waar een feed ontbreekt,
+        staat een lager cijfer dan de werkelijkheid.
+      </p>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------ Sparkline */
 
 export function Sparkline({ ytd, lytd, isEuro, periodWord, jaar }:
