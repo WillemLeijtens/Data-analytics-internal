@@ -230,8 +230,16 @@ Schema: zie `profiles/*.json` (PROMPT.md §3). Kernregels:
   twee retailers, elk met een eigen winkelbestand en een eigen tabblad. Het
   rapport noemt zelf geen land, dus dat staat in `constants.land` van het
   profiel — zonder dat zou Belgische omzet als Nederlandse in de analyses
-  belanden. Beide gebruiken dezelfde ingebouwde parser; de bestandsnaam
-  onderscheidt ze (`*ici?paris*.xlsx` tegenover `SO_*.xlsx`).
+  belanden. Beide gebruiken dezelfde ingebouwde parser; ze worden onderscheiden
+  op bestandsnaam (`*ici?paris*.xlsx` tegenover `SO_*.xlsx`) én, voor hernoemde
+  bestanden, op **winkelnummer** (`detection.winkelreeks`). ICI nummert per
+  land in een eigen reeks: BE 5xxx, NL 6xxx en 7xxx, zonder één overlappend
+  nummer (gecontroleerd op de echte bestanden van juli 2026: BE 5004–5308 over
+  135 winkels, NL 6051–7995 over 151). Dat is betrouwbaarder dan de plaatsnaam:
+  stadsnamen komen in beide landen voor en dezelfde stad staat er soms met
+  verschillende accenten in (LA LOUVIÈRE / LA LOUVIÉRE). Alle winkels moeten in
+  de reeks passen; past er één niet, dan is niet-herkennen (en dus vragen)
+  beter dan een half kloppende gok.
 - **Detectie**: filename-glob, met sheet/verplichte-headers als tiebreak, en
   voor ingebouwde parsers structuurherkenning van de inhoud (hernoemen mag).
   Nul matches ⇒ status **PROFIEL NODIG**. Concept-profielen doen nooit mee.
@@ -390,6 +398,37 @@ De uplift meet tegen de **mediaan** van de niet-actieperiodes uit hetzelfde
 jaar. Over jaren heen middelen vergelijkt door omzetregimes heen (Kruidvat
 2024: € 33k/week, 2025: € 47k). Onder drie basisperiodes volgt geen
 percentage maar "te weinig basisperiodes".
+
+### Percentages: na te rekenen uit wat er staat
+
+Eén regel door de hele app: **een percentage staat naast de twee getallen
+waaruit het volgt.** Een cijfer dat je niet kunt controleren vertrouw je
+terecht niet — en dat kostte de rest van het scherm zijn geloofwaardigheid.
+
+Dat speelde op de YTD-kaarten. Het Δ% werd op de *vergelijkbare basis*
+gerekend (per merk alleen het venster dat beide jaren leveren) terwijl de
+bedragen de *volledige* totalen waren. Allebei juist, maar samen op één kaart
+onmogelijk: "€ 4.419.442 tegen € 1.841.919, +29,2%" leest als een rekenfout.
+
+Nu staan er twee percentages, elk bij zijn eigen bedragen:
+
+* boven aan de kaart de kale verhouding tussen de twee totalen
+  (`totaal_delta_pct`);
+* eronder, alleen als hij afwijkt, de groei op vergelijkbare basis
+  (`delta_pct`) mét de bedragen waarop die rust (`vergelijkbaar.nu` /
+  `.vorig`).
+
+De vergelijkbare basis zelf is ongewijzigd — die correctie is er niet voor
+niets: zonder haar las "twee merk-feeds erbij" als groei en "een vergeten
+kwartaal" als daling, beide gereproduceerd op echte bestanden. Wat verandert
+is dat het scherm nu laat zien waar het cijfer vandaan komt in plaats van het
+te poneren.
+
+Dezelfde regel elders: de per-merktabel rekende al binnen het eigen venster van
+elk merk (bedragen en Δ% horen daar bij elkaar); in de artikelanalyse en bij de
+promotie-uplift staan de twee onderliggende bedragen nu in de hovertekst — de
+actie-omzet tegen de basislijn, met het aantal periodes waarover die mediaan
+gaat.
 
 ### Rotatie
 

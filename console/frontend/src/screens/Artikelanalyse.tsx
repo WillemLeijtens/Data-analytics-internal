@@ -90,7 +90,17 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
                 <Sparkline ytd={toSeries(a.sparkline.ytd, metric)} lytd={toSeries(a.sparkline.lytd, metric)}
                   isEuro={isEuro} periodWord={pWord} jaar={data.jaar} />
               </td>
-              <td><DeltaTag pct={a.ytd_delta_pct} /></td>
+              {/* Het percentage is op het vergelijkbare venster van het merk
+                  gerekend, niet op de totalen in de laatste kolom. Zonder de
+                  twee bedragen erbij is het niet na te rekenen — en dan lijkt
+                  het fout terwijl het juist zorgvuldiger is. */}
+              <td title={a.ytd_vergelijkbaar
+                ? `Op vergelijkbare basis: ${fmtEur(a.ytd_vergelijkbaar.nu)} tegen `
+                  + `${fmtEur(a.ytd_vergelijkbaar.vorig)} — alleen de periodes die `
+                  + "dit jaar én vorig jaar geleverd zijn voor dit merk."
+                : "Geen vergelijkbare periodes met vorig jaar."}>
+                <DeltaTag pct={a.ytd_delta_pct} />
+              </td>
               <td>{fmt(a.laatste_periode[metric])}</td>
               <td>{fmt(a.totaal_ytd[metric])}</td>
             </tr>

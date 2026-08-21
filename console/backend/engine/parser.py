@@ -203,9 +203,7 @@ def kandidaten(filename: str, content: bytes, profiles: list[Profile]) -> list[P
         op_naam = bevestigd or op_naam
     if op_naam:
         return op_naam
-    return [p for p in profiles
-            if (_builtin_content_match(content, p) if p.definition.get("builtin")
-                else _headers_match(content, p))]
+    return _op_inhoud(content, profiles)
 
 
 def detect(filename: str, content: bytes, profiles: list[Profile]) -> Profile | None:
@@ -225,19 +223,43 @@ def detect(filename: str, content: bytes, profiles: list[Profile]) -> Profile | 
     # No filename match: try content-based match as a last resort. Builtin
     # profiles recognise their format by structure, so a renamed or
     # prefix-mangled file (mail clients, downloads) still lands correctly.
-    confirmed = [p for p in profiles
-                 if (_builtin_content_match(content, p) if p.definition.get("builtin")
-                     else _headers_match(content, p))]
+    confirmed = _op_inhoud(content, profiles)
     return confirmed[0] if len(confirmed) == 1 else None
 
 
-def _builtin_content_match(content: bytes, profile: Profile) -> bool:
+def _op_inhoud(content: bytes, profiles: list[Profile]) -> list[Profile]:
+    """De profielen die dit bestand op INHOUD herkennen.
+
+    Twee stappen, want een onderscheidend kenmerk mag wel kiezen tussen
+    kandidaten maar niet stilletjes alles afwijzen. Herkennen meerdere
+    profielen dezelfde structuur (ICI NL en BE), dan beslist het extra
+    kenmerk — de winkelnummerreeks. Past geen enkele reeks, bijvoorbeeld
+    omdat ICI gaat hernummeren of een derde land levert, dan blijven alle
+    kandidaten staan en vraagt de app het gewoon. Dat is beter dan "geen
+    parser herkent dit bestand", want die melding stuurt naar het bouwen van
+    een parser die er al is.
+    """
+    basis = [p for p in profiles
+             if (_builtin_content_match(content, p, met_reeks=False)
+                 if p.definition.get("builtin") else _headers_match(content, p))]
+    if len(basis) < 2:
+        return basis
+    verfijnd = [p for p in basis
+                if not p.definition.get("builtin")
+                or _builtin_content_match(content, p, met_reeks=True)]
+    return verfijnd or basis
+
+
+def _builtin_content_match(content: bytes, profile: Profile,
+                           met_reeks: bool = True) -> bool:
     """Structure probes per builtin parser, so renamed files still land at
     the right retailer."""
     builtin = profile.definition.get("builtin")
     if builtin == "ici_maandrapport":
         from . import ici_maandrapport
-        return ici_maandrapport.content_matches(content)
+        return ici_maandrapport.content_matches(
+            content,
+            profile.definition["detection"].get("winkelreeks") if met_reeks else None)
     if builtin == "etos_datagrid":
         from . import etos_datagrid
         return etos_datagrid.content_matches(content)

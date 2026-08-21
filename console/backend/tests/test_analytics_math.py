@@ -187,17 +187,18 @@ def test_uplift_basislijn_blijft_binnen_hetzelfde_jaar(client):
 
 # ------------------------------------------------- vergelijkbare YoY-basis
 
+def kv(brand, gtin, sku, weeks):
+    """Eén Kruidvat-artikel met de opgegeven weken."""
+    import seed
+    return seed.make_dwh_xlsx([{"sku": sku, "gtin": gtin, "desc": brand,
+                                "brand": brand, "weeks": weeks}])
+
+
 def test_ytd_delta_alleen_op_vergelijkbare_merken(client):
     """Auditbevinding B1: 2025 bevatte één merk-feed en 2026 drie; het
     dashboard toonde "+42,1%" die vooral 'twee merken erbij' was. Het delta-
     percentage telt nu per merk alleen het venster met data in BEIDE jaren;
     de rest wordt gemeld in plaats van meegeteld."""
-    import seed
-
-    def kv(brand, gtin, sku, weeks):
-        return seed.make_dwh_xlsx([{"sku": sku, "gtin": gtin, "desc": brand,
-                                    "brand": brand, "weeks": weeks}])
-
     # TWEEZERMAN: beide jaren, maar de 2026-feed stopt op week 10.
     upload(client, "DWH__Sales_Tweezerman_KVNL_a.xlsx",
            kv("TWEEZERMAN", "31210001", "31210001",
@@ -224,6 +225,47 @@ def test_ytd_delta_alleen_op_vergelijkbare_merken(client):
     # De trend meldt dat de TWEEZERMAN-feed eerder stopt dan de rest.
     achter = client.get("/api/kruidvat/dashboard").json()["trend"]["feeds_achter"]
     assert achter == [{"merk": "TWEEZERMAN", "laatste_periode": "2026-W10"}]
+
+
+def test_elk_percentage_is_na_te_rekenen_uit_zichtbare_bedragen(client):
+    """Gemeld vanaf het scherm: "€ 4.419.442 tegen € 1.841.919, +29,2%" — die
+    drie getallen rijmen niet. Het percentage stond op de vergelijkbare basis
+    (terecht), de bedragen waren de volledige totalen (ook terecht), maar
+    samen op één kaart leest dat als een rekenfout.
+
+    Beide percentages horen er te staan MET de twee bedragen waaruit ze
+    volgen. Deze test rekent ze allebei na."""
+    upload(client, "DWH__Sales_Tweezerman_KVNL_a.xlsx",
+           kv("TWEEZERMAN", "31210001", "31210001",
+              {"202505": (10, 100.0), "202510": (10, 100.0), "202520": (10, 100.0),
+               "202605": (10, 150.0), "202610": (10, 150.0)}))
+    upload(client, "DWH__Sales_Alessandro_KVNL_b.xlsx",
+           kv("ALESSANDRO", "31210003", "31210003",
+              {"202605": (5, 500.0), "202620": (5, 500.0)}))
+
+    o = client.get("/api/kruidvat/dashboard").json()["ytd"]["omzet"]
+    # 1. Het percentage van de totalen volgt uit nu en vorig.
+    assert o["nu"] == pytest.approx(1300.0) and o["vorig"] == pytest.approx(300.0)
+    assert o["totaal_delta_pct"] == pytest.approx(
+        (o["nu"] - o["vorig"]) / o["vorig"] * 100, abs=0.05)
+    # 2. Het percentage op vergelijkbare basis volgt uit ZIJN bedragen.
+    v = o["vergelijkbaar"]
+    assert (v["nu"], v["vorig"]) == (pytest.approx(300.0), pytest.approx(200.0))
+    assert o["delta_pct"] == pytest.approx(
+        (v["nu"] - v["vorig"]) / v["vorig"] * 100, abs=0.05)
+    # 3. En ze verschillen hier echt — dat is precies waarom beide er staan.
+    assert o["totaal_delta_pct"] != pytest.approx(o["delta_pct"])
+
+
+def test_zonder_basisverschil_zeggen_beide_percentages_hetzelfde(client):
+    """Dekken beide jaren dezelfde periodes, dan is er niets uit te leggen en
+    hoort het scherm niet met twee cijfers te komen."""
+    upload(client, "DWH__Sales_Tweezerman_KVNL_gelijk.xlsx",
+           kv("TWEEZERMAN", "31210001", "31210001",
+              {"202505": (10, 100.0), "202605": (10, 150.0)}))
+    o = client.get("/api/kruidvat/dashboard").json()["ytd"]["omzet"]
+    assert o["delta_pct"] == pytest.approx(o["totaal_delta_pct"])
+    assert o["vergelijkbaar"]["nu"] == pytest.approx(o["nu"])
 
 
 def test_ytd_basis_volledig_bij_samenhangende_feed(client):

@@ -795,10 +795,30 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
             # zeggen — en dat leest als "niets verkocht".
             "dekking": dekking,
             "per_merk": ytd_per_merk,
+            # Twee percentages, elk bij de twee getallen waaruit ze volgen.
+            #
+            # `delta_pct` is de groei op VERGELIJKBARE basis: per merk alleen
+            # het venster dat beide jaren leveren. Dat is het cijfer waar een
+            # beslissing op hoort te rusten — zonder die correctie las "twee
+            # merk-feeds erbij" als groei en "een vergeten kwartaal" als
+            # daling (beide gereproduceerd op echte bestanden).
+            #
+            # Maar het stond náást de volledige totalen, en die twee zijn niet
+            # met elkaar te rijmen: "€ 4,4 mln tegen € 1,8 mln, +29%" leest als
+            # een rekenfout. Daarom gaan de bedragen mee waarop het percentage
+            # rust (`vergelijkbaar`), plus het percentage van de totalen zelf
+            # (`totaal_delta_pct`) — zodat elk percentage op het scherm na te
+            # rekenen is uit getallen die ernaast staan.
             "omzet": {"nu": ytd_now["omzet"], "vorig": ytd_prior["omzet"],
-                      "delta_pct": delta(comp_now_agg["omzet"], comp_prior_agg["omzet"])},
+                      "delta_pct": delta(comp_now_agg["omzet"], comp_prior_agg["omzet"]),
+                      "totaal_delta_pct": delta(ytd_now["omzet"], ytd_prior["omzet"]),
+                      "vergelijkbaar": {"nu": comp_now_agg["omzet"],
+                                        "vorig": comp_prior_agg["omzet"]}},
             "volume": {"nu": ytd_now["volume"], "vorig": ytd_prior["volume"],
-                       "delta_pct": delta(comp_now_agg["volume"], comp_prior_agg["volume"])},
+                       "delta_pct": delta(comp_now_agg["volume"], comp_prior_agg["volume"]),
+                       "totaal_delta_pct": delta(ytd_now["volume"], ytd_prior["volume"]),
+                       "vergelijkbaar": {"nu": comp_now_agg["volume"],
+                                         "vorig": comp_prior_agg["volume"]}},
             "omzet_per_winkel": {
                 "nu": per_store_now, "vorig": per_store_prior,
                 "delta_pct": delta(per_store_now, per_store_prior)
@@ -976,9 +996,15 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
         # jaren): een feed die korter of later loopt is geen omzetdaling.
         sel = merk_venster.get(a["merk"]) or None
         delta = None
+        vergelijkbaar = None
         if sel:
             nu_v = sum(v["omzet"] for q, v in a["ytd"].items() if q in sel)
             vorig_v = sum(v["omzet"] for q, v in a["lytd"].items() if q in sel)
+            # De bedragen gaan mee: het percentage is op dít venster gerekend,
+            # niet op de totalen die in de tabel staan. Zonder die twee
+            # getallen is het percentage niet na te rekenen — en dan lijkt het
+            # fout terwijl het juist zorgvuldiger is.
+            vergelijkbaar = {"nu": round(nu_v, 2), "vorig": round(vorig_v, 2)}
             if vorig_v:
                 delta = round((nu_v - vorig_v) / vorig_v * 100, 1)
         out.append({
@@ -989,7 +1015,7 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
             "status": status, "status_reden": reden,
             "dekking": dekking_mod.per_artikel(alle_gaten, a["rijen"], caps),
             "omzet_per_winkel_per_week": per_winkel_week,
-            "ytd_delta_pct": delta})
+            "ytd_delta_pct": delta, "ytd_vergelijkbaar": vergelijkbaar})
     out.sort(key=lambda x: -x["totaal_ytd"]["omzet"])
     return {"available": True, "artikelen": out, "laatste_periode": latest,
             "filters": filters, "dekking": alle_gaten,
