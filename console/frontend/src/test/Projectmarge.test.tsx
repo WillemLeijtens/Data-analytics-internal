@@ -69,6 +69,43 @@ describe("projectmarge", () => {
 // De driehoek hoort bij de kolom waarvan de drempel niet gehaald wordt: de
 // eenmalige vulling en de wekelijkse doorverkoop hebben elk hun eigen norm,
 // terwijl het percentage (brutomarge per stuk) in beide kolommen gelijk is.
+// Een one-shot is één levering: geen doorverkoop per week. De spiegel in het
+// scherm moet dat net zo rekenen als de engine (test_projecten.py), anders
+// verspringen de cijfers zodra je opslaat.
+describe("one-shot", () => {
+  const oneShot = { ...PROJECT, soort: "eenmalig" };
+
+  it("rekent geen terugkerende omzet, ook niet met een rotatie ingevuld", () => {
+    const b = bereken(oneShot, [PRODUCT], []);
+    expect(b.rijen[0].week_omzet).toBe(0);
+    expect(b.terugkerend.omzet).toBeNull();
+    expect(b.terugkerend.marge).toBeNull();
+    // De vulling rekent gewoon door.
+    expect(b.eenmalig.omzet).toBe(3000);
+    expect(b.totaal.omzet).toBe(3000);
+  });
+
+  it("zet looptijdkosten op de eenmalige marge", () => {
+    // Er is geen looptijdmarge om op te drukken; stil laten vallen zou het
+    // project winstgevender laten lijken dan het is.
+    const b = bereken(oneShot, [PRODUCT], KOSTEN);
+    expect(b.eenmalig.kosten).toBe(800);
+    expect(b.eenmalig.marge).toBeCloseTo(1000, 5);
+    expect(b.kostenBuitenBeeld).toBe(0);
+  });
+
+  it("houdt een one-shot niet aan de terugkerende drempel", () => {
+    const b = bereken(oneShot, [PRODUCT], [], { eenmalig: 50, terugkerend: 90 });
+    expect(b.terugkerend.voldoet).toBeNull();
+    expect(b.rijen[0].onderDrempel).toEqual([]);
+  });
+
+  it("doorlopend blijft het oude gedrag", () => {
+    expect(bereken(PROJECT, [PRODUCT], KOSTEN))
+      .toEqual(bereken({ ...PROJECT, soort: "doorlopend" }, [PRODUCT], KOSTEN));
+  });
+});
+
 describe("MargeBedrag", () => {
   const rij = (onder: { soort: string; drempel: number }[]) =>
     ({ margePct: 60, onderDrempel: onder });

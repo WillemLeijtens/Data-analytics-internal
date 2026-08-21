@@ -1026,6 +1026,9 @@ class ProjectBody(BaseModel):
     start_datum: str | None = None
     eind_datum: str | None = None
     status: str = "concept"       # concept | definitief — label, geen slot
+    # eenmalig = one-shot (één levering, geen doorverkoop per week).
+    # Standaard doorlopend: dat is wat de calculator altijd al rekende.
+    soort: str = "doorlopend"
     producten: list[dict] = []
     kosten: list[dict] = []
     door: str | None = None       # naam voor het logboek (zie _gebruiker)
@@ -1050,6 +1053,7 @@ def list_projecten():
             b = d["berekening"]
             out.append({
                 "id": row["id"], "naam": row["naam"], "status": row["status"],
+                "soort": row["soort"],
                 "retailer_id": row["retailer_id"],
                 "retailer_naam": namen.get(row["retailer_id"]),
                 "start_datum": row["start_datum"], "eind_datum": row["eind_datum"],
@@ -1069,9 +1073,9 @@ def create_project(body: ProjectBody, request: Request):
         wie = _gebruiker(request, body.door)
         cur = conn.execute(
             "INSERT INTO projecten (naam, retailer_id, omschrijving, start_datum, "
-            "eind_datum, status, aangemaakt_door) VALUES (?,?,?,?,?,?,?)",
+            "eind_datum, status, soort, aangemaakt_door) VALUES (?,?,?,?,?,?,?,?)",
             (body.naam.strip(), body.retailer_id, body.omschrijving,
-             body.start_datum, body.eind_datum, body.status, wie))
+             body.start_datum, body.eind_datum, body.status, body.soort, wie))
         project_id = cur.lastrowid
         # Elk project start met de vaste kostenregels: bedragen leeg, schakel
         # op de gebruikelijke stand. Weglaten wat niet speelt kan altijd nog.
@@ -1107,9 +1111,10 @@ def save_project(project_id: int, body: ProjectBody, request: Request):
         wie = _gebruiker(request, body.door)
         conn.execute(
             "UPDATE projecten SET naam=?, retailer_id=?, omschrijving=?, start_datum=?, "
-            "eind_datum=?, status=?, gewijzigd_op=datetime('now'), gewijzigd_door=? WHERE id=?",
+            "eind_datum=?, status=?, soort=?, gewijzigd_op=datetime('now'), "
+            "gewijzigd_door=? WHERE id=?",
             (body.naam.strip(), body.retailer_id, body.omschrijving,
-             body.start_datum, body.eind_datum, body.status, wie, project_id))
+             body.start_datum, body.eind_datum, body.status, body.soort, wie, project_id))
         conn.execute("DELETE FROM project_producten WHERE project_id=?", (project_id,))
         conn.executemany(
             "INSERT INTO project_producten (project_id, volgorde, naam, kostprijs, "

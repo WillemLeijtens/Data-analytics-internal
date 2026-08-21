@@ -432,6 +432,28 @@ het dashboard aan, dan komen alleen de mijlpalen van die merken mee; zonder
 filter alle. Mijlpalen van vóór de merkkolom hebben geen merk — die gelden
 retailer-breed en horen dus bij elke selectie.
 
+### One-shot of doorlopend
+
+Een project is **one-shot** (één levering: kerstactie, eenmalige display) of
+**doorlopend** (het product blijft in het schap en wordt bijbesteld). Bij een
+one-shot verdwijnen alle velden over terugkerende omzet uit het scherm —
+rotatie per winkel, de weekkolom, de kaart "Netto marge terugkerend" en de
+keuze "drukt op" bij de kosten — want er is geen doorverkoop per week om ze
+tegen af te zetten. Een getal dat nergens in meetelt leest als een fout in de
+berekening in plaats van als een keuze.
+
+Twee dingen die bewust níét stil gebeuren:
+
+* Een ingevulde rotatie blijft in de database staan. Terugzetten naar
+  doorlopend brengt de doorrekening ongewijzigd terug.
+* Kostenregels die op "looptijd" stonden, drukken bij een one-shot op de
+  eenmalige marge. Ze zouden anders uit elk totaal vallen en het project
+  winstgevender laten lijken dan het is.
+
+De drempel voor terugkerende omzet geldt niet voor een one-shot: er is geen
+terugkerende omzet, dus er valt niets te toetsen. Standaard is `doorlopend`,
+zodat bestaande projecten precies hetzelfde blijven uitkomen (migratie `016`).
+
 ### Drempelmarges (bedrijfsnormen)
 
 Instellingen → Bedrijfsnormen: de minimale nettomarge voor **eenmalige** en

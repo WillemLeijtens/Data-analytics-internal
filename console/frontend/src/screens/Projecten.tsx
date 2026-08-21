@@ -27,10 +27,15 @@ type Drempels = { eenmalig: number | null; terugkerend: number | null };
 // tijdens het typen (de backend rekent hetzelfde bij het opslaan).
 export function bereken(proj: any, producten: any[], kosten: any[],
                  drempels: Drempels = { eenmalig: null, terugkerend: null }) {
+  // One-shot: één levering, dus geen doorverkoop per week. De ingevulde
+  // rotatie blijft staan (omzetten naar doorlopend brengt hem terug) maar
+  // telt nergens in mee — zie engine/projecten.py, dat rekent hetzelfde.
+  const eenShot = proj.soort === "eenmalig";
+  if (eenShot) drempels = { ...drempels, terugkerend: null };
   const rijen = producten.map((p) => {
     const margeStuk = n(p.verkoopprijs) - n(p.kostprijs);
     const stuksEenmalig = n(p.aantal_winkels) * n(p.stuks_per_winkel);
-    const stuksWeek = n(p.aantal_winkels) * n(p.rotatie_per_winkel_per_week);
+    const stuksWeek = eenShot ? 0 : n(p.aantal_winkels) * n(p.rotatie_per_winkel_per_week);
     // Eén van de twee prijzen leeg (de ander wel ingevuld) rekent het
     // ontbrekende veld stil als €0 — dat kan de marge kunstmatig laten
     // lijken alsof kostprijs of verkoopprijs nul is (zie engine/projecten.py).
@@ -59,8 +64,11 @@ export function bereken(proj: any, producten: any[], kosten: any[],
       + "rekent het ontbrekende veld als €0, wat de marge kunstmatig kan op- of neerwaarts vertekenen.");
   const weken = looptijdWeken(proj.start_datum, proj.eind_datum);
   const bij = (k: any) => k.soort === "bijdrage_leverancier";
+  // Bij een one-shot is er geen looptijdmarge om op te drukken; alles telt
+  // mee op de eenmalige marge. Stil laten vallen zou het project
+  // winstgevender laten lijken dan het is.
   const somK = (terug: boolean, bijdrage: boolean) => kosten
-    .filter((k) => !!k.terugkerend === terug && bij(k) === bijdrage)
+    .filter((k) => (!!k.terugkerend && !eenShot) === terug && bij(k) === bijdrage)
     .reduce((a, k) => a + n(k.bedrag), 0);
   const kostenEenmalig = somK(false, false), bijdrageEenmalig = somK(false, true);
   const kostenLooptijd = somK(true, false), bijdrageLooptijd = somK(true, true);
@@ -68,8 +76,9 @@ export function bereken(proj: any, producten: any[], kosten: any[],
   const eenOmzet = som("eenmalig_omzet"), eenProductmarge = som("eenmalig_marge");
   const weekOmzet = som("week_omzet"), weekMarge = som("week_marge");
   const eenMarge = eenProductmarge - kostenEenmalig + bijdrageEenmalig;
-  const terugOmzet = weken ? weekOmzet * weken : null;
-  const terugMarge = weken ? weekMarge * weken - kostenLooptijd + bijdrageLooptijd : null;
+  const terugOmzet = weken && !eenShot ? weekOmzet * weken : null;
+  const terugMarge = weken && !eenShot
+    ? weekMarge * weken - kostenLooptijd + bijdrageLooptijd : null;
   const kostenBuitenBeeld = !weken && (kostenLooptijd || bijdrageLooptijd)
     ? kostenLooptijd - bijdrageLooptijd : 0;
   const pct = (m: number, o: number) => (o ? (m / o) * 100 : null);
@@ -329,7 +338,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
         </div>
         <table className="data">
           <thead><tr>
-            <th>Project</th><th>Status</th><th>Retailer</th><th>Looptijd</th>
+            <th>Project</th><th>Status</th><th>Soort</th><th>Retailer</th><th>Looptijd</th>
             <th style={{ textAlign: "right" }}>Eenmalige marge</th>
             <th style={{ textAlign: "right" }}>Terugkerende marge</th>
             <th>Laatst gewijzigd</th>
@@ -341,14 +350,21 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                 <td>{p.naam}<br /><span className="sub">{p.aantal_producten} product{p.aantal_producten === 1 ? "" : "en"}</span></td>
                 <td><span className={`tag ${p.status === "definitief" ? "pos" : ""}`}>
                   {p.status === "definitief" ? "Definitief" : "Concept"}</span></td>
+                <td><span className="tag"
+                  title={p.soort === "eenmalig"
+                    ? "One-shot: één levering, geen doorverkoop per week"
+                    : "Doorlopend: het product blijft in het schap en wordt bijbesteld"}>
+                  {p.soort === "eenmalig" ? "One-shot" : "Doorlopend"}</span></td>
                 <td>{p.retailer_naam ?? "—"}</td>
                 <td className="sub">{looptijdTekst(p.start_datum, p.eind_datum)}</td>
                 <Cel><Geld v={p.eenmalig.marge} accent />
                   {p.eenmalig.marge_pct != null && <><br />
                     <span className="sub">{p.eenmalig.marge_pct.toLocaleString("nl-NL")}%</span></>}</Cel>
-                <Cel><Geld v={p.terugkerend.marge} accent />
-                  {p.terugkerend.marge_pct != null && <><br />
-                    <span className="sub">{p.terugkerend.marge_pct.toLocaleString("nl-NL")}%</span></>}</Cel>
+                <Cel>{p.soort === "eenmalig"
+                  ? <span className="sub" title="One-shot: geen doorverkoop per week">n.v.t.</span>
+                  : <><Geld v={p.terugkerend.marge} accent />
+                      {p.terugkerend.marge_pct != null && <><br />
+                        <span className="sub">{p.terugkerend.marge_pct.toLocaleString("nl-NL")}%</span></>}</>}</Cel>
                 <td className="sub">{tijd(p.gewijzigd_op ?? p.aangemaakt_op)} · {p.gewijzigd_door ?? p.aangemaakt_door ?? "onbekend"}</td>
                 <td>
                   <button className="chip off" title="Project verwijderen"
@@ -361,7 +377,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                 </td>
               </tr>
             ))}
-            {!lijst.length && <tr><td colSpan={8} className="sub">
+            {!lijst.length && <tr><td colSpan={9} className="sub">
               Nog geen projecten — maak het eerste aan met de knop hierboven.</td></tr>}
           </tbody>
         </table>
@@ -372,6 +388,10 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
   /* ------------------------------------------------------------- editor */
   if (!d) return <LoadState error={error} reload={() => open(gekozen)} />;
   const b = bereken(d, d.producten, d.kosten, drempels);
+  // Bij een one-shot bestaat er geen doorverkoop per week. Die velden tonen
+  // is vragen om een getal dat nergens in meetelt — en dat leest als een
+  // fout in de berekening in plaats van als een keuze.
+  const eenShot = d.soort === "eenmalig";
 
   return (
     <>
@@ -392,6 +412,15 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                 onClick={() => zetVeld("status", "concept")}>Concept</button>
               <button className={d.status === "definitief" ? "on" : ""}
                 onClick={() => zetVeld("status", "definitief")}>Definitief</button>
+            </div>
+          </span>
+          <span className="sub">Soort
+            <Uitleg tekst="One-shot: één levering, bijvoorbeeld een kerstactie of een eenmalige display — er is dan geen doorverkoop per week, dus die velden verdwijnen. Doorlopend: het product blijft in het schap en wordt bijbesteld. Omzetten kan altijd; ingevulde rotaties blijven bewaard." /><br />
+            <div className="seg">
+              <button className={d.soort === "eenmalig" ? "on" : ""}
+                onClick={() => zetVeld("soort", "eenmalig")}>One-shot</button>
+              <button className={d.soort !== "eenmalig" ? "on" : ""}
+                onClick={() => zetVeld("soort", "doorlopend")}>Doorlopend</button>
             </div>
           </span>
           <label className="sub">Retailer
@@ -431,11 +460,13 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
             <th>Verkoopprijs<Uitleg tekst="De prijs per stuk die je de retailer factureert (jouw omzet), exclusief btw." /></th>
             <th>Winkels<Uitleg tekst="Het aantal winkels dat aan dit project meedoet voor dit product." /></th>
             <th>Stuks / winkel<Uitleg tekst="De eerste vulling: hoeveel stuks elke winkel bij de start afneemt. Dit voedt de EENMALIGE omzet en marge." /></th>
-            <th>Rotatie / winkel / wk<Uitleg tekst="De verwachte doorverkoop per winkel per week ná de eerste vulling. Dit voedt de TERUGKERENDE omzet en marge." /></th>
+            {!eenShot && <th>Rotatie / winkel / wk<Uitleg tekst="De verwachte doorverkoop per winkel per week ná de eerste vulling. Dit voedt de TERUGKERENDE omzet en marge." /></th>}
             <th style={{ textAlign: "right" }}>Eenmalig omzet / marge
               <Uitleg tekst="De eerste vulling: winkels x stuks per winkel, tegen verkoopprijs. Het percentage is de brutomarge per stuk — (verkoopprijs − kostprijs) / verkoopprijs — dus zonder de projectkosten; die drukken op de nettomarge bij Resultaat." /></th>
-            <th style={{ textAlign: "right" }}>Per week omzet / marge
-              <Uitleg tekst="De doorverkoop per week: winkels x rotatie, tegen verkoopprijs. Hetzelfde margepercentage als bij de vulling — het is per stuk — maar het wordt aan de drempel voor TERUGKERENDE omzet gehouden." /></th>
+            {!eenShot && (
+              <th style={{ textAlign: "right" }}>Per week omzet / marge
+                <Uitleg tekst="De doorverkoop per week: winkels x rotatie, tegen verkoopprijs. Hetzelfde margepercentage als bij de vulling — het is per stuk — maar het wordt aan de drempel voor TERUGKERENDE omzet gehouden." /></th>
+            )}
             <th></th>
           </tr></thead>
           <tbody>
@@ -447,18 +478,20 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                 <td>{invoer("producten", i, "verkoopprijs", 74, undefined, true)}</td>
                 <td>{invoer("producten", i, "aantal_winkels", 64, "1")}</td>
                 <td>{invoer("producten", i, "stuks_per_winkel", 64, "1")}</td>
-                <td>{invoer("producten", i, "rotatie_per_winkel_per_week", 64, "0.1")}</td>
+                {!eenShot && <td>{invoer("producten", i, "rotatie_per_winkel_per_week", 64, "0.1")}</td>}
                 <Cel>{fmtEur(b.rijen[i].eenmalig_omzet)}<br />
                   <MargeBedrag r={b.rijen[i]} bedrag={b.rijen[i].eenmalig_marge}
                     soort="eenmalige omzet" /></Cel>
-                <Cel>{fmtEur(b.rijen[i].week_omzet)}<br />
-                  <MargeBedrag r={b.rijen[i]} bedrag={b.rijen[i].week_marge}
-                    soort="terugkerende omzet" /></Cel>
+                {!eenShot && (
+                  <Cel>{fmtEur(b.rijen[i].week_omzet)}<br />
+                    <MargeBedrag r={b.rijen[i]} bedrag={b.rijen[i].week_marge}
+                      soort="terugkerende omzet" /></Cel>
+                )}
                 <td><button className="chip off" title="Product verwijderen"
                   onClick={() => wegRij("producten", i)}>✕</button></td>
               </tr>
             ))}
-            {!d.producten.length && <tr><td colSpan={9} className="sub">Nog geen producten.</td></tr>}
+            {!d.producten.length && <tr><td colSpan={eenShot ? 7 : 9} className="sub">Nog geen producten.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -469,15 +502,18 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
 
       <h2>Kosten</h2>
       <p className="sub" style={{ marginTop: -6, maxWidth: 640 }}>
-        Elke regel drukt op één van de twee uitkomsten: <b>eenmalig</b> gaat van de
-        marge van de eerste vulling af, <b>looptijd</b> van de terugkerende marge over
-        de hele looptijd.
+        {eenShot
+          ? <>Bij een one-shot is er maar één uitkomst: elke kostenregel gaat van de
+              marge van de levering af.</>
+          : <>Elke regel drukt op één van de twee uitkomsten: <b>eenmalig</b> gaat van de
+              marge van de eerste vulling af, <b>looptijd</b> van de terugkerende marge over
+              de hele looptijd.</>}
       </p>
       <table className="data" style={{ maxWidth: 720 }}>
         <thead><tr>
           <th>Kostenpost</th>
           <th>Bedrag<Uitleg tekst="Totaalbedrag voor dit project (dus niet per week). Leeg = niet van toepassing." /></th>
-          <th>Drukt op<Uitleg tekst="Eenmalig: hoort bij de start (listing fee, display). Looptijd: hoort bij de doorverkoop over de hele looptijd (marketing, co-op, logistiek)." /></th>
+          {!eenShot && <th>Drukt op<Uitleg tekst="Eenmalig: hoort bij de start (listing fee, display). Looptijd: hoort bij de doorverkoop over de hele looptijd (marketing, co-op, logistiek)." /></th>}
           <th></th>
         </tr></thead>
         <tbody>
@@ -494,14 +530,19 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                   </span>
                 )}</td>
               <td>{invoer("kosten", i, "bedrag", 96, undefined, true)}</td>
-              <td>
-                <div className="seg">
-                  <button className={!k.terugkerend ? "on" : ""}
-                    onClick={() => zetRij("kosten", i, "terugkerend", 0)}>eenmalig</button>
-                  <button className={k.terugkerend ? "on" : ""}
-                    onClick={() => zetRij("kosten", i, "terugkerend", 1)}>looptijd</button>
-                </div>
-              </td>
+              {/* Bij een one-shot valt er niets te kiezen: alles drukt op de
+                  ene marge. De opgeslagen keuze blijft staan voor als het
+                  project alsnog doorlopend wordt. */}
+              {!eenShot && (
+                <td>
+                  <div className="seg">
+                    <button className={!k.terugkerend ? "on" : ""}
+                      onClick={() => zetRij("kosten", i, "terugkerend", 0)}>eenmalig</button>
+                    <button className={k.terugkerend ? "on" : ""}
+                      onClick={() => zetRij("kosten", i, "terugkerend", 1)}>looptijd</button>
+                  </div>
+                </td>
+              )}
               <td><button className="chip off" title="Kostenregel verwijderen"
                 onClick={() => wegRij("kosten", i)}>✕</button></td>
             </tr>
@@ -539,7 +580,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
           <div className="kpi-sub">omzet {fmtEur(b.eenmalig.omzet)}</div>
           <div className="kpi-sub">productmarge {fmtEur(b.eenmalig.productmarge)} − kosten {fmtEur(b.eenmalig.kosten)}{b.eenmalig.bijdrage > 0 && <> + bijdrage {fmtEur(b.eenmalig.bijdrage)}</>}</div>
         </div>
-        <div className="card">
+        {!eenShot && <div className="card">
           <div className="kpi-label">Netto marge terugkerend — de doorverkoop
             <Uitleg tekst="Rotatie x winkels, per week en opgeteld over de looptijd — de verwachte herbevoorrading nadat de vulling in het schap ligt. Nettomarge = productmarge over de looptijd min de looptijdkosten, plus de looptijd-bijdrage leverancier. Het percentage is de nettomarge gedeeld door de terugkerende omzet. Zonder start- en einddatum is er alleen een weekbeeld." /></div>
           <div className="kpi-value" style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -558,10 +599,12 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
               : "vul start- en einddatum in voor het looptijdtotaal"}
           </div>
           <div className="kpi-sub">per week: {fmtEur(b.terugkerend.weekOmzet)} omzet · {fmtEur(b.terugkerend.weekMarge)} marge</div>
-        </div>
+        </div>}
         <div className="card">
           <div className="kpi-label">Totaal project
-            <Uitleg tekst="Vulling plus doorverkoop bij elkaar. De doorverkoop geldt als herbevoorrading (nieuwe omzet, want het schap wordt bijgevuld). Wordt er aan het einde níét herbevoorraad, dan komt een deel van de doorverkoop uit de al gefactureerde vulling en is dit totaal een bovengrens." /></div>
+            <Uitleg tekst={eenShot
+              ? "Bij een one-shot is dit hetzelfde als de levering: er is geen doorverkoop die er nog bij komt. Alle kostenregels drukken op deze marge."
+              : "Vulling plus doorverkoop bij elkaar. De doorverkoop geldt als herbevoorrading (nieuwe omzet, want het schap wordt bijgevuld). Wordt er aan het einde níét herbevoorraad, dan komt een deel van de doorverkoop uit de al gefactureerde vulling en is dit totaal een bovengrens."} /></div>
           <div className="kpi-value">{fmtEur(b.totaal.marge)}
             <PctTag v={b.totaal.omzet ? (b.totaal.marge / b.totaal.omzet) * 100 : null} /></div>
           <div className="kpi-sub">netto marge · omzet {fmtEur(b.totaal.omzet)}</div>

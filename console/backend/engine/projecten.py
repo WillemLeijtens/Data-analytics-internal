@@ -117,7 +117,17 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict],
     drempels = drempels or {}
     d_een = drempels.get("eenmalig")
     d_terug = drempels.get("terugkerend")
+    # Een one-shot is één levering: er ís geen doorverkoop per week. De
+    # ingevulde rotatie blijft in de database staan (omzetten naar doorlopend
+    # brengt hem terug), maar telt nergens in mee — en de drempel voor
+    # terugkerende omzet geldt hier niet, want er is geen terugkerende omzet.
+    eenmalig_project = project.get("soort") == "eenmalig"
+    if eenmalig_project:
+        d_terug = None
     regels = [_product(p) for p in producten]
+    for r in regels:
+        if eenmalig_project:
+            r["week_stuks"] = r["week_omzet"] = r["week_marge"] = 0.0
 
     # Haalt een product de drempel op zijn BRUTOmarge al niet, dan haalt het
     # project hem zeker niet: de kosten komen er nog af. Dat is precies het
@@ -135,7 +145,12 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict],
     def kosten_en_bijdrage(terugkerend: bool) -> tuple[float, float]:
         uit = bij = 0.0
         for k in kosten:
-            if bool(k.get("terugkerend")) != terugkerend:
+            # Bij een one-shot is er geen looptijdmarge om op te drukken. Alles
+            # op de eenmalige marge zetten is de enige plek waar het nog eerlijk
+            # meetelt; ze stil laten vallen zou het project winstgevender laten
+            # lijken dan het is.
+            regel_terugkerend = bool(k.get("terugkerend")) and not eenmalig_project
+            if regel_terugkerend != terugkerend:
                 continue
             if k.get("soort") == BIJDRAGE:
                 bij += _n(k.get("bedrag"))
@@ -154,8 +169,9 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict],
     # Zonder looptijd is er wél een weekbeeld maar geen looptijdtotaal; de
     # looptijdkosten kunnen dan nergens tegen afgezet worden en de
     # terugkerende marge blijft None in plaats van een schijngetal.
-    terug_omzet = round(week_omzet * weken, 2) if weken else None
-    terug_productmarge = round(week_marge * weken, 2) if weken else None
+    terug_omzet = round(week_omzet * weken, 2) if weken and not eenmalig_project else None
+    terug_productmarge = round(week_marge * weken, 2) \
+        if weken and not eenmalig_project else None
     terug_marge = round(terug_productmarge - kosten_looptijd + bijdrage_looptijd, 2) \
         if terug_productmarge is not None else None
 
@@ -180,6 +196,7 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict],
 
     return {
         "producten": regels,
+        "soort": "eenmalig" if eenmalig_project else "doorlopend",
         "looptijd_weken": weken,
         "waarschuwingen": waarschuwingen,
         "eenmalig": {
@@ -216,6 +233,7 @@ def bereken(project: dict, producten: list[dict], kosten: list[dict],
 
 
 STATUSSEN = {"concept", "definitief"}
+SOORTEN = {"eenmalig", "doorlopend"}
 
 
 def valideer(project: dict, producten: list[dict], kosten: list[dict]) -> None:
@@ -224,6 +242,9 @@ def valideer(project: dict, producten: list[dict], kosten: list[dict]) -> None:
         raise ValueError("projectnaam is verplicht")
     if project.get("status") not in STATUSSEN:
         raise ValueError(f"status moet concept of definitief zijn, niet {project.get('status')!r}")
+    if project.get("soort", "doorlopend") not in SOORTEN:
+        raise ValueError("soort moet eenmalig of doorlopend zijn, niet "
+                         f"{project.get('soort')!r}")
     for veld in ("start_datum", "eind_datum"):
         w = project.get(veld)
         if w:
