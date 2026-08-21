@@ -686,6 +686,28 @@ async def test_profile(retailer_id: str, file: UploadFile):
 
 # ---------------------------------------------------------------- settings
 
+def _getelde_winkels(conn, retailer_id: str) -> list[dict]:
+    """Per merk/land/formule het aantal winkels MET omzet in het laatste jaar
+    dat de feed levert — of [] als deze retailer geen winkelniveau aanlevert.
+
+    Zelfde regel als analytics.stores_with_revenue: een winkel die het hele
+    jaar niets verkocht hoort niet in de noemer, want die drukt de gemiddelde
+    omzet per winkel omlaag zonder dat er iets veranderd is.
+    """
+    jaar = conn.execute(
+        "SELECT MAX(substr(periode, 1, 4)) FROM sellout_facts "
+        "WHERE retailer_id=? AND winkel_id IS NOT NULL", (retailer_id,)).fetchone()[0]
+    if not jaar:
+        return []
+    return [dict(r) | {"jaar": int(jaar)} for r in conn.execute(
+        "SELECT merk, land, banner, COUNT(DISTINCT winkel_id) AS aantal_winkels "
+        "  FROM sellout_facts "
+        " WHERE retailer_id=? AND winkel_id IS NOT NULL AND omzet <> 0 "
+        "   AND substr(periode, 1, 4) = ? "
+        " GROUP BY merk, land, banner ORDER BY merk, land, banner",
+        (retailer_id, jaar))]
+
+
 @app.get("/api/{retailer_id}/instellingen")
 def get_settings(retailer_id: str):
     with db.get_conn() as conn:
@@ -715,6 +737,13 @@ def get_settings(retailer_id: str):
                 "  FROM sellout_facts WHERE retailer_id=? AND artikel_ean IS NOT NULL "
                 " GROUP BY merk, land, banner, artikel_ean "
                 " ORDER BY merk, land, banner, artikel_naam", (retailer_id,))],
+            # Winkelaantallen die de app zelf kan TELLEN, omdat de feed
+            # winkelniveau levert (ICI, en Etos zodra de export Store/City
+            # bevat). Dan hoeft niemand ze in te vullen — en belangrijker:
+            # een handmatig getal dat afwijkt van de telling zou stilletjes
+            # winnen in schermen die het wél gebruiken. Het jaar staat erbij,
+            # want dit is het aantal winkels MET omzet in dat jaar.
+            "feed_winkels": _getelde_winkels(conn, retailer_id),
             "artikel_winkels": [dict(r) for r in conn.execute(
                 "SELECT merk, land, banner, artikel_ean, aantal_winkels "
                 "FROM artikel_winkelaantallen WHERE retailer_id=?", (retailer_id,))],

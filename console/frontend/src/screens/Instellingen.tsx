@@ -318,6 +318,10 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
   const artikelenVan = (s: any) => (data.feed_artikelen ?? [])
     .filter((a: any) => wtKey(a) === wtKey(s));
   const awKey = (a: any) => `${wtKey(a)}|${a.artikel_ean}`;
+  // Wat de app zelf geteld heeft uit de aanlevering, per scope. Alleen
+  // gevuld als de feed winkelniveau levert.
+  const geteld: Record<string, any> = {};
+  for (const g of data.feed_winkels ?? []) geteld[wtKey(g)] = g;
   const awWaarde = (s: any, ean: string) =>
     aw.find((a) => awKey(a) === `${wtKey(s)}|${ean}`)?.aantal_winkels ?? null;
   const zetAw = (s: any, ean: string, waarde: number | null) => {
@@ -459,7 +463,23 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
                 </div>
               )}</td>
               <td>{winkelsReadonly
-                ? <span className="sub" title="Komt uit de aanlevering">uit feed</span>
+                ? (() => {
+                    // Automatisch ingevuld: het aantal winkels MET omzet in
+                    // het laatste jaar van de feed. Het getal tonen in plaats
+                    // van alleen "uit feed" — anders moet je het elders
+                    // opzoeken om te weten waar de app mee rekent.
+                    const g = geteld[wtKey(s)];
+                    if (!g) return <span className="sub" title="Komt uit de aanlevering">uit feed</span>;
+                    return (
+                      <>
+                        <b>{g.aantal_winkels}</b>
+                        <div className="sub" style={{ fontSize: 10.5, marginTop: 2 }}>
+                          automatisch ingevuld
+                          <Uitleg tekst={`Geteld uit het importbestand: winkels met omzet voor dit merk in ${g.jaar}. Niet handmatig in te vullen — een afwijkend getal zou stilletjes winnen in de schermen die het gebruiken. Winkels die het hele jaar niets verkochten tellen niet mee; die zouden de omzet per winkel omlaag drukken zonder dat er iets veranderd is.`} />
+                        </div>
+                      </>
+                    );
+                  })()
                 : s.niveau === "artikel"
                 ? <>
                     {/* Het merkgetal is hier een AFGELEIDE: het grootste

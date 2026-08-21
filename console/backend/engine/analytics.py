@@ -24,11 +24,28 @@ LABEL_TEST = "PROFIEL IN TEST"
 
 
 def retailer_caps(conn, retailer_id: str) -> tuple[dict | None, list[str]]:
-    """(capabilities, base_labels) for a retailer, or (None, []) without profile."""
+    """(capabilities, base_labels) for a retailer, or (None, []) without profile.
+
+    De profielvlag `winkel` zegt wat het FORMAAT aankan. Etos levert dezelfde
+    widget met én zonder de kolommen Store/City, dus wordt hij hier getoetst
+    aan de geladen feiten: claimt de app winkelniveau terwijl er geen enkel
+    winkelnummer in de data staat, dan zou het instellingenscherm het
+    handmatige winkelaantal blokkeren ("uit feed") zonder dat er iets te
+    tellen valt. Zolang er nog helemaal geen feiten zijn blijft de vlag
+    staan — dan is er niets dat hem tegenspreekt.
+    """
     prof = active_profile(conn, retailer_id)
     if not prof:
         return None, []
     caps = capabilities(prof.definition)
+    if caps.get("winkel"):
+        heeft_feiten = conn.execute(
+            "SELECT 1 FROM sellout_facts WHERE retailer_id=? LIMIT 1",
+            (retailer_id,)).fetchone()
+        met_winkel = conn.execute(
+            "SELECT 1 FROM sellout_facts WHERE retailer_id=? AND winkel_id IS NOT NULL "
+            "LIMIT 1", (retailer_id,)).fetchone()
+        caps["winkel"] = bool(met_winkel) or not heeft_feiten
     return caps, ([LABEL_TEST] if prof.status == "test" else [])
 
 

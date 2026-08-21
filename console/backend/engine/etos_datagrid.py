@@ -19,12 +19,20 @@ artikel×week-matrix:
     per week gecontroleerd, zodat een stille overstap van Etos op een
     andere weekkalender de import laat FALEN in plaats van weken verkeerd
     te labelen.
-  * subkoppen: UPC Name | UPC ID | Brand | [Sales € TY | Units TY] × weken.
+  * subkoppen: UPC Name | UPC ID | Brand | [Store | City] |
+    [Sales € TY | Units TY] × weken.
 
 Feiten: omzet + volume per artikel per week per merk. Land is constant NL
-(Etos is alleen in Nederland actief); winkel- en bannerniveau levert dit
-formaat niet. Merk komt binnen als "TWEEZERMAN - 2278"; het interne nummer
-wordt gestript zodat merknamen matchen met de andere retailers.
+(Etos is alleen in Nederland actief); bannerniveau levert dit formaat niet.
+
+WINKELNIVEAU is optioneel: dezelfde widget wordt met én zonder de kolommen
+Store/City geëxporteerd. Zit Store erin, dan is elke rij een artikel×winkel
+en komt het winkelnummer mee ("ETOS BEVERWIJK - 6311" -> 6311); zonder die
+kolommen blijft het gedrag exact als voorheen. Beide exports moeten blijven
+werken, want de bestaande analyses draaien op de oude.
+
+Merk komt binnen als "TWEEZERMAN - 2278"; het interne nummer wordt gestript
+zodat merknamen matchen met de andere retailers.
 """
 
 from __future__ import annotations
@@ -49,6 +57,10 @@ YTD_RANGE_RE = re.compile(r"Fiscal\s+YTD\s+(\d{6})-(\d{6})")
 ENDING_RE = re.compile(r"Ending\s+(\d{2}/\d{2}/\d{4})")
 BRAND_COUNT_RE = re.compile(r"Brand\s*\((\d+)\)")
 BRAND_SUFFIX_RE = re.compile(r"\s*-\s*\d+$")
+# "ETOS BEVERWIJK - 6311": de naam met het filiaalnummer erachter. Het nummer
+# is de sleutel (namen verschillen per export in spelling), de naam is voor
+# het scherm.
+STORE_RE = re.compile(r"^(.*?)\s*-\s*(\d+)$")
 
 
 def _norm(v) -> str:
@@ -157,6 +169,9 @@ def parse_workbook(content: bytes) -> dict:
         col_merk = subhdr.index("Brand")
     except ValueError as e:
         raise ValueError(f"subkop mist een verplichte kolom: {e}")
+    # Store/City zijn optioneel: dezelfde widget bestaat met en zonder.
+    col_winkel = subhdr.index("Store") if "Store" in subhdr else None
+    col_stad = subhdr.index("City") if "City" in subhdr else None
     weekcols: list[tuple[str, int]] = []      # (canonieke periode, sales-kolom)
     gezien: list[str] = []
     for j, cel in enumerate(weekhdr):
@@ -233,6 +248,21 @@ def parse_workbook(content: bytes) -> dict:
             continue
         merk = BRAND_SUFFIX_RE.sub("", merk_raw).strip().upper()
         naam = _norm(r[col_naam] if col_naam < len(r) else "") or None
+        winkel_id = winkel_naam = None
+        if col_winkel is not None:
+            rauw = _norm(r[col_winkel] if col_winkel < len(r) else "")
+            m_store = STORE_RE.match(rauw)
+            if not m_store:
+                # Zonder nummer is een winkel niet te volgen over exports
+                # heen; stil doorgaan zou de winkeltelling laten zakken
+                # zonder dat iemand het merkt.
+                raise ValueError(
+                    f"winkel {rauw!r} heeft niet de vorm 'NAAM - nummer'; "
+                    "winkelniveau is dan niet betrouwbaar te bepalen")
+            winkel_naam, winkel_id = m_store.group(1).strip() or None, m_store.group(2)
+            stad = _norm(r[col_stad] if col_stad is not None and col_stad < len(r) else "")
+            if stad and winkel_naam:
+                winkel_naam = f"{winkel_naam} ({stad})"
         for periode, j in weekcols:
             sales = _num(r[j] if j < len(r) else None)
             units = _num(r[j + 1] if j + 1 < len(r) else None)
@@ -242,7 +272,7 @@ def parse_workbook(content: bytes) -> dict:
                 lege_cellen += 1
             facts.append({
                 "periode": periode, "land": "NL", "banner": None,
-                "winkel_id": None, "winkel_naam": None,
+                "winkel_id": winkel_id, "winkel_naam": winkel_naam,
                 "merk": merk, "artikel_ean": upc, "artikel_naam": naam,
                 "volume": int(round(units or 0)), "omzet": float(sales or 0.0),
             })
@@ -252,12 +282,17 @@ def parse_workbook(content: bytes) -> dict:
                          "een gevulde Data Grid-export?")
 
     # Consistentie, fail-closed — het maximum dat dit formaat te bieden heeft.
-    keys = [(f["artikel_ean"], f["periode"]) for f in facts]
+    # De sleutel is artikel×winkel×week zodra er winkelniveau is; zonder de
+    # winkel erin zou elke tweede winkel met hetzelfde artikel als dubbeling
+    # gelden en de import onterecht afbreken.
+    keys = [(f["artikel_ean"], f["winkel_id"], f["periode"]) for f in facts]
     if len(keys) != len(set(keys)):
-        dubbel = sorted({k for k in keys if keys.count(k) > 1})[:5]
-        raise ValueError(f"dubbele artikel/week-combinaties in het bestand "
-                         f"(o.a. {dubbel}); import afgebroken om dubbeltelling "
-                         "te voorkomen")
+        uniek = len(set(keys))
+        dubbel = sorted({k for k in keys if keys.count(k) > 1})[:5] if len(keys) - uniek < 50 \
+            else []
+        raise ValueError(f"{len(keys) - uniek} dubbele artikel/winkel/week-combinatie(s) "
+                         f"in het bestand{f' (o.a. {dubbel})' if dubbel else ''}; "
+                         "import afgebroken om dubbeltelling te voorkomen")
     merken = {f["merk"] for f in facts}
     if len(merken) != verwacht_merken:
         raise ValueError(
