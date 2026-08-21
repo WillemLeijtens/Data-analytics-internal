@@ -882,8 +882,8 @@ class BedrijfBody(BaseModel):
 
 @app.put("/api/systeem/bedrijf")
 def zet_bedrijfsinstellingen(body: BedrijfBody, request: Request):
-    for naam, waarde in (("eenmalige omzet", body.drempel_eenmalig_pct),
-                         ("terugkerende omzet", body.drempel_terugkerend_pct)):
+    for naam, waarde in (("de eenmalige marge", body.drempel_eenmalig_pct),
+                         ("de terugkerende marge", body.drempel_terugkerend_pct)):
         # 100% marge kan niet (dan is de kostprijs nul) en negatief is geen
         # drempel maar een doel om verlies te maken.
         if waarde is not None and not 0 <= waarde < 100:

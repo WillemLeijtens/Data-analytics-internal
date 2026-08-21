@@ -55,7 +55,7 @@ describe("projectmarge", () => {
   it("meldt een product dat de drempel op zijn brutomarge al niet haalt", () => {
     // Dan haalt het project hem zeker niet: de kosten komen er nog af.
     const b = bereken(PROJECT, [PRODUCT], KOSTEN, { eenmalig: 70, terugkerend: 50 });
-    expect(b.rijen[0].onderDrempel).toEqual([{ soort: "eenmalige omzet", drempel: 70 }]);
+    expect(b.rijen[0].onderDrempel).toEqual([{ soort: "eenmalige marge", drempel: 70 }]);
   });
 
   it("velt geen oordeel over terugkerend zonder looptijd", () => {
@@ -111,25 +111,25 @@ describe("MargeBedrag", () => {
     ({ margePct: 60, onderDrempel: onder });
 
   it("zet het percentage achter het bedrag", () => {
-    render(<MargeBedrag r={rij([])} bedrag={1800} soort="eenmalige omzet" />);
+    render(<MargeBedrag r={rij([])} bedrag={1800} soort="eenmalige marge" />);
     expect(screen.getByText(/60%/)).toBeInTheDocument();
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
   it("waarschuwt alleen in de kolom waarvan de drempel niet gehaald wordt", () => {
-    const r = rij([{ soort: "terugkerende omzet", drempel: 70 }]);
-    const { unmount } = render(<MargeBedrag r={r} bedrag={150} soort="eenmalige omzet" />);
+    const r = rij([{ soort: "terugkerende marge", drempel: 70 }]);
+    const { unmount } = render(<MargeBedrag r={r} bedrag={150} soort="eenmalige marge" />);
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     unmount();
 
-    render(<MargeBedrag r={r} bedrag={150} soort="terugkerende omzet" />);
+    render(<MargeBedrag r={r} bedrag={150} soort="terugkerende marge" />);
     expect(screen.getByRole("img").getAttribute("title")).toMatch(
-      /Brutomarge 60% ligt onder de drempel van 70% voor terugkerende omzet/);
+      /Brutomarge 60% ligt onder de drempel van 70% voor de terugkerende marge/);
   });
 
   it("zonder percentage staat er alleen een bedrag", () => {
     render(<MargeBedrag r={{ margePct: null, onderDrempel: [] }} bedrag={0}
-      soort="eenmalige omzet" />);
+      soort="eenmalige marge" />);
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });
 });

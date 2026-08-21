@@ -47,8 +47,8 @@ export function bereken(proj: any, producten: any[], kosten: any[],
     // zeker niet: de kosten komen er nog af. Dat hoort hier gezegd te
     // worden, bij het invullen, niet pas bij het totaal.
     const onderDrempel = margePct == null ? [] : ([
-      { soort: "eenmalige omzet", drempel: drempels.eenmalig },
-      { soort: "terugkerende omzet", drempel: drempels.terugkerend },
+      { soort: "eenmalige marge", drempel: drempels.eenmalig },
+      { soort: "terugkerende marge", drempel: drempels.terugkerend },
     ].filter((d) => d.drempel != null && margePct < d.drempel) as
       { soort: string; drempel: number }[]);
     return {
@@ -130,7 +130,7 @@ function Cel({ children }: { children: React.ReactNode }) {
  *  de drempel waaraan het gehouden wordt verschilt wél per kolom. */
 export function MargeBedrag({ r, bedrag, soort }:
   { r: { margePct: number | null; onderDrempel: { soort: string; drempel: number }[] };
-    bedrag: number; soort: "eenmalige omzet" | "terugkerende omzet" }) {
+    bedrag: number; soort: "eenmalige marge" | "terugkerende marge" }) {
   const onder = r.onderDrempel.find((o) => o.soort === soort);
   const pct = r.margePct == null ? null
     : r.margePct.toLocaleString("nl-NL", { maximumFractionDigits: 1 });
@@ -140,7 +140,7 @@ export function MargeBedrag({ r, bedrag, soort }:
       {onder && (
         <MargeWaarschuwing tekst={
           `Brutomarge ${pct}% ligt onder de drempel van `
-          + `${onder.drempel.toLocaleString("nl-NL")}% voor ${soort}. `
+          + `${onder.drempel.toLocaleString("nl-NL")}% voor de ${soort}. `
           + "De projectkosten komen er nog af, dus de nettomarge wordt lager."} />
       )}
       <span className={bedrag >= 0 ? "sig-green" : "sig-red"}>
@@ -465,7 +465,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
               <Uitleg tekst="De eerste vulling: winkels x stuks per winkel, tegen verkoopprijs. Het percentage is de brutomarge per stuk — (verkoopprijs − kostprijs) / verkoopprijs — dus zonder de projectkosten; die drukken op de nettomarge bij Resultaat." /></th>
             {!eenShot && (
               <th style={{ textAlign: "right" }}>Per week omzet / marge
-                <Uitleg tekst="De doorverkoop per week: winkels x rotatie, tegen verkoopprijs. Hetzelfde margepercentage als bij de vulling — het is per stuk — maar het wordt aan de drempel voor TERUGKERENDE omzet gehouden." /></th>
+                <Uitleg tekst="De doorverkoop per week: winkels x rotatie, tegen verkoopprijs. Hetzelfde margepercentage als bij de vulling — het is per stuk — maar het wordt aan de drempel voor de TERUGKERENDE marge gehouden." /></th>
             )}
             <th></th>
           </tr></thead>
@@ -481,11 +481,11 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
                 {!eenShot && <td>{invoer("producten", i, "rotatie_per_winkel_per_week", 64, "0.1")}</td>}
                 <Cel>{fmtEur(b.rijen[i].eenmalig_omzet)}<br />
                   <MargeBedrag r={b.rijen[i]} bedrag={b.rijen[i].eenmalig_marge}
-                    soort="eenmalige omzet" /></Cel>
+                    soort="eenmalige marge" /></Cel>
                 {!eenShot && (
                   <Cel>{fmtEur(b.rijen[i].week_omzet)}<br />
                     <MargeBedrag r={b.rijen[i]} bedrag={b.rijen[i].week_marge}
-                      soort="terugkerende omzet" /></Cel>
+                      soort="terugkerende marge" /></Cel>
                 )}
                 <td><button className="chip off" title="Product verwijderen"
                   onClick={() => wegRij("producten", i)}>✕</button></td>
@@ -573,7 +573,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
               <MargeWaarschuwing tekst={
                 `${b.eenmalig.pct!.toLocaleString("nl-NL", { maximumFractionDigits: 1 })}% `
                 + `nettomarge haalt de drempel van ${b.eenmalig.drempel!.toLocaleString("nl-NL")}% `
-                + "voor eenmalige omzet niet (Instellingen → Bedrijfsnormen)."} />
+                + "voor de eenmalige marge niet (Instellingen → Bedrijfsnormen)."} />
             )}
             {fmtEur(b.eenmalig.marge)}<PctTag v={b.eenmalig.pct} />
           </div>
@@ -588,7 +588,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
               <MargeWaarschuwing tekst={
                 `${b.terugkerend.pct!.toLocaleString("nl-NL", { maximumFractionDigits: 1 })}% `
                 + `nettomarge haalt de drempel van ${b.terugkerend.drempel!.toLocaleString("nl-NL")}% `
-                + "voor terugkerende omzet niet (Instellingen → Bedrijfsnormen)."} />
+                + "voor de terugkerende marge niet (Instellingen → Bedrijfsnormen)."} />
             )}
             {b.terugkerend.marge != null
               ? <>{fmtEur(b.terugkerend.marge)}<PctTag v={b.terugkerend.pct} /></> : "—"}
