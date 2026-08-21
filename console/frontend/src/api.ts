@@ -76,3 +76,20 @@ export async function apiSend<T = any>(path: string, method: string, body?: any)
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return r.json();
 }
+
+// Een meerjarig gat in de aanlevering: een jaar dat tussen twee leveringen
+// helemaal ontbreekt. Of dat klopt (het merk lag er dat jaar niet) of niet
+// (een bestand is nooit ingelezen) staat niet in de data — dat oordeel komt
+// van een mens, en daarom hoort het bij het gat.
+export type Datagat = {
+  merk: string | null; land: string | null; banner: string | null;
+  van_jaar: number; tot_jaar: number; jaren_met_data: number[]; tekst: string;
+  oordeel: "klopt" | "klopt_niet" | null;
+  toelichting: string | null;
+  beoordeeld_door: string | null; beoordeeld_op: string | null;
+};
+
+export type Milestone = {
+  id: number; jaar: number; periode_nummer: number; tekst: string;
+  aangemaakt_op: string; aangemaakt_door: string | null;
+};

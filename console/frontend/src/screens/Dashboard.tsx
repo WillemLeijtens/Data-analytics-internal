@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { fmtEur, fmtNum, merkKleur } from "../api";
+import { Milestone, apiSend, fmtEur, fmtNum, merkKleur } from "../api";
 import { ShellCtx } from "../App";
-import { BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, TijdlijnPanelen, TrendChart, useApi } from "../components/shared";
+import { BrandDot, DatagatMelding, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, TijdlijnPanelen, TrendChart, useApi } from "../components/shared";
 
 export type Verdeling = {
   label: string; merk?: string; waarde: number;
@@ -296,6 +296,10 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
   if (land.length) q.set("land", land.join(","));
   if (banner.length) q.set("banner", banner.join(","));
   const { data, error, reload } = useApi(`/${ctx.retailer}/dashboard?${q}`);
+  // Mijlpalen hangen aan de retailer, niet aan de filterkeuze: "introductie
+  // nieuw item" blijft hetzelfde punt op de tijdas, welk merk je ook aanvinkt.
+  const { data: mijlpalen, reload: herlaadMijlpalen } =
+    useApi<Milestone[]>(`/${ctx.retailer}/milestones`);
 
   if (!data) return <LoadState error={error} reload={reload} />;
   if (!data.available) return <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />;
@@ -339,6 +343,7 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       <h1>Dashboard — {ctx.card?.naam}</h1>
       <LevelStrip labels={data.labels} retailer={ctx.retailer}
         uitleg={data.labels.includes("OP MAANDNIVEAU") ? "Deze retailer levert per maand; alle analyses rekenen met maanden." : undefined} />
+      <DatagatMelding retailer={ctx.retailer} go={ctx.go} />
 
       <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap", margin: "16px 0 4px" }}>
         {filters.merk.length > 0 && (<span><span className="eyebrow">Merk </span><MultiChips all={filters.merk} sel={merk} onChange={setMerk} /></span>)}
@@ -511,7 +516,16 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       </div>
       <div className="card">
         <TrendChart series={data.trend.series[effMetric] ?? {}} years={data.trend.jaren}
-          isEuro={effMetric !== "volume"} periodWord={pWord} />
+          isEuro={effMetric !== "volume"} periodWord={pWord}
+          mijlpalen={mijlpalen ?? []}
+          onMijlpaal={async (m) => {
+            await apiSend(`/${ctx.retailer}/milestones`, "POST", m);
+            herlaadMijlpalen();
+          }}
+          onMijlpaalWeg={async (id) => {
+            await apiSend(`/${ctx.retailer}/milestones/${id}`, "DELETE");
+            herlaadMijlpalen();
+          }} />
         {data.trend.feeds_achter?.length > 0 && (
           // De som zakt vanaf het punt waar een merk-feed stopt; zonder deze
           // melding leest een achterlopende levering als omzetdaling.

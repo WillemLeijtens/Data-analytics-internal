@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { BRAND_COLORS, apiGet, fmtEur, fmtNum, merkKleur } from "../api";
+import { BRAND_COLORS, Datagat, Milestone, apiGet, apiSend, fmtEur, fmtNum, merkKleur } from "../api";
 import { ThemaModus, bepaalThema, bewaarModus, leesModus, pasToe, volgSysteem } from "../theme";
 
 /** Uniform laden/fout-gedrag voor de leesschermen: elke API-fout wordt een
@@ -106,10 +106,23 @@ export function DeltaTag({ pct }: { pct: number | null }) {
 
 type Series = Record<number, Record<number, number>>; // year -> periodNum -> value
 
-export function TrendChart({ series, years, isEuro, periodWord }:
-  { series: Series; years: number[]; isEuro: boolean; periodWord: string }) {
+export function TrendChart({ series, years, isEuro, periodWord,
+  mijlpalen, onMijlpaal, onMijlpaalWeg }:
+  { series: Series; years: number[]; isEuro: boolean; periodWord: string;
+    mijlpalen?: Milestone[];
+    onMijlpaal?: (m: { jaar: number; periode_nummer: number; tekst: string }) => Promise<void>;
+    onMijlpaalWeg?: (id: number) => Promise<void> }) {
   const W = 860, H = 260, PAD = 42;
   const [hover, setHover] = useState<number | null>(null);
+  // Mijlpalen: standaard aan, want een onverklaarde piek in de lijn is
+  // precies waarvoor ze bestaan. Uit kunnen zetten blijft nodig zodra het er
+  // veel zijn en je puur naar het verloop wil kijken.
+  const [toonMijlpalen, setToonMijlpalen] = useState(true);
+  const [mijlpaalJaar, setMijlpaalJaar] = useState<number | null>(null);
+  const [nieuw, setNieuw] = useState<{ jaar: number; periode: number } | null>(null);
+  const [tekst, setTekst] = useState("");
+  const [bezig, setBezig] = useState(false);
+  const [fout, setFout] = useState<string | null>(null);
   const ref = useRef<SVGSVGElement>(null);
 
   const nums = Array.from(new Set(years.flatMap((y) => Object.keys(series[y] ?? {}).map(Number)))).sort((a, b) => a - b);
@@ -121,11 +134,46 @@ export function TrendChart({ series, years, isEuro, periodWord }:
   // oudste -> nieuwste; de jaartokens contrasteren in beide thema's.
   const colors = ["var(--c-y1)", "var(--c-y2)", "var(--c-y3)"];
 
-  const onMove = (e: React.MouseEvent) => {
+  // Het jaar bepaalt de kleur van de lijn; een mijlpaal krijgt de kleur van
+  // het jaar waar hij bij hoort, anders wijst hij naar de verkeerde lijn.
+  const jaarKleur = (jr: number) => {
+    const i = years.indexOf(jr);
+    return i < 0 ? "var(--t-fg3)" : colors[colors.length - years.length + i];
+  };
+
+  /** De periode waar de muis het dichtst bij zit — de x-as is discreet, dus
+   *  "waar je klikt" is altijd één week of maand. */
+  const dichtstbij = (e: React.MouseEvent) => {
     const rect = ref.current!.getBoundingClientRect();
     const px = ((e.clientX - rect.left) / rect.width) * W;
-    const nearest = nums.reduce((a, b) => (Math.abs(x(b) - px) < Math.abs(x(a) - px) ? b : a));
-    setHover(nearest);
+    return nums.reduce((a, b) => (Math.abs(x(b) - px) < Math.abs(x(a) - px) ? b : a));
+  };
+  const onMove = (e: React.MouseEvent) => setHover(dichtstbij(e));
+
+  const kanMijlpalen = !!onMijlpaal;
+  const alle = mijlpalen ?? [];
+  const jarenMetMijlpaal = Array.from(new Set(alle.map((m) => m.jaar))).sort();
+  const zichtbaar = toonMijlpalen
+    ? alle.filter((m) => mijlpaalJaar == null || m.jaar === mijlpaalJaar)
+    : [];
+  // Buiten de getoonde periodes valt niets te tekenen — de x-as loopt maar
+  // zo ver als de data reikt. In de lijst eronder staat hij wél, met
+  // vermelding, zodat een mijlpaal niet spoorloos verdwijnt.
+  const opDeAs = (m: Milestone) => m.periode_nummer >= minX && m.periode_nummer <= maxX;
+
+  const plaats = async () => {
+    if (!nieuw || !onMijlpaal || !tekst.trim()) return;
+    setBezig(true);
+    setFout(null);
+    try {
+      await onMijlpaal({ jaar: nieuw.jaar, periode_nummer: nieuw.periode, tekst: tekst.trim() });
+      setNieuw(null);
+      setTekst("");
+    } catch (e: any) {
+      setFout(String(e?.message ?? e));
+    } finally {
+      setBezig(false);
+    }
   };
 
   const fmt = (v: number) => (isEuro ? fmtEur(v) : fmtNum(Math.round(v)));
@@ -136,7 +184,15 @@ export function TrendChart({ series, years, isEuro, periodWord }:
       <svg ref={ref} viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", cursor: "crosshair" }}
         role="img"
         aria-label={`${isEuro ? "Omzet" : "Volume"} per ${periodWord.toLowerCase()}, jaren ${years.join(", ")}`}
-        onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        onMouseMove={onMove} onMouseLeave={() => setHover(null)}
+        onClick={kanMijlpalen ? (e) => {
+          const periode = dichtstbij(e);
+          // Voorstel: het laatste jaar van de grafiek — dat is bijna altijd
+          // het jaar waarover je iets vastlegt. Aanpasbaar in het formulier.
+          setNieuw({ jaar: years[years.length - 1], periode });
+          setTekst("");
+          setFout(null);
+        } : undefined}>
         <title>{`${isEuro ? "Omzet" : "Volume"} per ${periodWord.toLowerCase()}, jaar op jaar (${years.join(", ")})`}</title>
         {[0.25, 0.5, 0.75, 1].map((f) => (
           <line key={f} x1={PAD} x2={W - PAD} y1={y(maxY * f)} y2={y(maxY * f)} stroke="var(--t-grid)" />
@@ -158,6 +214,21 @@ export function TrendChart({ series, years, isEuro, periodWord }:
           const d = pts.map((p, j) => `${j ? "L" : "M"}${x(p)},${y(series[yr][p])}`).join(" ");
           return <path key={yr} d={d} fill="none" stroke={colors[colors.length - years.length + i]} strokeWidth={yr === years[years.length - 1] ? 2 : 1.4} />;
         })}
+        {zichtbaar.filter(opDeAs).map((m) => (
+          <g key={m.id} style={{ pointerEvents: "none" }}>
+            <line x1={x(m.periode_nummer)} x2={x(m.periode_nummer)} y1={PAD - 6} y2={H - PAD}
+              stroke={jaarKleur(m.jaar)} strokeWidth={1} strokeDasharray="2 4" opacity={0.75} />
+            {/* Ruitje op de bovenrand: opvallend genoeg om te zien, klein
+                genoeg om de lijnen niet te overstemmen. */}
+            <path d={`M${x(m.periode_nummer)},${PAD - 11} l4,4 l-4,4 l-4,-4 z`}
+              fill={jaarKleur(m.jaar)} />
+            <title>{`${periodWord} ${m.periode_nummer} ${m.jaar} — ${m.tekst}`}</title>
+          </g>
+        ))}
+        {nieuw && (
+          <line x1={x(nieuw.periode)} x2={x(nieuw.periode)} y1={PAD - 11} y2={H - PAD}
+            stroke={jaarKleur(nieuw.jaar)} strokeWidth={1.5} />
+        )}
         {hover != null && (
           <g>
             <line x1={x(hover)} x2={x(hover)} y1={PAD} y2={H - PAD} stroke="var(--t-fg3)" strokeDasharray="3 3" />
@@ -168,19 +239,210 @@ export function TrendChart({ series, years, isEuro, periodWord }:
           </g>
         )}
       </svg>
-      {hover != null && (
+      {hover != null && !nieuw && (
         <div className="tooltip" style={{ left: `${hoverPct}%`, top: 8 }}>
           <b>{periodWord} {hover}</b>
           {years.map((yr) => (
             <div key={yr}>{yr}: {series[yr]?.[hover] != null ? fmt(series[yr][hover]) : "—"}</div>
           ))}
+          {zichtbaar.filter((m) => m.periode_nummer === hover).map((m) => (
+            <div key={m.id} style={{ marginTop: 4 }}>
+              <span style={{ color: jaarKleur(m.jaar) }}>◆</span> {m.jaar}: {m.tekst}
+            </div>
+          ))}
+          {/* Zonder deze regel weet niemand dat de grafiek klikbaar is. */}
+          {kanMijlpalen && <div className="sub" style={{ marginTop: 4 }}>klik om een mijlpaal te zetten</div>}
         </div>
       )}
-      <div className="sub" style={{ display: "flex", gap: 16, marginTop: 6 }}>
+      {nieuw && (
+        <div className="tooltip" style={{ left: `${Math.min(70, Math.max(4, (x(nieuw.periode) / W) * 100))}%`, top: 8, width: 250, textAlign: "left" }}>
+          <b>Mijlpaal op {periodWord.toLowerCase()} {nieuw.periode}</b>
+          <div style={{ display: "flex", gap: 6, margin: "8px 0" }}>
+            <select value={nieuw.jaar} aria-label="Jaar"
+              onChange={(e) => setNieuw({ ...nieuw, jaar: Number(e.target.value) })}>
+              {years.map((yr) => <option key={yr} value={yr}>{yr}</option>)}
+            </select>
+            <input autoFocus value={tekst} placeholder="wat gebeurde er?" aria-label="Wat gebeurde er?"
+              style={{ flex: 1, minWidth: 0 }} maxLength={200}
+              onChange={(e) => setTekst(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") plaats();
+                if (e.key === "Escape") setNieuw(null);
+              }} />
+          </div>
+          {fout && <p className="sub sig-red">{fout}</p>}
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="btn" disabled={bezig || !tekst.trim()} onClick={plaats}>
+              {bezig ? "Bezig…" : "Plaatsen"}
+            </button>
+            <button className="btn ghost" onClick={() => setNieuw(null)}>Annuleren</button>
+          </div>
+        </div>
+      )}
+      <div className="sub" style={{ display: "flex", gap: 16, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
         {years.map((yr, i) => (
           <span key={yr}><span style={{ display: "inline-block", width: 14, height: 2, background: colors[colors.length - years.length + i], verticalAlign: "middle", marginRight: 5 }} />{yr}</span>
         ))}
+        {kanMijlpalen && alle.length > 0 && (
+          <span style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
+            <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+              <input type="checkbox" checked={toonMijlpalen} role="switch"
+                onChange={(e) => setToonMijlpalen(e.target.checked)} />
+              Mijlpalen ({alle.length})
+            </label>
+            {toonMijlpalen && jarenMetMijlpaal.length > 1 && (
+              <span className="chips" style={{ display: "inline-flex", gap: 6 }}>
+                {jarenMetMijlpaal.map((jr) => (
+                  <button key={jr} className={`chip ${mijlpaalJaar === jr ? "" : "off"}`}
+                    aria-pressed={mijlpaalJaar === jr}
+                    onClick={() => setMijlpaalJaar(mijlpaalJaar === jr ? null : jr)}>{jr}</button>
+                ))}
+              </span>
+            )}
+          </span>
+        )}
       </div>
+      {zichtbaar.length > 0 && (
+        <ul style={{ listStyle: "none", padding: 0, margin: "10px 0 0" }}>
+          {zichtbaar.map((m) => (
+            <li key={m.id} className="sub" style={{ display: "flex", gap: 8, alignItems: "baseline", padding: "3px 0" }}>
+              <span style={{ color: jaarKleur(m.jaar) }}>◆</span>
+              <span className="mono" style={{ whiteSpace: "nowrap" }}>
+                {periodWord.toLowerCase()} {m.periode_nummer} {m.jaar}
+              </span>
+              <span style={{ color: "var(--t-fg)" }}>{m.tekst}</span>
+              {!opDeAs(m) && <span>· buiten de getoonde periodes</span>}
+              {onMijlpaalWeg && (
+                <button className="btn ghost" style={{ marginLeft: "auto", padding: "1px 8px" }}
+                  aria-label={`Mijlpaal ${m.tekst} verwijderen`}
+                  onClick={() => onMijlpaalWeg(m.id)}>Verwijderen</button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------ Datagaten */
+
+/** Meerjarige gaten in de aanlevering: een jaar dat tussen twee leveringen
+ *  helemaal ontbreekt. Of dat klopt (het merk lag er dat jaar niet) of niet
+ *  (een bestand is nooit ingelezen) staat niet in de data — daarom vraagt
+ *  het scherm het, in plaats van er zelf een conclusie aan te hangen. */
+export function useDatagaten(retailer: string | null) {
+  const { data, error, reload } = useApi<{ beschikbaar: boolean; gaten: Datagat[] }>(
+    retailer && retailer !== "alle" ? `/${retailer}/datagaten` : null);
+  const gaten = data?.gaten ?? [];
+  return { gaten, onbeoordeeld: gaten.filter((g) => !g.oordeel), error, reload };
+}
+
+/** Melding op het dashboard: alleen zichtbaar zolang er iets te oordelen is.
+ *  Een beoordeeld gat is geen melding meer — dan is het een aantekening. */
+export function DatagatMelding({ retailer, go }:
+  { retailer: string; go: (r: string, s: string) => void }) {
+  const { onbeoordeeld } = useDatagaten(retailer);
+  if (!onbeoordeeld.length) return null;
+  const n = onbeoordeeld.length;
+  return (
+    <div className="card" style={{ marginTop: 14, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+      <span className="brand-dot dot-orange" style={{ margin: 0 }} />
+      <span>
+        <b>{n === 1 ? "1 datagat" : `${n} datagaten`} zonder oordeel.</b>{" "}
+        <span className="sub">
+          {onbeoordeeld[0].tekst}{n > 1 ? ` (en nog ${n - 1})` : ""} — zolang niemand
+          zegt of dat klopt, weet je niet wat een vergelijking over dat jaar betekent.
+        </span>
+      </span>
+      <button className="btn ghost" style={{ marginLeft: "auto" }}
+        onClick={() => go(retailer, "import-status")}>Beoordelen</button>
+    </div>
+  );
+}
+
+function DatagatRij({ retailer, gat, na }:
+  { retailer: string; gat: Datagat; na: () => void }) {
+  const [open, setOpen] = useState(!gat.oordeel);
+  const [toelichting, setToelichting] = useState(gat.toelichting ?? "");
+  const [bezig, setBezig] = useState(false);
+  const [fout, setFout] = useState<string | null>(null);
+
+  const oordeel = async (waarde: "klopt" | "klopt_niet") => {
+    setBezig(true);
+    setFout(null);
+    try {
+      await apiSend(`/${retailer}/datagaten`, "PUT", {
+        merk: gat.merk, land: gat.land, banner: gat.banner,
+        van_jaar: gat.van_jaar, tot_jaar: gat.tot_jaar,
+        oordeel: waarde, toelichting: toelichting.trim() || null,
+      });
+      setOpen(false);
+      na();
+    } catch (e: any) {
+      setFout(String(e?.message ?? e));
+    } finally {
+      setBezig(false);
+    }
+  };
+
+  return (
+    <div style={{ padding: "10px 0", borderTop: "1px solid var(--t-card2)" }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+        <span className={`brand-dot dot-${gat.oordeel ? "green" : "orange"}`} style={{ margin: 0 }} />
+        <span>{gat.tekst}</span>
+        <span className="sub">· wel data in {gat.jaren_met_data.join(", ")}</span>
+        {gat.oordeel && !open && (
+          <span style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "baseline" }}>
+            <span className={`tag ${gat.oordeel === "klopt" ? "" : "accent"}`}>
+              {gat.oordeel === "klopt" ? "Klopt" : "Klopt niet"}
+            </span>
+            <button className="btn ghost" style={{ padding: "1px 8px" }}
+              onClick={() => setOpen(true)}>Wijzigen</button>
+          </span>
+        )}
+      </div>
+      {gat.oordeel && !open && (gat.toelichting || gat.beoordeeld_door) && (
+        <p className="sub" style={{ margin: "4px 0 0 19px" }}>
+          {gat.toelichting}
+          {gat.beoordeeld_door ? ` — ${gat.beoordeeld_door}` : ""}
+        </p>
+      )}
+      {open && (
+        <div style={{ display: "flex", gap: 8, marginTop: 8, marginLeft: 19, flexWrap: "wrap" }}>
+          <input value={toelichting} placeholder="toelichting (optioneel)" maxLength={300}
+            aria-label="Toelichting" style={{ flex: "1 1 260px", minWidth: 0 }}
+            onChange={(e) => setToelichting(e.target.value)} />
+          <button className="btn" disabled={bezig} onClick={() => oordeel("klopt")}>Klopt</button>
+          <button className="btn ghost" disabled={bezig} onClick={() => oordeel("klopt_niet")}>Klopt niet</button>
+          {gat.oordeel && (
+            <button className="btn ghost" onClick={() => setOpen(false)}>Annuleren</button>
+          )}
+          {fout && <p className="sub sig-red" style={{ width: "100%" }}>{fout}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** De volledige lijst met te beoordelen gaten voor één retailer. */
+export function DatagatenPaneel({ retailer }: { retailer: string }) {
+  const { gaten, onbeoordeeld, reload } = useDatagaten(retailer);
+  if (!gaten.length) return null;
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div className="eyebrow">
+        Datagaten{onbeoordeeld.length ? ` · ${onbeoordeeld.length} zonder oordeel` : " · allemaal beoordeeld"}
+      </div>
+      <p className="sub" style={{ margin: "6px 0 0" }}>
+        Een jaar dat tussen twee leveringen ontbreekt. Uit de data is niet af te
+        leiden of het merk er dat jaar niet lag of dat een bestand nooit is
+        ingelezen — vandaar de vraag.
+      </p>
+      {gaten.map((g) => (
+        <DatagatRij key={`${g.merk}|${g.land}|${g.banner}|${g.van_jaar}|${g.tot_jaar}`}
+          retailer={retailer} gat={g} na={reload} />
+      ))}
     </div>
   );
 }

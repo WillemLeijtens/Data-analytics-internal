@@ -374,6 +374,36 @@ terugval (bv. vlak na een verse deploy); de in-app-sleutel wint als beide
 gezet zijn. Zonder geldige sleutel geeft een upload een nette 422 en blijft
 de rest van de app gewoon werken.
 
+### Datagaten (meerjarige gaten in de aanlevering)
+
+`engine/dekking.py` vindt gaten *binnen* het laatste jaar — het filtert daar
+eerst op (`jaar = max(...)`). Een merk met doorverkoop in 2024, niets in 2025
+en weer wel in 2026 valt daar structureel buiten. `engine/datagaten.py` kijkt
+juist over de jaren heen: per scope (merk/land/formule) de jaren die tussen de
+eerste en de laatste levering ontbreken, en alleen jaren waarin de retailer als
+geheel wél leverde — anders is het geen gat maar een periode waarin de
+samenwerking nog niet liep. Het begin en het einde van een reeks tellen dus
+niet mee, en twee losse gaten zijn twee meldingen.
+
+Of zo'n gat klopt (het merk lag dat jaar niet bij deze retailer) of niet (een
+bestand is nooit ingelezen) is **niet uit de data af te leiden**: in beide
+gevallen staat er niets. Daarom meldt de app het en vraagt om een oordeel
+(Import status → Datagaten; het dashboard toont een melding zolang er iets
+onbeoordeeld is). Het oordeel hangt aan de scope plus het jaarbereik, niet aan
+een id van een bevinding — de detectie draait elke import opnieuw en zou anders
+telkens een "nieuw" gat opleveren dat al beoordeeld was.
+
+### Mijlpalen op de trendgrafiek
+
+Klikken in de lijngrafiek op het dashboard zet een mijlpaal op de aangeklikte
+week of maand ("introductie nieuw item", "folderactie"). De x-as is het
+periodenummer met de jaren als losse lijnen, dus een mijlpaal hoort bij een
+jaar én een periodenummer: week 12 van 2025 ligt op dezelfde x als week 12 van
+2026, maar op een andere lijn — vandaar de jaarkeuze in het formulier en de
+kleur van dat jaar op de marker. Ze staan standaard aan, zijn met een schuifje
+uit te zetten en per jaar te filteren. Ze hangen aan de retailer, niet aan de
+filterkeuze: hetzelfde punt op de tijdas, welk merk je ook aanvinkt.
+
 ### Back-up
 
 Beide databases worden dagelijks gekopieerd door de `backup`-service in
