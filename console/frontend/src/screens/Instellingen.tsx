@@ -136,23 +136,24 @@ function BedrijfsnormenKaart() {
       <h2>Bedrijfsnormen</h2>
       <div className="card">
         <p className="sub" style={{ margin: "0 0 12px", maxWidth: 620 }}>
-          De minimale nettomarge waaraan een project moet voldoen. De
-          projectcalculator toetst er direct aan en zet een rode driehoek bij
-          wat het niet haalt. Leeg laten betekent: niet meten.
+          De minimale nettomarge waaraan een project moet voldoen, als
+          percentage van de omzet. De projectcalculator toetst er direct aan en
+          zet een rode driehoek bij wat het niet haalt. Leeg laten betekent:
+          niet meten.
         </p>
         <div style={{ display: "flex", gap: 22, flexWrap: "wrap", alignItems: "flex-end" }}>
           <label>
-            <span className="eyebrow">Drempel eenmalige omzet</span>
-            <Uitleg tekst="De eerste vulling: sell-in min de eenmalige kosten (listing fee, display). Een investering die je één keer doet — vaak mag die krapper dan de doorverkoop." /><br />
+            <span className="eyebrow">Drempel eenmalige marge</span>
+            <Uitleg tekst="De marge op de eerste vulling: sell-in min de eenmalige kosten (listing fee, display), gedeeld door die omzet. Een investering die je één keer doet — vaak mag die krapper dan de doorverkoop." /><br />
             <input type="number" min={0} max={99.9} step="0.1" size={6} value={een}
-              aria-label="Drempel eenmalige omzet" placeholder="—"
+              aria-label="Drempel eenmalige marge" placeholder="—"
               onChange={(e) => setEen(e.target.value)} /> %
           </label>
           <label>
-            <span className="eyebrow">Drempel terugkerende omzet</span>
-            <Uitleg tekst="De doorverkoop over de looptijd, min de looptijdkosten (marketing, co-op, logistiek). Dit is wat het project het jaar rond moet dragen." /><br />
+            <span className="eyebrow">Drempel terugkerende marge</span>
+            <Uitleg tekst="De marge op de doorverkoop over de looptijd: die omzet min de looptijdkosten (marketing, co-op, logistiek), gedeeld door die omzet. Dit is wat het project het jaar rond moet dragen." /><br />
             <input type="number" min={0} max={99.9} step="0.1" size={6} value={terug}
-              aria-label="Drempel terugkerende omzet" placeholder="—"
+              aria-label="Drempel terugkerende marge" placeholder="—"
               onChange={(e) => setTerug(e.target.value)} /> %
           </label>
           <button className="btn" disabled={bezig} onClick={opslaan}>

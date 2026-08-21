@@ -450,14 +450,14 @@ Twee dingen die bewust níét stil gebeuren:
   eenmalige marge. Ze zouden anders uit elk totaal vallen en het project
   winstgevender laten lijken dan het is.
 
-De drempel voor terugkerende omzet geldt niet voor een one-shot: er is geen
+De drempel voor de terugkerende marge geldt niet voor een one-shot: er is geen
 terugkerende omzet, dus er valt niets te toetsen. Standaard is `doorlopend`,
 zodat bestaande projecten precies hetzelfde blijven uitkomen (migratie `016`).
 
 ### Drempelmarges (bedrijfsnormen)
 
-Instellingen → Bedrijfsnormen: de minimale nettomarge voor **eenmalige** en
-voor **terugkerende** omzet, bedrijfsbreed (`bedrijfsinstellingen`, één rij,
+Instellingen → Bedrijfsnormen: de minimale **eenmalige** en **terugkerende
+nettomarge**, als percentage van de bijbehorende omzet, bedrijfsbreed (`bedrijfsinstellingen`, één rij,
 zoals `anthropic_config`). Twee drempels omdat het twee beslissingen zijn: de
 eenmalige vulling is een investering die je één keer doet (listing fee,
 display) en mag krapper; de terugkerende omzet moet het jaar rond dragen.
