@@ -399,6 +399,37 @@ jaar. Over jaren heen middelen vergelijkt door omzetregimes heen (Kruidvat
 2024: € 33k/week, 2025: € 47k). Onder drie basisperiodes volgt geen
 percentage maar "te weinig basisperiodes".
 
+### Percentages: na te rekenen uit wat er staat
+
+Eén regel door de hele app: **een percentage staat naast de twee getallen
+waaruit het volgt.** Een cijfer dat je niet kunt controleren vertrouw je
+terecht niet — en dat kostte de rest van het scherm zijn geloofwaardigheid.
+
+Dat speelde op de YTD-kaarten. Het Δ% werd op de *vergelijkbare basis*
+gerekend (per merk alleen het venster dat beide jaren leveren) terwijl de
+bedragen de *volledige* totalen waren. Allebei juist, maar samen op één kaart
+onmogelijk: "€ 4.419.442 tegen € 1.841.919, +29,2%" leest als een rekenfout.
+
+Nu staan er twee percentages, elk bij zijn eigen bedragen:
+
+* boven aan de kaart de kale verhouding tussen de twee totalen
+  (`totaal_delta_pct`);
+* eronder, alleen als hij afwijkt, de groei op vergelijkbare basis
+  (`delta_pct`) mét de bedragen waarop die rust (`vergelijkbaar.nu` /
+  `.vorig`).
+
+De vergelijkbare basis zelf is ongewijzigd — die correctie is er niet voor
+niets: zonder haar las "twee merk-feeds erbij" als groei en "een vergeten
+kwartaal" als daling, beide gereproduceerd op echte bestanden. Wat verandert
+is dat het scherm nu laat zien waar het cijfer vandaan komt in plaats van het
+te poneren.
+
+Dezelfde regel elders: de per-merktabel rekende al binnen het eigen venster van
+elk merk (bedragen en Δ% horen daar bij elkaar); in de artikelanalyse en bij de
+promotie-uplift staan de twee onderliggende bedragen nu in de hovertekst — de
+actie-omzet tegen de basislijn, met het aantal periodes waarover die mediaan
+gaat.
+
 ### Rotatie
 
 Gedeeld door de periodes **sinds de eerste verkoop** van dat artikel en door

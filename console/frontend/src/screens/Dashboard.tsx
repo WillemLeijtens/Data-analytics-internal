@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Milestone, apiSend, fmtEur, fmtNum, merkKleur } from "../api";
 import { ShellCtx } from "../App";
-import { BrandDot, DatagatMelding, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, TijdlijnPanelen, TrendChart, useApi } from "../components/shared";
+import { BrandDot, DatagatMelding, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, TijdlijnPanelen, TrendChart, Uitleg, useApi } from "../components/shared";
 
 export type Verdeling = {
   label: string; merk?: string; waarde: number;
@@ -42,6 +42,52 @@ function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
   );
 }
 
+
+/** Een YTD-kaart waarop élk percentage naast zijn eigen twee bedragen staat.
+ *
+ *  Gemeld vanaf het scherm: "€ 4.419.442 tegen € 1.841.919, +29,2%" — die
+ *  drie getallen rijmen niet. Het percentage stond op de VERGELIJKBARE basis
+ *  (per merk alleen het venster dat beide jaren leveren) terwijl de bedragen
+ *  de volledige totalen waren. Beide kloppen, maar samen op één kaart leest
+ *  het als een rekenfout — en een cijfer dat je niet kunt narekenen vertrouw
+ *  je terecht niet.
+ *
+ *  Nu: het totaalpercentage staat bij de totalen, en zodra de vergelijkbare
+ *  basis daarvan afwijkt komt die er als eigen regel onder, mét bedragen.
+ *  Zijn ze gelijk (feed dekt beide jaren even ver), dan is er niets uit te
+ *  leggen en blijft de kaart zoals hij was. */
+function YtdKaart({ titel, blok, y, fmt, pWord, extraTag }: {
+  titel: string; blok: any; y: any; fmt: (v: any) => string;
+  pWord: string; extraTag?: React.ReactNode;
+}) {
+  const v = blok.vergelijkbaar;
+  // Afronden vóór vergelijken: 29,15 en 29,24 tonen allebei "29,2%", en dan
+  // twee regels tonen die hetzelfde zeggen is ruis.
+  const zelfde = blok.delta_pct == null || blok.totaal_delta_pct == null
+    ? blok.delta_pct === blok.totaal_delta_pct
+    : Math.round(blok.delta_pct * 10) === Math.round(blok.totaal_delta_pct * 10);
+  return (
+    <div className="card">
+      <div className="kpi-label">{titel}
+        <span style={{ display: "inline-flex", gap: 6 }}>
+          {extraTag}
+          <DeltaTag pct={blok.totaal_delta_pct} />
+        </span>
+      </div>
+      <div className="kpi-value">{fmt(blok.nu)}</div>
+      <VorigJaar y={y} veld={titel.toLowerCase().startsWith("volume") ? "volume" : "omzet"}
+        fmt={fmt} pWord={pWord} />
+      {!zelfde && v && (
+        <div className="kpi-sub" style={{ marginTop: 6 }}>
+          Op vergelijkbare basis <b>{blok.delta_pct == null ? "—"
+            : `${blok.delta_pct > 0 ? "+" : ""}${blok.delta_pct.toLocaleString("nl-NL")}%`}</b>:{" "}
+          {fmt(v.nu)} tegen {fmt(v.vorig)}
+          <Uitleg tekst={`Per merk telt alleen het venster waarin BEIDE jaren data hebben. Een merk dat vorig jaar nog niet in de feed zat, of een ${pWord.toLowerCase()} die maar in één van beide jaren geleverd is, valt daarbuiten — anders leest "een merk erbij" als groei en "een vergeten kwartaal" als daling. Het percentage bovenaan is de kale verhouding tussen de twee totalen hierboven.`} />
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Heeft dit jaar geen enkele periode gemeen met vorig jaar? Dan is elk
  *  "vorig jaar"-getal in het YTD-venster nul, en zou "€ 0" lezen als "niets
@@ -412,16 +458,11 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       <hr className="hairline" />
       <h2>YTD {y.jaar} <span className="kop-data">t/m</span> {pWord.toLowerCase()} {y.tot_periode} vs {y.jaar - 1}</h2>
       <div className="grid kpi">
-        <div className="card">
-          <div className="kpi-label">Omzet YTD<DeltaTag pct={y.omzet.delta_pct} /></div>
-          <div className="kpi-value">{fmtEur(y.omzet.nu)}</div>
-          <VorigJaar y={y} veld="omzet" fmt={fmtEur} pWord={pWord} />
-        </div>
-        {hasVolume && <div className="card">
-          <div className="kpi-label">Volume YTD<DeltaTag pct={y.volume.delta_pct} /></div>
-          <div className="kpi-value">{fmtNum(y.volume.nu)}</div>
-          <VorigJaar y={y} veld="volume" fmt={fmtNum} pWord={pWord} />
-        </div>}
+        <YtdKaart titel="Omzet YTD" blok={y.omzet} y={y} fmt={fmtEur} pWord={pWord} />
+        {hasVolume && (
+          <YtdKaart titel="Volume YTD" blok={y.volume} y={y}
+            fmt={(v: any) => fmtNum(v)} pWord={pWord} />
+        )}
         <div className="card">
           <div className="kpi-label">Omzet / winkel YTD
             <span style={{ display: "inline-flex", gap: 6 }}>
@@ -480,21 +521,17 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
         </div>
       )}
       {y.basis && !y.basis.volledig && (
-        // Merk-feeds met ongelijke historie of actualiteit: het Δ% hierboven
-        // is bewust alleen op de vergelijkbare merken berekend — anders leest
-        // "twee merken erbij in de feed" als groei.
+        // Merk-feeds met ongelijke historie of actualiteit. De bedragen van de
+        // vergelijkbare basis staan op de kaarten zelf (YtdKaart); hier staat
+        // waaruit die basis bestaat — welk merk over welk venster meetelt.
         <p className="sub" style={{ marginTop: 8 }}>
           {y.basis.vergelijkbaar.length
-            ? <>Δ% op vergelijkbare basis: {y.basis.vergelijkbaar.map((v: any) =>
+            ? <>De vergelijkbare basis bestaat uit: {y.basis.vergelijkbaar.map((v: any) =>
                 v.van_periode === 1 && v.tot_periode === y.tot_periode && !v.ontbrekend?.length
                   ? (v.merk ?? "ONBEKEND")
                   : `${v.merk ?? "ONBEKEND"} ${venster(v, pWord)}`
-              ).join(", ")}.
-              {/* Het Δ% is op deze basis gerekend en wijkt dan af van de twee
-                  volledige totalen hierboven — noem de bedragen, anders is
-                  het percentage niet na te rekenen. */}
-              {y.basis.omzet && <> Op die basis: {fmtEur(y.basis.omzet.nu)} vs {fmtEur(y.basis.omzet.vorig)}.</>}</>
-            : <>Geen Δ%: er is geen {pWord.toLowerCase()} die {y.jaar} en {y.jaar - 1} allebei hebben
+              ).join(", ")}.</>
+            : <>Geen vergelijkbare basis: er is geen {pWord.toLowerCase()} die {y.jaar} en {y.jaar - 1} allebei hebben
                 {y.dekking?.[y.jaar - 1] && y.dekking?.[y.jaar] &&
                   ` — ${y.jaar - 1} loopt van ${pWord.toLowerCase()} ${y.dekking[y.jaar - 1].van} t/m ${y.dekking[y.jaar - 1].tot}, ${y.jaar} van ${pWord.toLowerCase()} ${y.dekking[y.jaar].van} t/m ${y.dekking[y.jaar].tot}`}.
               </>}

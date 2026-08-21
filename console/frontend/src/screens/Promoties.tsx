@@ -125,7 +125,14 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
                       }} />}
                     </div>
                     {u.uplift_pct != null ? (
-                      <b style={{ fontSize: 12 }} className={u.uplift_pct >= 0 ? "" : "sig-red"}>
+                      // De twee bedragen erbij: zonder de actie-omzet en de
+                      // basislijn is het percentage niet na te rekenen, en een
+                      // cijfer dat je niet kunt controleren vertrouw je
+                      // terecht niet.
+                      <b style={{ fontSize: 12 }} className={u.uplift_pct >= 0 ? "" : "sig-red"}
+                        title={`${fmtEur(u.omzet)} in de actie tegen een basislijn van `
+                          + `${fmtEur(u.basislijn)} — de mediaan van ${u.basisperiodes} `
+                          + `${pw.toLowerCase()}(en) zonder actie in ${u.jaar}.`}>
                         {u.uplift_pct >= 0 ? "+" : ""}{u.uplift_pct}%
                       </b>
                     ) : (
