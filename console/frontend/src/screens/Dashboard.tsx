@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Milestone, apiSend, fmtEur, fmtNum, merkKleur } from "../api";
 import { ShellCtx } from "../App";
-import { BrandDot, DatagatMelding, DekkingsgatenKaart, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, TijdlijnPanelen, TrendChart, useApi } from "../components/shared";
+import { BrandDot, DatagatMelding, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, TijdlijnPanelen, TrendChart, useApi } from "../components/shared";
 
 export type Verdeling = {
   label: string; merk?: string; waarde: number;
@@ -337,6 +337,16 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
   const verdeling = (kpi: any): Verdeling[] =>
     kpi.breakdowns?.[effDim] ?? kpi.breakdown;
   const filters = data.filters;
+  // Gaten in de aanlevering horen bij het merk waar ze over gaan: één rode
+  // driehoek op de filterchip, met de uitleg bij hover. Meldingen zonder merk
+  // (een land dat helemaal stilviel) horen bij geen enkele chip en zouden
+  // hier verdwijnen — die blijven onder de grafiek staan als feed-melding.
+  const merkWaarschuwing: Record<string, string> = {};
+  for (const g of (data.dekkingsgaten ?? []) as any[]) {
+    if (!g.merk) continue;
+    merkWaarschuwing[g.merk] = merkWaarschuwing[g.merk]
+      ? `${merkWaarschuwing[g.merk]}\n${g.tekst}` : g.tekst;
+  }
   const hasVolume = data.capabilities?.volume !== false;
   const effMetric = !hasVolume && metric === "volume" ? "omzet" : metric;
   return (
@@ -345,10 +355,11 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       <LevelStrip labels={data.labels} retailer={ctx.retailer}
         uitleg={data.labels.includes("OP MAANDNIVEAU") ? "Deze retailer levert per maand; alle analyses rekenen met maanden." : undefined} />
       <DatagatMelding retailer={ctx.retailer} go={ctx.go} />
-      <DekkingsgatenKaart gaten={data.dekkingsgaten} />
 
       <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap", margin: "16px 0 4px" }}>
-        {filters.merk.length > 0 && (<span><span className="eyebrow">Merk </span><MultiChips all={filters.merk} sel={merk} onChange={setMerk} /></span>)}
+        {filters.merk.length > 0 && (<span><span className="eyebrow">Merk </span>
+          <MultiChips all={filters.merk} sel={merk} onChange={setMerk}
+            waarschuwing={merkWaarschuwing} /></span>)}
         {filters.land.length > 0 && (<span><span className="eyebrow">Land </span><MultiChips all={filters.land} sel={land} onChange={setLand} /></span>)}
         {filters.banner.length > 0 && (<span><span className="eyebrow">Formule </span><MultiChips all={filters.banner} sel={banner} onChange={setBanner} /></span>)}
         <span className="sub" style={{ marginLeft: "auto" }}>

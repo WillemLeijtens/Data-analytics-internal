@@ -855,6 +855,50 @@ def _masker(sleutel: str) -> str:
     return f"{sleutel[:10]}…{sleutel[-4:]}"
 
 
+def _bedrijf(conn) -> dict:
+    row = conn.execute("SELECT * FROM bedrijfsinstellingen WHERE id=1").fetchone()
+    return dict(row) if row else {"drempel_eenmalig_pct": None,
+                                  "drempel_terugkerend_pct": None}
+
+
+def _drempels(conn) -> dict:
+    r = _bedrijf(conn)
+    return {"eenmalig": r["drempel_eenmalig_pct"],
+            "terugkerend": r["drempel_terugkerend_pct"]}
+
+
+@app.get("/api/systeem/bedrijf")
+def lees_bedrijfsinstellingen():
+    with db.get_conn() as conn:
+        return _bedrijf(conn)
+
+
+class BedrijfBody(BaseModel):
+    # None = geen drempel; dan meet het scherm niets en meldt het niets.
+    drempel_eenmalig_pct: float | None = None
+    drempel_terugkerend_pct: float | None = None
+    door: str | None = None
+
+
+@app.put("/api/systeem/bedrijf")
+def zet_bedrijfsinstellingen(body: BedrijfBody, request: Request):
+    for naam, waarde in (("eenmalige omzet", body.drempel_eenmalig_pct),
+                         ("terugkerende omzet", body.drempel_terugkerend_pct)):
+        # 100% marge kan niet (dan is de kostprijs nul) en negatief is geen
+        # drempel maar een doel om verlies te maken.
+        if waarde is not None and not 0 <= waarde < 100:
+            raise HTTPException(422, f"drempel voor {naam} moet tussen 0 en 100 liggen, "
+                                     f"niet {waarde}")
+    with db.get_conn() as conn:
+        conn.execute(
+            "UPDATE bedrijfsinstellingen SET drempel_eenmalig_pct=?, "
+            "drempel_terugkerend_pct=?, bijgewerkt_op=?, bijgewerkt_door=? WHERE id=1",
+            (body.drempel_eenmalig_pct, body.drempel_terugkerend_pct,
+             dt.datetime.now().isoformat(timespec="seconds"),
+             _gebruiker(request, body.door)))
+        return _bedrijf(conn)
+
+
 def _anthropic_status(conn) -> dict:
     row = conn.execute("SELECT * FROM anthropic_config WHERE id=1").fetchone()
     sleutel, bron = contracts.haal_api_key(conn)
@@ -971,7 +1015,8 @@ def _project_detail(conn, project_id: int) -> dict:
         "SELECT op, door, actie FROM project_log WHERE project_id=? ORDER BY op DESC, id DESC",
         (project_id,))]
     return {**dict(row), "producten": producten, "kosten": kosten, "log": log,
-            "berekening": projecten.bereken(dict(row), producten, kosten)}
+            "berekening": projecten.bereken(dict(row), producten, kosten,
+                                            _drempels(conn))}
 
 
 class ProjectBody(BaseModel):

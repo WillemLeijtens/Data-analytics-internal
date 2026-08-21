@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiSend } from "../api";
 import { ShellCtx } from "../App";
-import { EmptyProfileCard, LoadState, ThemaKeuze } from "../components/shared";
+import { EmptyProfileCard, LoadState, ThemaKeuze, Uitleg } from "../components/shared";
 
 
 /** Winkelaantallen met terugwerkende kracht. Zonder datums wordt de hele
@@ -86,6 +86,89 @@ function HandmatigeRij({ onAdd }: { onAdd: (m: string, l: string | null, b: stri
         }}>Toevoegen</button>
       <button className="chip off" onClick={() => setOpen(false)}>annuleer</button>
     </span>
+  );
+}
+
+/** Bedrijfsnormen: geldt voor de hele app, niet per retailer — het is een
+ *  norm van ons, niet van hen. Twee drempels, want het zijn twee
+ *  beslissingen: de eenmalige vulling is een investering die je één keer
+ *  doet en mag krapper; de terugkerende omzet moet het jaar rond dragen. */
+function BedrijfsnormenKaart() {
+  const [data, setData] = useState<any>(null);
+  const [een, setEen] = useState("");
+  const [terug, setTerug] = useState("");
+  const [bezig, setBezig] = useState(false);
+  const [fout, setFout] = useState<string | null>(null);
+  const [gelukt, setGelukt] = useState(false);
+
+  const vul = (r: any) => {
+    setData(r);
+    setEen(r.drempel_eenmalig_pct == null ? "" : String(r.drempel_eenmalig_pct));
+    setTerug(r.drempel_terugkerend_pct == null ? "" : String(r.drempel_terugkerend_pct));
+  };
+  useEffect(() => {
+    apiGet("/systeem/bedrijf").then(vul).catch((e) => setFout(String(e?.message ?? e)));
+  }, []);
+
+  const opslaan = async () => {
+    setBezig(true);
+    setFout(null);
+    setGelukt(false);
+    try {
+      // Leeg veld = geen drempel. Niet 0: dat zou "elke marge boven nul is
+      // goed" betekenen, en dat is een norm in plaats van het ontbreken ervan.
+      const getal = (v: string) => (v.trim() === "" ? null : Number(v.replace(",", ".")));
+      vul(await apiSend("/systeem/bedrijf", "PUT", {
+        drempel_eenmalig_pct: getal(een),
+        drempel_terugkerend_pct: getal(terug),
+      }));
+      setGelukt(true);
+    } catch (e: any) {
+      setFout(String(e?.message ?? e));
+    } finally {
+      setBezig(false);
+    }
+  };
+
+  if (!data) return null;
+  return (
+    <>
+      <h2>Bedrijfsnormen</h2>
+      <div className="card">
+        <p className="sub" style={{ margin: "0 0 12px", maxWidth: 620 }}>
+          De minimale nettomarge waaraan een project moet voldoen. De
+          projectcalculator toetst er direct aan en zet een rode driehoek bij
+          wat het niet haalt. Leeg laten betekent: niet meten.
+        </p>
+        <div style={{ display: "flex", gap: 22, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <label>
+            <span className="eyebrow">Drempel eenmalige omzet</span>
+            <Uitleg tekst="De eerste vulling: sell-in min de eenmalige kosten (listing fee, display). Een investering die je één keer doet — vaak mag die krapper dan de doorverkoop." /><br />
+            <input type="number" min={0} max={99.9} step="0.1" size={6} value={een}
+              aria-label="Drempel eenmalige omzet" placeholder="—"
+              onChange={(e) => setEen(e.target.value)} /> %
+          </label>
+          <label>
+            <span className="eyebrow">Drempel terugkerende omzet</span>
+            <Uitleg tekst="De doorverkoop over de looptijd, min de looptijdkosten (marketing, co-op, logistiek). Dit is wat het project het jaar rond moet dragen." /><br />
+            <input type="number" min={0} max={99.9} step="0.1" size={6} value={terug}
+              aria-label="Drempel terugkerende omzet" placeholder="—"
+              onChange={(e) => setTerug(e.target.value)} /> %
+          </label>
+          <button className="btn" disabled={bezig} onClick={opslaan}>
+            {bezig ? "Bezig…" : "Opslaan"}
+          </button>
+          {gelukt && <span className="sub sig-green">Opgeslagen</span>}
+          {fout && <span className="sub sig-red">{fout}</span>}
+        </div>
+        {data.bijgewerkt_op && (
+          <p className="sub" style={{ margin: "10px 0 0" }}>
+            Laatst gewijzigd {data.bijgewerkt_op.replace("T", " ")}
+            {data.bijgewerkt_door ? ` door ${data.bijgewerkt_door}` : ""}
+          </p>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -195,6 +278,8 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
       <hr className="hairline" />
       <AnthropicSleutelKaart />
       <hr className="hairline" />
+      <BedrijfsnormenKaart />
+      <hr className="hairline" />
       <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />
     </>);
   }
@@ -260,6 +345,8 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
       <ThemaKeuze />
 
       <AnthropicSleutelKaart />
+      <hr className="hairline" />
+      <BedrijfsnormenKaart />
 
       <h2>Contract</h2>
       {data.documenten.length ? (

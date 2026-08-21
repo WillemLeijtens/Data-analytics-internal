@@ -379,11 +379,16 @@ de rest van de app gewoon werken.
 `engine/dekking.py` meldt per scope (merk x land x formule) wat er binnen het
 laatste jaar ontbreekt: een feed die stopt, later begint, of een gat heeft.
 Die meldingen hangen als driehoekje bij de artikelen die het aangaat, in de
-artikel- en assortimentsanalyse, én staan als kaart boven aan het dashboard
-(`dekkingsgaten` in de dashboardrespons — de sleutel `dekking` is daar al
-bezet door het YTD-venster per jaar). Het dashboard is waar de totalen gelezen
-worden, en juist daar bepaalt een stilgevallen feed of het cijfer nog iets
-betekent; aan het getal zelf is dat niet te zien.
+artikel- en assortimentsanalyse, én op het dashboard bij de **filterchip van
+het merk** waar ze over gaan (`dekkingsgaten` in de dashboardrespons — de
+sleutel `dekking` is daar al bezet door het YTD-venster per jaar). Het
+dashboard is waar de totalen gelezen worden, en juist daar bepaalt een
+stilgevallen feed of het cijfer nog iets betekent; aan het getal zelf is dat
+niet te zien.
+
+Bij het merk en niet in een losse melding bovenaan: dan zie je meteen wíé het
+betreft, zonder een naam op te zoeken in een aparte tekst. Meldingen zonder
+merk horen bij geen enkele chip; die blijven onder de trendgrafiek staan.
 
 De melding onder de trendgrafiek ("X loopt t/m week Y — daarná telt de lijn
 zonder dat merk") laat weg wat de kaart al noemt: twee formuleringen van
@@ -426,6 +431,27 @@ merk zonder lijn verklaart een piek die er niet is. Staat het merkfilter van
 het dashboard aan, dan komen alleen de mijlpalen van die merken mee; zonder
 filter alle. Mijlpalen van vóór de merkkolom hebben geen merk — die gelden
 retailer-breed en horen dus bij elke selectie.
+
+### Drempelmarges (bedrijfsnormen)
+
+Instellingen → Bedrijfsnormen: de minimale nettomarge voor **eenmalige** en
+voor **terugkerende** omzet, bedrijfsbreed (`bedrijfsinstellingen`, één rij,
+zoals `anthropic_config`). Twee drempels omdat het twee beslissingen zijn: de
+eenmalige vulling is een investering die je één keer doet (listing fee,
+display) en mag krapper; de terugkerende omzet moet het jaar rond dragen.
+
+Leeg = niet meten. Geen drempel is bewust géén goedkeuring: het oordeel blijft
+dan leeg in plaats van "voldoet". De projectcalculator toetst er direct aan en
+zet een rode driehoek met uitleg bij wat het niet haalt — op de resultaatkaart
+(nettomarge, ná kosten) en al bij het product zelf zodra de **brutomarge** de
+drempel niet haalt: dan haalt het project hem zeker niet, want de kosten komen
+er nog af. De productkolom "Marge %" is die brutomarge per stuk, hetzelfde
+voor de vulling als voor de doorverkoop.
+
+De calculator rekent twee keer: `engine/projecten.bereken()` bij het opslaan en
+een spiegel in `screens/Projecten.tsx` tijdens het typen. Beide zijn getest met
+dezelfde cijfers (`test_projecten.py` en `Projectmarge.test.ts`), zodat de twee
+implementaties niet uit elkaar lopen.
 
 ### Back-up
 

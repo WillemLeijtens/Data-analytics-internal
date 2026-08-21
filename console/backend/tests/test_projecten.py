@@ -254,3 +254,116 @@ def test_verwijderen_ruimt_alles_op(client):
     assert client.delete(f"/api/projecten/{p['id']}").status_code == 200
     assert client.get(f"/api/projecten/{p['id']}").status_code == 404
     assert client.get("/api/projecten").json() == []
+
+
+# ------------------------------------------------------------- drempelmarge
+
+# De brutomarge van PRODUCT is (5-2)/5 = 60%. De projectmarge ligt lager,
+# want daar gaan de kosten nog af: 43,3% eenmalig, 30,0% terugkerend.
+
+DREMPEL_PROJECT = ({"start_datum": "2026-09-01", "eind_datum": "2026-09-28"},
+                   [PRODUCT],
+                   [{"soort": "listing_fee", "label": "Listing fee",
+                     "bedrag": 500.0, "terugkerend": 0},
+                    {"soort": "marketing", "label": "Marketingbudget",
+                     "bedrag": 300.0, "terugkerend": 1}])
+
+
+def test_marge_percentage_per_product():
+    """Per stuk, dus hetzelfde voor de vulling als voor de doorverkoop."""
+    uit = projecten.bereken({}, [PRODUCT], [])
+    assert uit["producten"][0]["marge_pct"] == pytest.approx(60.0)
+
+
+def test_product_zonder_verkoopprijs_heeft_geen_percentage():
+    """Delen door nul geeft geen 0% maar 'niet te zeggen' — 0% zou lezen als
+    een product zonder marge."""
+    uit = projecten.bereken({}, [{"naam": "Leeg"}], [])
+    assert uit["producten"][0]["marge_pct"] is None
+    assert uit["producten"][0]["onder_drempel"] == []
+
+
+def test_zonder_drempel_wordt_er_niets_gemeten():
+    """Geen drempel is geen goedkeuring: het oordeel blijft leeg."""
+    uit = projecten.bereken(*DREMPEL_PROJECT)
+    assert uit["eenmalig"]["voldoet"] is None
+    assert uit["terugkerend"]["voldoet"] is None
+    assert uit["eenmalig"]["drempel_pct"] is None
+
+
+def test_drempel_gehaald_en_niet_gehaald():
+    uit = projecten.bereken(*DREMPEL_PROJECT,
+                            drempels={"eenmalig": 40.0, "terugkerend": 40.0})
+    # 43,3% haalt 40 wel, 30,0% niet.
+    assert uit["eenmalig"]["voldoet"] is True
+    assert uit["terugkerend"]["voldoet"] is False
+    assert uit["terugkerend"]["drempel_pct"] == 40.0
+
+
+def test_precies_op_de_drempel_telt_als_gehaald():
+    """>= en niet >: precies de norm halen is de norm halen."""
+    uit = projecten.bereken({}, [PRODUCT], [], drempels={"eenmalig": 60.0})
+    assert uit["eenmalig"]["marge_pct"] == pytest.approx(60.0)
+    assert uit["eenmalig"]["voldoet"] is True
+
+
+def test_product_onder_de_drempel_wordt_meteen_gemeld():
+    """Haalt de brutomarge de drempel al niet, dan haalt het project hem
+    zeker niet — de kosten komen er nog af."""
+    uit = projecten.bereken(*DREMPEL_PROJECT,
+                            drempels={"eenmalig": 70.0, "terugkerend": 50.0})
+    onder = uit["producten"][0]["onder_drempel"]
+    # 60% haalt de 70 niet, de 50 wel.
+    assert [o["soort"] for o in onder] == ["eenmalig"]
+    assert onder[0]["drempel_pct"] == 70.0
+
+
+def test_terugkerend_zonder_looptijd_velt_geen_oordeel():
+    """Zonder looptijd is er geen terugkerend totaal; dan valt er niets te
+    toetsen en is 'voldoet niet' een verzonnen conclusie."""
+    uit = projecten.bereken({}, [PRODUCT], [], drempels={"terugkerend": 90.0})
+    assert uit["terugkerend"]["marge"] is None
+    assert uit["terugkerend"]["voldoet"] is None
+
+
+# ------------------------------------------------------ instellingen-endpoint
+
+def test_bedrijfsdrempels_opslaan_en_teruglezen(client):
+    leeg = client.get("/api/systeem/bedrijf").json()
+    assert leeg["drempel_eenmalig_pct"] is None
+
+    ok = client.put("/api/systeem/bedrijf", json={
+        "drempel_eenmalig_pct": 25, "drempel_terugkerend_pct": 35, "door": "Willem"})
+    assert ok.status_code == 200
+    na = client.get("/api/systeem/bedrijf").json()
+    assert (na["drempel_eenmalig_pct"], na["drempel_terugkerend_pct"]) == (25, 35)
+    assert na["bijgewerkt_door"] == "Willem"
+
+
+@pytest.mark.parametrize("waarde", [-1, 100, 150])
+def test_onmogelijke_drempel_wordt_geweigerd(client, waarde):
+    """100% marge kan niet (dan is de kostprijs nul) en negatief is geen
+    drempel maar een doel om verlies te maken."""
+    r = client.put("/api/systeem/bedrijf", json={"drempel_eenmalig_pct": waarde})
+    assert r.status_code == 422
+
+
+def test_drempel_wissen_kan(client):
+    client.put("/api/systeem/bedrijf", json={"drempel_eenmalig_pct": 25})
+    client.put("/api/systeem/bedrijf", json={"drempel_eenmalig_pct": None})
+    assert client.get("/api/systeem/bedrijf").json()["drempel_eenmalig_pct"] is None
+
+
+def test_project_toetst_aan_de_ingestelde_drempel(client):
+    """De drempel uit de instellingen komt terug in de projectberekening —
+    anders staat de norm wel ingesteld maar meet niemand ertegen."""
+    client.put("/api/systeem/bedrijf", json={"drempel_eenmalig_pct": 70})
+    d = client.post("/api/projecten", json={"naam": "Test"}).json()
+    # Producten komen via de PUT binnen, niet bij het aanmaken.
+    d = client.put(f"/api/projecten/{d['id']}",
+                   json={**d, "producten": [PRODUCT], "kosten": []}).json()
+
+    b = d["berekening"]
+    assert b["eenmalig"]["drempel_pct"] == 70
+    assert b["eenmalig"]["voldoet"] is False        # 60% brutomarge
+    assert b["producten"][0]["onder_drempel"][0]["soort"] == "eenmalig"
