@@ -91,5 +91,8 @@ export type Datagat = {
 
 export type Milestone = {
   id: number; jaar: number; periode_nummer: number; tekst: string;
+  // Null voor mijlpalen van vóór de merkkolom: die gelden retailer-breed en
+  // horen dus bij elke merkselectie.
+  merk: string | null;
   aangemaakt_op: string; aangemaakt_door: string | null;
 };

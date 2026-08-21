@@ -401,8 +401,14 @@ periodenummer met de jaren als losse lijnen, dus een mijlpaal hoort bij een
 jaar én een periodenummer: week 12 van 2025 ligt op dezelfde x als week 12 van
 2026, maar op een andere lijn — vandaar de jaarkeuze in het formulier en de
 kleur van dat jaar op de marker. Ze staan standaard aan, zijn met een schuifje
-uit te zetten en per jaar te filteren. Ze hangen aan de retailer, niet aan de
-filterkeuze: hetzelfde punt op de tijdas, welk merk je ook aanvinkt.
+uit te zetten en per jaar te filteren.
+
+Een mijlpaal hoort bij één **merk**, en alleen bij een merk waarvan deze
+retailer ook echt data heeft (de API weigert de rest): een markering op een
+merk zonder lijn verklaart een piek die er niet is. Staat het merkfilter van
+het dashboard aan, dan komen alleen de mijlpalen van die merken mee; zonder
+filter alle. Mijlpalen van vóór de merkkolom hebben geen merk — die gelden
+retailer-breed en horen dus bij elke selectie.
 
 ### Back-up
 
