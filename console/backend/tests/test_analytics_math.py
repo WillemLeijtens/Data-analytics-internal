@@ -489,7 +489,7 @@ def test_distributie_uit_de_feiten_bij_winkelniveau(client):
     blocks["DEPEND"]["7099"] = {
         "202501": 100.0, "202502": 100.0, "202503": 100.0,
         "202601": 90.0, "202602": 90.0, "202603": 90.0}
-    upload(client, "Maandelijkse_resultaten_ICI_dist.xlsx", seed.make_ici_xlsx(blocks))
+    upload(client, "Maandelijkse resultaten ICI Paris XL (dist).xlsx", seed.make_ici_xlsx(blocks))
 
     s = next(c for c in client.get("/api/overview").json()["retailers"]
              if c["id"] == "ici-paris-xl")["signalen"]["distributie"]

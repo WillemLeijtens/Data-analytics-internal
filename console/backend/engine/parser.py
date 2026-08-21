@@ -184,6 +184,30 @@ def _effective(profiles: list[Profile]) -> list[Profile]:
     return list(best.values())
 
 
+def kandidaten(filename: str, content: bytes, profiles: list[Profile]) -> list[Profile]:
+    """Elk profiel dat dit bestand herkent — één, geen, of meerdere.
+
+    `detect` geeft bij meerdere kandidaten None terug: liever niets doen dan
+    gokken. Maar "geen parser herkent dit" en "twee retailers herkennen dit"
+    vragen om een heel ander antwoord aan de gebruiker: het tweede geval is op
+    te lossen door te kiezen. Twee ICI-rapporten (NL en BE) hebben dezelfde
+    structuur en zijn inhoudelijk niet uit elkaar te houden — alleen de
+    aanleveraar weet welk land het is.
+    """
+    profiles = _effective(profiles)
+    op_naam = [p for p in profiles
+               if fnmatch.fnmatch(filename.lower(),
+                                  p.definition["detection"]["filename_glob"].lower())]
+    if len(op_naam) > 1:
+        bevestigd = [p for p in op_naam if _headers_match(content, p)]
+        op_naam = bevestigd or op_naam
+    if op_naam:
+        return op_naam
+    return [p for p in profiles
+            if (_builtin_content_match(content, p) if p.definition.get("builtin")
+                else _headers_match(content, p))]
+
+
 def detect(filename: str, content: bytes, profiles: list[Profile]) -> Profile | None:
     """Pick the profile for a file. None => 'profiel_nodig'."""
     profiles = _effective(profiles)
@@ -359,7 +383,8 @@ def parse_file(filename: str, content: bytes, profile: Profile) -> dict:
     if builtin == "ici_maandrapport":
         from . import ici_maandrapport
         try:
-            return ici_maandrapport.parse_workbook(content)
+            return ici_maandrapport.parse_workbook(
+                content, land=d.get("constants", {}).get("land") or "NL")
         except ValueError as e:
             raise ParseError(str(e))
         except Exception as e:  # noqa: BLE001 - onleesbaar bestand is geen crash

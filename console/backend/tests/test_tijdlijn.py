@@ -101,7 +101,7 @@ def test_rollend_venster_houdt_het_gemiddelde_op_periodeniveau(client):
     import seed
     blocks = {"DEPEND": {str(7000 + w): {f"2026{m:02d}": 300.0 for m in range(1, 7)}
                          for w in range(1, 11)}}
-    upload(client, "Maandelijkse_resultaten_ICI_venster.xlsx", seed.make_ici_xlsx(blocks))
+    upload(client, "Maandelijkse resultaten ICI Paris XL (venster).xlsx", seed.make_ici_xlsx(blocks))
     t = client.get("/api/ici-paris-xl/dashboard").json()["tijdlijn"]
     assert t["venster"] == 3
     serie = t["per_merk"][0]
