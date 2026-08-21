@@ -445,8 +445,10 @@ dan leeg in plaats van "voldoet". De projectcalculator toetst er direct aan en
 zet een rode driehoek met uitleg bij wat het niet haalt — op de resultaatkaart
 (nettomarge, ná kosten) en al bij het product zelf zodra de **brutomarge** de
 drempel niet haalt: dan haalt het project hem zeker niet, want de kosten komen
-er nog af. De productkolom "Marge %" is die brutomarge per stuk, hetzelfde
-voor de vulling als voor de doorverkoop.
+er nog af. Dat percentage staat achter het margebedrag in de kolommen
+"Eenmalig" en "Per week": het is de brutomarge per stuk en dus in beide
+kolommen gelijk, maar elke kolom wordt aan zijn eigen drempel gehouden — de
+driehoek verschijnt dus in de kolom waar de norm niet gehaald wordt.
 
 De calculator rekent twee keer: `engine/projecten.bereken()` bij het opslaan en
 een spiegel in `screens/Projecten.tsx` tijdens het typen. Beide zijn getest met
