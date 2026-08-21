@@ -367,3 +367,79 @@ def test_project_toetst_aan_de_ingestelde_drempel(client):
     assert b["eenmalig"]["drempel_pct"] == 70
     assert b["eenmalig"]["voldoet"] is False        # 60% brutomarge
     assert b["producten"][0]["onder_drempel"][0]["soort"] == "eenmalig"
+
+
+# ------------------------------------------------------------------ one-shot
+
+def test_one_shot_kent_geen_terugkerende_omzet():
+    """Eén levering, geen doorverkoop per week. De ingevulde rotatie blijft
+    staan (omzetten naar doorlopend brengt hem terug) maar telt nergens mee."""
+    uit = projecten.bereken(
+        {"soort": "eenmalig", "start_datum": "2026-09-01", "eind_datum": "2026-09-28"},
+        [PRODUCT], [])
+    assert uit["soort"] == "eenmalig"
+    assert uit["producten"][0]["week_omzet"] == 0
+    assert uit["terugkerend"]["omzet"] is None
+    assert uit["terugkerend"]["marge"] is None
+    assert uit["terugkerend"]["per_week"] == {"omzet": 0.0, "marge": 0.0}
+    # De vulling rekent gewoon door.
+    assert uit["eenmalig"]["omzet"] == 3000.0
+    assert uit["totaal"]["omzet"] == 3000.0
+
+
+def test_one_shot_zet_looptijdkosten_op_de_eenmalige_marge():
+    """Er is geen looptijdmarge om op te drukken. Ze stil laten vallen zou het
+    project winstgevender laten lijken dan het is."""
+    uit = projecten.bereken(
+        {"soort": "eenmalig"}, [PRODUCT],
+        [{"soort": "marketing", "label": "Marketing", "bedrag": 300.0, "terugkerend": 1}])
+    assert uit["eenmalig"]["kosten"] == 300.0
+    assert uit["eenmalig"]["marge"] == pytest.approx(1500.0)   # 1800 - 300
+    assert uit["totaal"]["kosten_buiten_beeld"] == 0.0
+
+
+def test_one_shot_wordt_niet_aan_de_terugkerende_drempel_gehouden():
+    """Geen terugkerende omzet betekent niets te toetsen — niet 'voldoet niet'."""
+    uit = projecten.bereken({"soort": "eenmalig"}, [PRODUCT], [],
+                            drempels={"eenmalig": 50.0, "terugkerend": 90.0})
+    assert uit["terugkerend"]["voldoet"] is None
+    assert uit["terugkerend"]["drempel_pct"] is None
+    assert uit["eenmalig"]["voldoet"] is True
+    assert uit["producten"][0]["onder_drempel"] == []
+
+
+def test_doorlopend_blijft_het_oude_gedrag():
+    """Bestaande projecten hebben geen soort in de database; de standaard mag
+    de uitkomst niet veranderen."""
+    zonder = projecten.bereken({"start_datum": "2026-09-01", "eind_datum": "2026-09-28"},
+                               [PRODUCT], [])
+    expliciet = projecten.bereken({"soort": "doorlopend", "start_datum": "2026-09-01",
+                                   "eind_datum": "2026-09-28"}, [PRODUCT], [])
+    assert zonder == expliciet
+    assert zonder["terugkerend"]["omzet"] == 1000.0
+
+
+def test_onbekende_soort_wordt_geweigerd():
+    with pytest.raises(ValueError, match="soort"):
+        projecten.valideer({"naam": "P", "status": "concept", "soort": "misschien"}, [], [])
+
+
+def test_soort_opslaan_en_teruglezen(client):
+    d = client.post("/api/projecten", json={"naam": "Kerstactie"}).json()
+    assert d["soort"] == "doorlopend", "standaard, zodat bestaand werk niet verandert"
+
+    d = client.put(f"/api/projecten/{d['id']}",
+                   json={**d, "soort": "eenmalig", "producten": [PRODUCT]}).json()
+    assert d["soort"] == "eenmalig"
+    assert d["berekening"]["terugkerend"]["omzet"] is None
+    # De rotatie blijft bewaard: terugzetten herstelt de doorrekening.
+    assert d["producten"][0]["rotatie_per_winkel_per_week"] == 0.5
+
+    terug = client.put(f"/api/projecten/{d['id']}", json={**d, "soort": "doorlopend"}).json()
+    assert terug["berekening"]["producten"][0]["week_omzet"] == 250.0
+
+
+def test_lijst_toont_de_soort(client):
+    d = client.post("/api/projecten", json={"naam": "Kerstactie"}).json()
+    client.put(f"/api/projecten/{d['id']}", json={**d, "soort": "eenmalig"})
+    assert client.get("/api/projecten").json()[0]["soort"] == "eenmalig"
