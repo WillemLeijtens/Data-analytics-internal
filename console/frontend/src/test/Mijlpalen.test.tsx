@@ -64,6 +64,21 @@ describe("TrendChart — mijlpalen", () => {
     await waitFor(() => expect(onMijlpaal.mock.calls[0][0].jaar).toBe(2025));
   });
 
+  it("het formulier is klikbaar — niet de .tooltip-klasse, die laat kliks erdoor", () => {
+    // Gemelde bug: het jaarveld was niet aan te klikken, elke klik opende de
+    // grafiek eronder opnieuw. Oorzaak: het formulier hergebruikte .tooltip,
+    // en die heeft pointer-events:none (nodig, anders blokkeert een
+    // hover-tooltip de grafiek). jsdom rekent geen stylesheets door, dus de
+    // klik zelf is hier niet na te spelen — de klasse wél.
+    stubBreedte();
+    render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
+      mijlpalen={[]} onMijlpaal={vi.fn()} />);
+    fireEvent.click(screen.getByRole("img"), { clientX: 830 });
+    const formulier = screen.getByRole("dialog", { name: "Mijlpaal plaatsen" });
+    expect(formulier).toHaveClass("chart-popover");
+    expect(formulier).not.toHaveClass("tooltip");
+  });
+
   it("een lege omschrijving is niet te plaatsen", () => {
     stubBreedte();
     render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"

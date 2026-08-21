@@ -255,7 +255,11 @@ export function TrendChart({ series, years, isEuro, periodWord,
         </div>
       )}
       {nieuw && (
-        <div className="tooltip" style={{ left: `${Math.min(70, Math.max(4, (x(nieuw.periode) / W) * 100))}%`, top: 8, width: 250, textAlign: "left" }}>
+        <div className="chart-popover" role="dialog" aria-label="Mijlpaal plaatsen"
+          style={{ left: `${Math.min(70, Math.max(4, (x(nieuw.periode) / W) * 100))}%`, top: 8 }}
+          // Vangnet: mocht er ooit een klikhandler om de grafiek heen komen,
+          // dan mag een klik in dit formulier daar niet ook op afgaan.
+          onClick={(e) => e.stopPropagation()}>
           <b>Mijlpaal op {periodWord.toLowerCase()} {nieuw.periode}</b>
           <div style={{ display: "flex", gap: 6, margin: "8px 0" }}>
             <select value={nieuw.jaar} aria-label="Jaar"
