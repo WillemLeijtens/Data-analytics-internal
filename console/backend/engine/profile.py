@@ -32,8 +32,13 @@ BUILTIN_CAPS = {
     "ici_maandrapport": {"periode": "maand", "merk": True, "artikel": False,
                          "winkel": True, "banner": False, "land": True,
                          "volume": False},
+    # winkel=True: de Data Grid-widget wordt met én zonder de kolommen
+    # Store/City geëxporteerd. De vlag zegt wat het FORMAAT aankan; of de
+    # geladen bestanden ook echt winkels bevatten, toetst
+    # analytics.retailer_caps aan de feiten — anders zou een installatie met
+    # alleen oude exports plotseling "winkelniveau" claimen zonder winkels.
     "etos_datagrid": {"periode": "week", "merk": True, "artikel": True,
-                      "winkel": False, "banner": False, "land": True,
+                      "winkel": True, "banner": False, "land": True,
                       "volume": True},
 }
 

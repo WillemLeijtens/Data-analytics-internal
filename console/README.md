@@ -215,7 +215,15 @@ Schema: zie `profiles/*.json` (PROMPT.md §3). Kernregels:
   `profiles/`. De app heeft geen mapping-editor en geen publiceer-endpoint;
   het Parser-scherm is alleen-lezen plus "controleren op bestand".
 - **Etos (Data Grid-widgetexport)**: artikel×week-matrix, land constant NL,
-  geen winkel- of bannerniveau. Dit formaat heeft géén totalenrij; de parser
+  geen bannerniveau. **Winkelniveau is optioneel**: dezelfde widget wordt met
+  én zonder de kolommen Store/City geëxporteerd. Zit `Store` erin ("ETOS
+  BEVERWIJK - 6311"), dan is elke rij een artikel×winkel en opent dezelfde
+  winkelanalyse als bij ICI Paris XL; zonder die kolommen blijft het gedrag
+  exact als voorheen. De dubbelcontrole gaat dan over artikel×winkel×week —
+  zonder de winkel erin zou elke tweede winkel met hetzelfde artikel als
+  dubbeling gelden. Een winkel zonder nummer breekt de import af: die is niet
+  te volgen over exports heen, en stil doorgaan zou de winkeltelling laten
+  zakken zonder dat iemand het merkt. Dit formaat heeft géén totalenrij; de parser
   verifieert daarom fail-closed alles wat het bestand zelf biedt: het
   merkental ("Brand (N)"), het weekbereik ("Fiscal YTD …-…") en per week de
   Ending-datum tegen de ISO-zondag — wijkt Etos ooit af van ISO-weken, dan
@@ -279,6 +287,14 @@ winkel omlaag. Het jaartotaal is de maatstaf, niet de losse maand: een
 winkel die in juli toevallig niets verkocht hoort nog steeds bij dat jaar.
 Bij ICI Paris XL scheelt het per merk een factor — TWEEZERMAN ~145
 winkels, DEPEND ~139, en per maand nog veel minder.
+
+Levert de feed winkelniveau, dan **vult het instellingenscherm het aantal
+zelf in**: geteld uit het importbestand, met de melding "automatisch
+ingevuld" en het jaar erbij. Niet handmatig te overschrijven — een afwijkend
+getal zou stilletjes winnen in de schermen die het gebruiken. De `winkel`-vlag
+van een profiel zegt wat het FORMAAT aankan; `analytics.retailer_caps` toetst
+hem aan de geladen feiten, zodat een installatie met alleen oude Etos-exports
+niet plotseling "winkelniveau" claimt zonder winkels.
 
 Zonder winkelniveau valt de teller terug op het handmatige aantal uit
 Instellingen → Doelstellingen (label `SCHATTING`). Dat kan per merk-land(-

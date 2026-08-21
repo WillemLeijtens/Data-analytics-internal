@@ -186,7 +186,8 @@ def make_ici_xlsx(blocks: dict[str, dict[str, dict[str, float]]]) -> bytes:
 
 
 def make_etos_xlsx(artikelen: list[dict], weeks: list[str] | None = None,
-                   brand_count: int | None = None, scope: str = "ytd") -> bytes:
+                   brand_count: int | None = None, scope: str = "ytd",
+                   winkels: bool = False) -> bytes:
     """Genereer een werkboek in het ECHTE Etos Data Grid-widgetformaat:
     metadatablok (Fiscal YTD-range + Brand (N)), weekkoppen met de
     ISO-zondag als Ending-datum, en de UPC/Brand-subkop met per week een
@@ -194,6 +195,9 @@ def make_etos_xlsx(artikelen: list[dict], weeks: list[str] | None = None,
     raken als een productie-export.
 
     artikelen: [{upc, naam, merk, merk_nr, weeks: {"202632": (sales, units)}}]
+      met winkels=True ook: winkel ("ETOS SNEEK - 6263") en stad ("Sneek").
+    winkels: exporteer de variant MET de kolommen Store/City. Dezelfde widget
+      bestaat in beide vormen; beide moeten door de parser komen.
     scope: de Time-selectie van de export —
       "ytd"    lopend jaar ("Fiscal YTD 202601-202632, Ending …")
       "weeks"  kwartaal met expliciete weekrange ('… (Weeks …-…, Ending …)')
@@ -241,27 +245,34 @@ def make_etos_xlsx(artikelen: list[dict], weeks: list[str] | None = None,
         raise ValueError(f"onbekende scope {scope!r}")
     ws.cell(row=19, column=1, value=f"Brand ({n_merken})")
     ws.cell(row=19, column=2, value=", ".join(merken))
+    eerste = 6 if winkels else 4          # eerste weekkolom
     for j, wk in enumerate(weeks):
         jaar, week = int(wk[:4]), int(wk[4:])
         zondag = _dt.date.fromisocalendar(jaar, week, 7)
-        ws.cell(row=20, column=4 + j * 2,
+        ws.cell(row=20, column=eerste + j * 2,
                 value=f"{wk} (Ending {zondag.strftime('%d/%m/%Y')})")
-        ws.cell(row=21, column=4 + j * 2, value="Sales € TY")
-        ws.cell(row=21, column=5 + j * 2, value="Units TY")
+        ws.cell(row=21, column=eerste + j * 2, value="Sales € TY")
+        ws.cell(row=21, column=eerste + 1 + j * 2, value="Units TY")
     ws.cell(row=21, column=1, value="UPC Name")
     ws.cell(row=21, column=2, value="UPC ID")
     ws.cell(row=21, column=3, value="Brand")
+    if winkels:
+        ws.cell(row=21, column=4, value="Store")
+        ws.cell(row=21, column=5, value="City")
     r = 21
     for a in artikelen:
         r += 1
         ws.cell(row=r, column=1, value=a["naam"])
         ws.cell(row=r, column=2, value=str(a["upc"]))
         ws.cell(row=r, column=3, value=f'{a["merk"]} - {a["merk_nr"]}')
+        if winkels:
+            ws.cell(row=r, column=4, value=a.get("winkel", "ETOS SNEEK - 6263"))
+            ws.cell(row=r, column=5, value=a.get("stad", "Sneek"))
         for j, wk in enumerate(weeks):
             if wk in a["weeks"]:
                 sales, units = a["weeks"][wk]
-                ws.cell(row=r, column=4 + j * 2, value=sales)
-                ws.cell(row=r, column=5 + j * 2, value=units)
+                ws.cell(row=r, column=eerste + j * 2, value=sales)
+                ws.cell(row=r, column=eerste + 1 + j * 2, value=units)
     ws.cell(row=r + 5, column=1,
             value="All insights and reports are for internal use only.")
     buf = io.BytesIO()
