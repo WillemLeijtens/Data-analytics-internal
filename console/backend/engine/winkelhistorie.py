@@ -12,7 +12,8 @@ import datetime as dt
 
 
 def nieuwe_metingen(conn, retailer_id: str, winkels_targets: list[dict],
-                    vandaag: dt.date | None = None) -> list[tuple]:
+                    vandaag: dt.date | None = None,
+                    vorige: dict | None = None) -> list[tuple]:
     """De historieregels die deze opslag oplevert.
 
     Alleen winkelaantallen die VERANDEREN worden vastgelegd: alleen zo is
@@ -27,10 +28,15 @@ def nieuwe_metingen(conn, retailer_id: str, winkels_targets: list[dict],
     Geeft rijen terug in de vorm (retailer_id, merk, land, banner, aantal,
     geldig_vanaf), klaar voor executemany().
     """
-    vorige = {(r["merk"], r["land"], r["banner"]): r["aantal_winkels"]
-              for r in conn.execute(
-                  "SELECT merk, land, banner, aantal_winkels FROM retailer_settings "
-                  "WHERE retailer_id=?", (retailer_id,))}
+    # `vorige` mag meegegeven worden omdat het winkelaantal een AFGELEIDE kan
+    # zijn (artikelniveau: het grootste artikel). De aanroeper moet dat dan
+    # oplossen vóór de nieuwe waarden weggeschreven zijn — daarna is de oude
+    # situatie weg, en zou elke opslag een niet-bestaande wijziging vastleggen.
+    if vorige is None:
+        vorige = {(r["merk"], r["land"], r["banner"]): r["aantal_winkels"]
+                  for r in conn.execute(
+                      "SELECT merk, land, banner, aantal_winkels FROM retailer_settings "
+                      "WHERE retailer_id=?", (retailer_id,))}
     met_historie = {(r["merk"], r["land"], r["banner"]) for r in conn.execute(
         "SELECT DISTINCT merk, land, banner FROM winkelaantal_historie "
         "WHERE retailer_id=?", (retailer_id,))}

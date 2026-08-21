@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 import db
 from engine import (analytics, contracts, datagaten, importer, projecten,
-                    signals, winkelhistorie)
+                    signals, winkelhistorie, winkelniveau)
 from engine import parser as parser_mod
 from engine.periods import sort_key
 from engine.profile import active_profile, capabilities, get_profiles
@@ -687,6 +687,20 @@ def get_settings(retailer_id: str):
             "winkels_targets": [dict(r) for r in conn.execute(
                 "SELECT * FROM retailer_settings WHERE retailer_id=? ORDER BY merk, land, banner",
                 (retailer_id,))],
+            # De artikelen die deze retailer per merk-land(-formule) levert,
+            # met het eventueel ingestelde winkelaantal. Uit de feed, niet
+            # handmatig: een artikel dat niet geleverd wordt kan ook geen
+            # winkelaantal hebben.
+            "feed_artikelen": [dict(r) for r in conn.execute(
+                "SELECT merk, land, banner, artikel_ean, "
+                "       MAX(artikel_naam) AS artikel_naam, "
+                "       MAX(periode) AS laatste_periode "
+                "  FROM sellout_facts WHERE retailer_id=? AND artikel_ean IS NOT NULL "
+                " GROUP BY merk, land, banner, artikel_ean "
+                " ORDER BY merk, land, banner, artikel_naam", (retailer_id,))],
+            "artikel_winkels": [dict(r) for r in conn.execute(
+                "SELECT merk, land, banner, artikel_ean, aantal_winkels "
+                "FROM artikel_winkelaantallen WHERE retailer_id=?", (retailer_id,))],
             # Elke wijziging van een winkelaantal, zodat het scherm kan tonen
             # dat een merk in minder winkels ligt dan eerst.
             "winkels_historie": [dict(r) for r in conn.execute(
@@ -703,7 +717,11 @@ def get_settings(retailer_id: str):
 
 
 class SettingsBody(BaseModel):
-    winkels_targets: list[dict] | None = None   # [{merk, land, banner, aantal_winkels, target_per_winkel}]
+    winkels_targets: list[dict] | None = None   # [{merk, land, banner, aantal_winkels, target_per_winkel, niveau}]
+    # [{merk, land, banner, artikel_ean, aantal_winkels}] — alleen van belang
+    # voor scopes die op artikelniveau staan; de rest wordt bewaard maar telt
+    # niet mee, zodat terugschakelen niets weggooit.
+    artikel_winkels: list[dict] | None = None
     rotatie_targets: list[dict] | None = None   # [{merk, stuks_per_winkel_per_week}]
     mail_rules: list[dict] | None = None        # [{naam, afzender, bijlage_glob, actief}]
 
@@ -713,12 +731,19 @@ def _validate_settings(body: "SettingsBody"):
     never surface as a 500 halfway through a delete-and-reinsert."""
     for s in body.winkels_targets or []:
         s["merk"], s["land"]
+        if s.get("niveau", "merk") not in winkelniveau.NIVEAUS:
+            raise ValueError(f"niveau moet merk of artikel zijn, niet {s.get('niveau')!r}")
         # Nul of negatief werd stroomafwaarts stil genegeerd; beter meteen
         # weigeren dan een instelling opslaan die nooit iets doet.
         if s.get("aantal_winkels") is not None and s["aantal_winkels"] <= 0:
             raise ValueError(f"aantal_winkels moet groter dan nul zijn ({s['merk']})")
         if s.get("target_per_winkel") is not None and s["target_per_winkel"] < 0:
             raise ValueError(f"target_per_winkel kan niet negatief zijn ({s['merk']})")
+    for a in body.artikel_winkels or []:
+        a["merk"], a["land"], a["artikel_ean"]
+        if a.get("aantal_winkels") is not None and a["aantal_winkels"] <= 0:
+            raise ValueError("aantal_winkels moet groter dan nul zijn "
+                             f"({a['merk']} {a['artikel_ean']})")
     for t in body.rotatie_targets or []:
         t["merk"], t["stuks_per_winkel_per_week"]
         if t["stuks_per_winkel_per_week"] is not None and t["stuks_per_winkel_per_week"] <= 0:
@@ -738,17 +763,49 @@ def save_settings(retailer_id: str, body: SettingsBody):
         raise HTTPException(422, f"ongeldige instelling: {e}")
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
+        # De oude situatie vastleggen vóór er iets overschreven wordt: het
+        # winkelaantal kan een afgeleide zijn (artikelniveau), en na de
+        # schrijfacties hieronder is die oude afleiding niet meer te maken.
+        vorige_winkels = {
+            (s["merk"], s["land"], s["banner"]): s["aantal_winkels"]
+            for s in analytics.manual_store_settings(conn, retailer_id)}
+        if body.artikel_winkels is not None:
+            conn.execute("DELETE FROM artikel_winkelaantallen WHERE retailer_id=?",
+                         (retailer_id,))
+            conn.executemany(
+                "INSERT INTO artikel_winkelaantallen (retailer_id, merk, land, banner, "
+                "artikel_ean, aantal_winkels) VALUES (?,?,?,?,?,?)",
+                [(retailer_id, a["merk"], a["land"], a.get("banner"),
+                  a["artikel_ean"], a.get("aantal_winkels"))
+                 for a in body.artikel_winkels])
         if body.winkels_targets is not None:
+            # Op artikelniveau is het merkgetal een afgeleide (het grootste
+            # artikel, zie engine/winkelniveau.py). De historie moet met dat
+            # afgeleide getal werken, anders legt hij een merkveld vast dat
+            # nergens meer meetelt.
+            artikelen = winkelniveau.per_scope(body.artikel_winkels or [
+                dict(r) for r in conn.execute(
+                    "SELECT merk, land, banner, artikel_ean, aantal_winkels "
+                    "FROM artikel_winkelaantallen WHERE retailer_id=?", (retailer_id,))])
+            opgelost = [
+                {**s, "aantal_winkels": winkelniveau.effectief(
+                    s, artikelen.get(winkelniveau.sleutel(
+                        s["merk"], s["land"], s.get("banner")), []))}
+                for s in body.winkels_targets]
             conn.executemany(
                 "INSERT INTO winkelaantal_historie (retailer_id, merk, land, banner, "
                 "aantal_winkels, geldig_vanaf) VALUES (?,?,?,?,?,?)",
-                winkelhistorie.nieuwe_metingen(conn, retailer_id, body.winkels_targets))
+                winkelhistorie.nieuwe_metingen(conn, retailer_id, opgelost,
+                                               vorige=vorige_winkels))
             conn.execute("DELETE FROM retailer_settings WHERE retailer_id=?", (retailer_id,))
             conn.executemany(
                 "INSERT INTO retailer_settings (retailer_id, merk, land, banner, aantal_winkels, "
-                "target_per_winkel) VALUES (?,?,?,?,?,?)",
+                "target_per_winkel, niveau) VALUES (?,?,?,?,?,?,?)",
+                # Het ingevulde merkveld blijft bewaard, ook op artikelniveau:
+                # terugschakelen mag niets weggooien.
                 [(retailer_id, s["merk"], s["land"], s.get("banner"),
-                  s.get("aantal_winkels"), s.get("target_per_winkel"))
+                  s.get("aantal_winkels"), s.get("target_per_winkel"),
+                  s.get("niveau") or "merk")
                  for s in body.winkels_targets])
         if body.rotatie_targets is not None:
             conn.execute("DELETE FROM rotatie_targets WHERE retailer_id=?", (retailer_id,))

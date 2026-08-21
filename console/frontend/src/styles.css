@@ -74,6 +74,10 @@ body {
 h1, h2, h3 { font-family: "The Seasons", serif; font-weight: 400; text-transform: uppercase; color: var(--t-fg); }
 h1 { font-size: 27px; letter-spacing: 0.06em; margin: 0 0 6px; }
 h2 { font-size: 17px; letter-spacing: 0.06em; margin: 34px 0 14px; }
+/* Subkopje binnen een sectie (Doelstellingen -> Winkelaantallen, Rotatie).
+   Zonder eigen formaat is een h3 net zo groot als de h2 erboven en valt de
+   hiërarchie weg. */
+h3 { font-size: 13.5px; letter-spacing: 0.1em; margin: 24px 0 10px; color: var(--t-fg2); }
 .eyebrow {
   font: 600 10.5px "Montserrat", sans-serif; letter-spacing: 0.16em;
   text-transform: uppercase; color: var(--t-meta);

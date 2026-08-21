@@ -15,6 +15,7 @@ from statistics import median
 
 from . import dekking as dekking_mod
 from . import fallback
+from . import winkelniveau
 from .periods import (is_afgesloten, period_number, period_type_of,
                       period_year, sort_key)
 from .profile import active_profile, capabilities
@@ -54,11 +55,26 @@ def load_facts(conn, retailer_id: str, merk=None, land=None, banner=None):
 
 
 def manual_store_settings(conn, retailer_id: str) -> list[dict]:
-    # Ook rijen zonder winkelaantal: die kunnen wél een target dragen (bij
-    # ICI komt het aantal uit de feed en is alleen het target invulbaar).
-    return [dict(r) for r in conn.execute(
-        "SELECT merk, land, banner, aantal_winkels, target_per_winkel "
-        "FROM retailer_settings WHERE retailer_id=?", (retailer_id,))]
+    """De handmatige instellingen, met het winkelaantal al opgelost.
+
+    Staat een scope op artikelniveau, dan komt `aantal_winkels` uit de
+    artikelen (het grootste; zie engine/winkelniveau.py voor waarom niet de
+    som). De rest van de analyses hoeft daardoor niets van niveaus te weten
+    en blijft met één getal per scope rekenen.
+
+    Ook rijen zonder winkelaantal komen mee: die kunnen wél een target dragen
+    (bij ICI komt het aantal uit de feed en is alleen het target invulbaar).
+    """
+    artikelen = winkelniveau.laad(conn, retailer_id)
+    uit = []
+    for r in conn.execute(
+            "SELECT merk, land, banner, aantal_winkels, target_per_winkel, niveau "
+            "FROM retailer_settings WHERE retailer_id=?", (retailer_id,)):
+        rij = dict(r)
+        sleutel = winkelniveau.sleutel(rij["merk"], rij["land"], rij["banner"])
+        rij["aantal_winkels"] = winkelniveau.effectief(rij, artikelen.get(sleutel, []))
+        uit.append(rij)
+    return uit
 
 
 def stores_with_revenue(rows, jaar: int | None) -> set:
@@ -1160,6 +1176,9 @@ def assortment(conn, retailer_id: str) -> dict:
     latest_year = max(period_year(r["periode"]) for r in all_rows)
     rows = [r for r in all_rows if period_year(r["periode"]) == latest_year]
     settings = manual_store_settings(conn, retailer_id)
+    # Winkelaantallen die per artikel zijn ingesteld: de rotatie hieronder
+    # deelt dan door de winkels van dát artikel in plaats van door het merk.
+    artikel_winkels = winkelniveau.laad(conn, retailer_id)
     n_stores, from_facts = store_count(conn, retailer_id, caps, rows, None, settings)
     if not from_facts and fallback.LABEL_SCHATTING not in labels:
         labels.append(fallback.LABEL_SCHATTING)
@@ -1203,7 +1222,9 @@ def assortment(conn, retailer_id: str) -> dict:
         # terugval als er voor deze scope niets is ingesteld — dat totaal
         # telt ook landen mee waar dit artikel niet ligt, en drukte op de
         # echte Kruidvat-data elke rotatie met ~30-45% (valse delists).
-        art_stores, _ = store_count(conn, retailer_id, caps, a["rijen"], None, settings)
+        art_stores, _ = store_count(
+            conn, retailer_id, caps, a["rijen"], None,
+            winkelniveau.voor_artikel(settings, artikel_winkels, ean))
         noemer_winkels = art_stores or n_stores
         rotatie = (a["volume"] / actieve_weken / noemer_winkels
                    if actieve_weken and noemer_winkels else None)
