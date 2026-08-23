@@ -133,16 +133,34 @@ def test_prijsindex_ziet_echte_afprijzing():
 
 def test_prijsindex_vergelijkt_binnen_hetzelfde_jaar():
     """Een prijspeil dat over de jaren stijgt mag oudere jaren niet
-    structureel als 'afgeprijsd' bestempelen."""
+    structureel als 'afgeprijsd' bestempelen. De index is een relatief
+    (prijs ÷ eigen jaarmediaan), dus elk jaar hoort op ~1,0 uit te komen —
+    het oude jaar niet onder het nieuwe."""
     rows = []
     for jaar, prijs in ((2025, 10.0), (2026, 20.0)):
         for wk in (1, 2, 3):
             rows.append(feit(f"{jaar}-W{wk:02d}", None, "X", prijs * 50,
                              ean="1111", volume=50))
     index = analytics.prijsindex(rows, _key)[("X", "NL", None)]
-    # Elk jaar heeft zijn eigen niveau; binnen het jaar is er geen daling.
-    assert index["2025-W01"] == pytest.approx(10.0)
-    assert index["2026-W01"] == pytest.approx(20.0)
+    assert index["2025-W01"] == pytest.approx(1.0)
+    assert index["2026-W01"] == pytest.approx(1.0)
+
+
+def test_prijsindex_zakt_niet_als_een_duur_artikel_een_week_niet_verkoopt():
+    """Aanwezigheidsmix: een gewogen gemiddelde van prijsNIVEAUS middelt
+    alleen de artikelen die die week verkochten. Valt het dure artikel een
+    week uit — heel gewoon bij langzaamlopers — dan 'daalde' de prijs met
+    tientallen procenten zonder dat er iets was afgeprijsd. Op de echte
+    Etos-data verschoof dit ~20% van de actievlaggen."""
+    rows = []
+    for wk in (1, 2, 3, 4):
+        rows.append(feit(f"2026-W{wk:02d}", None, "X", 5.0 * 100, ean="1111", volume=100))
+        if wk != 3:                       # het dure artikel slaat week 3 over
+            rows.append(feit(f"2026-W{wk:02d}", None, "X", 25.0 * 100, ean="2222", volume=100))
+    index = analytics.prijsindex(rows, _key)[("X", "NL", None)]
+    # Zelfde prijzen, dus een vlakke index — ook in de week zonder het dure
+    # artikel. (Met niveaus was W03 5,0 tegen 15,0 normaal: -67% "actie".)
+    assert index["2026-W03"] == pytest.approx(index["2026-W01"])
 
 
 # ------------------------------------------------- uplift-basislijn

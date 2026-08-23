@@ -82,16 +82,19 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
           <div className="sub" style={{ marginTop: 10, maxWidth: 760, lineHeight: 1.55 }}>
             <p style={{ marginTop: 0 }}>
               Een actie is een {pw.toLowerCase()} waarin de gemiddelde verkoopprijs
-              onder het normale niveau lag. Om te voorkomen dat een verschuiving in
-              de verkoopmix voor een prijsdaling wordt aangezien, volgt de app
-              <b> per artikel de eigen stukprijs</b> en telt die op met vaste
-              gewichten (het jaarvolume van dat artikel). Wat overblijft is prijs.
+              onder het normale niveau lag. De app volgt <b>per artikel de eigen
+              stukprijs</b> en vergelijkt die met de normale prijs van dátzelfde
+              artikel; die verhoudingen worden met vaste gewichten (het jaarvolume)
+              opgeteld tot één index. Zo telt een verschuiving in de verkoopmix niet
+              als prijsdaling — en een duur artikel dat een {pw.toLowerCase()} toevallig
+              niets verkoopt evenmin.
             </p>
             <p>
               Het <b>normale niveau</b> is de mediaan van de {pw.toLowerCase()}en
-              van hetzelfde jaar die niet als actie bevestigd zijn en die volledig
-              geleverd zijn. Bevestigde acties tellen niet mee — anders verklaart
-              een actierijk jaar zijn eigen acties weg.
+              van hetzelfde jaar die niet als actie gelden en die volledig geleverd
+              zijn. Dat gaat in twee stappen: eerst worden actieweken gevlagd, daarna
+              worden de definitieve cijfers berekend met die weken buiten de
+              referentie — anders verklaart een actierijk jaar zijn eigen acties weg.
             </p>
             <p>
               Er zijn <b>twee ingangen</b>. Zakt de hele lijn onder de drempel van{" "}

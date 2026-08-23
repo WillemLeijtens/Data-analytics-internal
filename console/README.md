@@ -479,15 +479,23 @@ gaat.
 ### Acties herkennen en beoordelen
 
 `engine/promoties.py` + `analytics.promotions()`. Een actie is een periode waarin de
-gemiddelde verkoopprijs onder het normale niveau lag. De prijs wordt per artikel
-gevolgd en met vaste jaargewichten opgeteld (zie `prijsindex`), zodat een verschuiving
-in de verkoopmix niet voor een prijsdaling wordt aangezien.
+gemiddelde verkoopprijs onder het normale niveau lag. De index is een gewogen
+gemiddelde van **prijsrelatieven** — per artikel de prijs gedeeld door de eigen
+jaarmediaan, gewogen met het jaarvolume (≈ 1,0 in een normale week). Dat haalt twee
+mixeffecten weg: de *verkoopmix* (het goedkope artikel verkoopt een week meer → de
+stukprijs zakt zonder afprijzing) én de *aanwezigheidsmix* (een duur artikel verkoopt
+een week niets → een gemiddelde van prijsniveaus zakt zonder afprijzing; op de echte
+Etos-data schommelde de gewichtsdekking per week tussen 73% en 97% en verschoof dit
+~20% van de vlaggen).
 
 Drie regels bepalen de uitkomst:
 
-1. **De referentie is de mediaan van de niet-bevestigde, volledig geleverde periodes.**
-   Eerder was het de mediaan van álle periodes van dat jaar — inclusief de acties zelf.
-   In een actierijk jaar zakt die mediaan mee en verdwijnen juist de echte acties.
+1. **De referentie is de mediaan van de niet-bevestigde, volledig geleverde periodes,
+   in twee passes.** Pas 1 vlagt tegen die mediaan; pas 2 rekent de definitieve cijfers
+   (daling, z-score) met de gevlagde periodes buiten de referentie. Zonder die tweede
+   pas zaten niet-bevestigde actieweken nog in de referentie: bij een actierijk merk
+   (PATCHOLOGY: 15 van 33 weken) zakt de mediaan mee en blaast de MAD op, wat de
+   z-scores drukt.
 2. **De drempel wordt afgezet tegen de eigen spreiding.** Naast de vaste drempel uit het
    profiel (5%, ICI 3%) telt een robuuste z-score (MAD × 1,4826): hoeveel keer de
    normale schommeling van dít merk is deze afwijking? De gewone standaardafwijking zou
@@ -499,8 +507,13 @@ Drie regels bepalen de uitkomst:
 
 **Zekerheid (1–5)** is een optelsom van vier waarneembare signalen: prijsdaling t.o.v.
 de normale schommeling (max 2), volumereactie, bereik, en volledigheid van de data.
-Onvolledige data plafonneert de score op 2. Het is een **vuistregel, geen kans**; het
-scherm toont per score welke signalen meetelden, zodat hij na te rekenen is.
+Onvolledige data plafonneert de score op 2. Randgevallen die expliciet geregeld zijn:
+een prijs die het hele jaar exact vaststond heeft MAD 0 en dus geen z-score — een
+afwijking is dan juist het hárdste bewijs en scoort vol; onder de zes
+referentieperiodes is een MAD wankel en is het prijssignaal maximaal één punt waard;
+en alleen-staartartikelen leveren géén bereikpunt op. Het is een **vuistregel, geen
+kans**; het scherm toont per score welke signalen meetelden, zodat hij na te rekenen
+is.
 
 **Eén definitie van "een normale periode"**, gebruikt door zowel de basislijn van de
 uplift als het gemiddelde: buiten de telling vallen bevestigde acties, voorgestelde
@@ -518,6 +531,11 @@ niet optilt; alleen hetzelfde jaar, want een omzetregime van twee jaar terug is 
 referentie. Geen uitspraak bij een lopende periode of bij minder dan drie bruikbare
 basisperiodes. De marker op het dashboard haalt zijn uplift uit dezelfde berekening —
 twee keer hetzelfde getal uitrekenen loopt vroeg of laat uiteen.
+
+Het merktotaal onder de basisregel is de **som van de scope-gemiddelden**; omdat elke
+scope zijn eigen normale-weekverzameling heeft is dat een benadering (som van
+gemiddelden ≠ gemiddelde van sommen als de weeksets verschillen) — goed genoeg als
+richtgetal, en de scoperegels eronder zijn exact.
 
 Feeds zonder volume of artikelniveau (ICI) kunnen geen stukprijs berekenen. Daar staat
 elke periode in de lijst om handmatig aan te vinken; die tellen dan níét als voorstel en

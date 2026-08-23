@@ -90,21 +90,33 @@ def periodekwaliteit(rows, key, vandaag=None) -> dict[tuple, str]:
     """
     per_jaar_periodes: dict[int, set] = defaultdict(set)
     geleverd: set[tuple] = set()
-    scopes: set = set()
+    scope_jaar: dict[tuple, set] = defaultdict(set)   # (scope, jaar) -> periodes
     for r in rows:
         p = r["periode"]
-        per_jaar_periodes[period_year(p)].add(p)
-        scopes.add(key(r))
+        jaar = period_year(p)
+        per_jaar_periodes[jaar].add(p)
         geleverd.add((key(r), p))
+        scope_jaar[(key(r), jaar)].add(p)
 
     uit: dict[tuple, str] = {}
     for jaar, periodes in per_jaar_periodes.items():
-        for p in periodes:
-            loopt = not is_afgesloten(p, vandaag)
-            for scope in scopes:
+        geordend = sorted(periodes, key=sort_key)
+        loopt = {p: not is_afgesloten(p, vandaag) for p in geordend}
+        for (scope, sj), eigen in scope_jaar.items():
+            if sj != jaar:
+                continue
+            # Alleen BINNEN het geleverde bereik van deze scope in dit jaar:
+            # vóór de eerste levering bestond het merk hier nog niet en ná de
+            # laatste is de feed gestopt — dat is een begin of een einde, geen
+            # gat (zelfde regel als engine/datagaten.py). Zonder deze grens
+            # kreeg een merk dat in week 20 instapte week 1-19 als "niet
+            # geleverd", en een scope die alleen in 2026 bestaat heel 2025.
+            eerste = min(eigen, key=sort_key)
+            laatste = max(eigen, key=sort_key)
+            for p in geordend:
                 if (scope, p) in geleverd:
-                    uit[(scope, p)] = "loopt_nog" if loopt else "volledig"
-                else:
+                    uit[(scope, p)] = "loopt_nog" if loopt[p] else "volledig"
+                elif sort_key(eerste) < sort_key(p) < sort_key(laatste):
                     uit[(scope, p)] = "niet_geleverd"
     return uit
 
@@ -138,9 +150,23 @@ def artikelacties(prijzen: dict, gewicht: dict, scope, jaar: int,
     return sorted(uit, key=lambda a: -a["daling_pct"])
 
 
-def _artikelen_met_verkoop(prijzen: dict, scope, jaar: int, periode: str) -> int:
-    return sum(1 for (s, j, _e), reeks in prijzen.items()
-               if s == scope and j == jaar and periode in reeks)
+def _artikelen_met_verkoop(prijzen: dict, scope, jaar: int, periode: str,
+                           negeer: set[str] | None = None) -> int:
+    """Artikelen die deze periode verkochten ÉN beoordeeld konden worden.
+
+    Een artikel zonder referentie (nieuw in het jaar, < MIN_REFERENTIE
+    periodes) kan niet in `artikelacties` voorkomen; het in de noemer van het
+    bereik meetellen zou een assortimentsbrede actie als "3 van de 8" laten
+    lezen terwijl er maar 4 artikelen te beoordelen wáren.
+    """
+    n = 0
+    for (s, j, _e), reeks in prijzen.items():
+        if s != scope or j != jaar or periode not in reeks:
+            continue
+        if negeer is not None and referentie(reeks, negeer) is None:
+            continue
+        n += 1
+    return n
 
 
 def bereik_van(acties: list[dict], verkocht: int) -> tuple[str | None, bool]:
@@ -154,26 +180,43 @@ def bereik_van(acties: list[dict], verkocht: int) -> tuple[str | None, bool]:
     if len(acties) / verkocht >= BREED_VANAF:
         return "assortiment", True
     zwaar = any(a["volumeaandeel_pct"] >= ARTIKEL_VOLUMEAANDEEL * 100 for a in acties)
-    return "artikel", zwaar
+    return ("artikel", True) if zwaar else ("staart", False)
 
 
 def zekerheid(z: float | None, volume_respons: float | None,
-              bereik: str | None, kwaliteit: str) -> tuple[int, list[dict]]:
+              bereik: str | None, kwaliteit: str,
+              stabiel_en_gedaald: bool = False,
+              n_referentie: int | None = None) -> tuple[int, list[dict]]:
     """(score 1-5, welke signalen meetelden).
 
     Geen kans maar een optelsom van vier waarneembare dingen. De onderdelen
     gaan mee terug zodat het scherm kan laten zien waaróp de score rust — een
     cijfer dat je niet kunt narekenen vertrouw je terecht niet.
+
+    `stabiel_en_gedaald`: de spreiding is exact nul (de prijs stond het hele
+    jaar vast) én de prijs wijkt nu naar beneden af. Dan is er geen z-score
+    (delen door nul) maar juist het hárdste bewijs — een prijs die nooit
+    beweegt en dan zakt. Zonder deze vlag kreeg precies dit geval nul punten
+    met de onjuiste tekst "te weinig vergelijkbare periodes".
+
+    `n_referentie`: een MAD op vier waarnemingen is wankel; onder de zes
+    referentieperiodes is het prijssignaal maximaal één punt waard.
     """
     delen = []
 
     def voeg_toe(naam: str, punten: int, tekst: str):
         delen.append({"naam": naam, "punten": punten, "tekst": tekst})
 
-    if z is None:
+    wankel = n_referentie is not None and n_referentie < 6
+    if stabiel_en_gedaald:
+        voeg_toe("prijsdaling", 1 if wankel else 2,
+                 "de prijs wijkt af terwijl hij anders nooit beweegt")
+    elif z is None:
         voeg_toe("prijsdaling", 0, "te weinig vergelijkbare periodes voor een referentie")
     elif z >= 3:
-        voeg_toe("prijsdaling", 2, f"{z:.1f}x de normale prijsschommeling")
+        voeg_toe("prijsdaling", 1 if wankel else 2,
+                 f"{z:.1f}x de normale prijsschommeling"
+                 + (f" (op maar {n_referentie} referentieperiodes)" if wankel else ""))
     elif z >= 2:
         voeg_toe("prijsdaling", 1, f"{z:.1f}x de normale prijsschommeling")
     else:
@@ -191,6 +234,10 @@ def zekerheid(z: float | None, volume_respons: float | None,
         voeg_toe("bereik", 1, "het hele assortiment lag onder de normale prijs")
     elif bereik == "artikel":
         voeg_toe("bereik", 1, "een artikel met noemenswaardig volume was afgeprijsd")
+    elif bereik == "staart":
+        # Wel afgeprijsde artikelen, maar alleen staartartikelen: dat is geen
+        # bevestiging van een actie, en dat zeggen we dan ook.
+        voeg_toe("bereik", 0, "alleen artikelen zonder noemenswaardig volume waren afgeprijsd")
     else:
         voeg_toe("bereik", 0, "geen enkel artikel viel apart op")
 
