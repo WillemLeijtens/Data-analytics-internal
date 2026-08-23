@@ -476,6 +476,47 @@ promotie-uplift staan de twee onderliggende bedragen nu in de hovertekst — de
 actie-omzet tegen de basislijn, met het aantal periodes waarover die mediaan
 gaat.
 
+### Acties herkennen en beoordelen
+
+`engine/promoties.py` + `analytics.promotions()`. Een actie is een periode waarin de
+gemiddelde verkoopprijs onder het normale niveau lag. De prijs wordt per artikel
+gevolgd en met vaste jaargewichten opgeteld (zie `prijsindex`), zodat een verschuiving
+in de verkoopmix niet voor een prijsdaling wordt aangezien.
+
+Drie regels bepalen de uitkomst:
+
+1. **De referentie is de mediaan van de niet-bevestigde, volledig geleverde periodes.**
+   Eerder was het de mediaan van álle periodes van dat jaar — inclusief de acties zelf.
+   In een actierijk jaar zakt die mediaan mee en verdwijnen juist de echte acties.
+2. **De drempel wordt afgezet tegen de eigen spreiding.** Naast de vaste drempel uit het
+   profiel (5%, ICI 3%) telt een robuuste z-score (MAD × 1,4826): hoeveel keer de
+   normale schommeling van dít merk is deze afwijking? De gewone standaardafwijking zou
+   juist opgeblazen worden door de uitschieters die we zoeken.
+3. **Twee ingangen.** Zakt de hele lijn onder de drempel, dan is het assortimentsbreed.
+   Is één artikel met noemenswaardig volume (≥ 20%) afgeprijsd terwijl de rest op prijs
+   blijft, dan telt dat apart mee — die gevallen miste de gewogen index, want tien
+   artikelen wegen één afprijzing weg.
+
+**Zekerheid (1–5)** is een optelsom van vier waarneembare signalen: prijsdaling t.o.v.
+de normale schommeling (max 2), volumereactie, bereik, en volledigheid van de data.
+Onvolledige data plafonneert de score op 2. Het is een **vuistregel, geen kans**; het
+scherm toont per score welke signalen meetelden, zodat hij na te rekenen is.
+
+**Gemiddelde periodeomzet zonder acties** (Promoties-pagina, per merk × land × formule
+plus een merktotaal): het niveau waartegen een actie afgezet hoort te worden. Buiten de
+telling vallen bevestigde acties, voorgestelde acties, en periodes die niet volledig
+geleverd zijn — die laatste zijn geen lage omzet maar geen waarneming. De uitgesloten
+periodes staan er met reden bij.
+
+Feeds zonder volume of artikelniveau (ICI) kunnen geen stukprijs berekenen. Daar staat
+elke periode in de lijst om handmatig aan te vinken; die tellen dan níét als voorstel en
+blijven dus gewoon meedoen in het gemiddelde.
+
+Bevestigde acties verschijnen ook als **markering op de trendgrafiek van het dashboard**,
+in een eigen kleur (`--promo`) en een eigen vorm (driehoek onder de as, tegenover de
+ruit van een mijlpaal) — zodat de twee soorten ook zonder kleur te onderscheiden zijn.
+Eigen schuifje, en filterbaar op merk en jaar.
+
 ### Rotatie
 
 Gedeeld door de periodes **sinds de eerste verkoop** van dat artikel en door

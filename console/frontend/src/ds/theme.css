@@ -45,6 +45,13 @@ html[data-theme="light"] {
   --c-y2: #1E88C7;
   --c-y3: #17A184;                      /* huidig jaar */
 
+  /* Promotiemarkers. Bewust géén --pos/--neg/--warn: die betekenen in deze
+     app "goed", "er ontbreekt data" en "aandachtspunt", en een actie is geen
+     van drieën. Ook géén --cat*, want die horen bij de merken. Per thema
+     ingesteld (net als de jaarkleuren), anders is violet op de donkere
+     ondergrond niet te lezen. */
+  --promo: #7A35C4;
+
   /* Positief/negatief. De -text-varianten zijn een tint donkerder (licht
      thema) of lichter (donker thema), zodat kleine tekst de 4,5:1-norm
      haalt; de basiskleur blijft voor vlakken, stippen en lijnen, waar 3:1
@@ -80,6 +87,7 @@ html[data-theme="dark"] {
   --t-meta: #9CA8AC;                    /* metadata als tekst, >=4,5:1 */
   --t-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
 
+  --promo: #C09BFF;
   --t-sidebar: #0B2A32;
   --t-sidebar-fg: #F8F5F5;
   --t-sidebar-fg2: #BAC3C8;
