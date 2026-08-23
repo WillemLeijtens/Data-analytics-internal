@@ -1077,43 +1077,36 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
 def promo_markers(conn, retailer_id: str, rows, caps: dict) -> list[dict]:
     """Bevestigde acties, klaar om op de trendgrafiek te zetten.
 
-    Dezelfde vorm als de mijlpalen (jaar + periodenummer), zodat de grafiek ze
-    op één manier kan tekenen. De uplift komt uit dezelfde berekening als op
-    de Promoties-pagina: de actieperiode tegen de mediaan van de
-    niet-actieperiodes van hetzelfde jaar.
+    De uplift komt uit `promotions()` zelf en wordt hier niet opnieuw
+    uitgerekend: twee berekeningen van hetzelfde getal lopen vroeg of laat
+    uiteen, en dan toont het dashboard een andere uplift dan de
+    Promoties-pagina voor dezelfde week.
+
+    Alleen de scopes die in deze (gefilterde) rijen voorkomen, zodat de
+    markers het merkfilter van het dashboard volgen.
     """
-    key = _promo_scope_key(caps)
-    per_scope_period: dict = defaultdict(lambda: {"volume": 0, "omzet": 0.0})
-    for r in rows:
-        agg = per_scope_period[(key(r), r["periode"])]
-        agg["volume"] += r["volume"]
-        agg["omzet"] += r["omzet"]
+    # Zonder bevestigde acties valt er niets te markeren. Die controle staat
+    # vóór promotions(): die berekent de hele prijsindex over alle feiten en
+    # verdubbelt anders de koude dashboardtijd voor een retailer waar nog
+    # niets bevestigd is (gemeten: 0,9 s -> 1,6 s op 48k feiten).
+    if not conn.execute(
+            "SELECT 1 FROM promo_confirmations WHERE retailer_id=? LIMIT 1",
+            (retailer_id,)).fetchone():
+        return []
 
-    bevestigd = [dict(r) for r in conn.execute(
-        "SELECT merk, land, banner, periode FROM promo_confirmations WHERE retailer_id=?",
-        (retailer_id,))]
-    sleutels = {(b["merk"], b["land"], b["banner"], b["periode"]) for b in bevestigd}
-
+    zichtbaar = {_promo_scope_key(caps)(r) for r in rows}
     uit = []
-    for b in bevestigd:
-        scope = (b["merk"], b["land"], b["banner"] if caps.get("banner") else None)
-        agg = per_scope_period.get((scope, b["periode"]))
-        if agg is None:
-            # Bevestigd, maar die periode zit (niet meer) in de gefilterde
-            # rijen — dan hoort er ook geen markering op deze grafiek.
+    for u in promotions(conn, retailer_id).get("uplift", []):
+        scope = (u["merk"], u["land"], u["banner"] if caps.get("banner") else None)
+        if scope not in zichtbaar:
             continue
-        jaar = period_year(b["periode"])
-        basislijn = [a["omzet"] for (s, p), a in per_scope_period.items()
-                     if s == scope and period_year(p) == jaar
-                     and (s[0], s[1], s[2], p) not in sleutels and is_afgesloten(p)]
-        basis = median(basislijn) if len(basislijn) >= MIN_BASISPERIODES else None
         uit.append({
-            "merk": b["merk"], "land": b["land"], "banner": b["banner"],
-            "jaar": jaar, "periode_nummer": period_number(b["periode"]),
-            "periode": b["periode"], "omzet": round(agg["omzet"], 2),
-            "basislijn": round(basis, 2) if basis else None,
-            "uplift_pct": round((agg["omzet"] - basis) / basis * 100, 1)
-            if basis else None})
+            "merk": u["merk"], "land": u["land"], "banner": u["banner"],
+            "jaar": u["jaar"], "periode_nummer": period_number(u["periode"]),
+            "periode": u["periode"], "omzet": round(u["omzet"], 2),
+            "basislijn": round(u["basislijn"], 2) if u.get("basislijn") else None,
+            "uplift_pct": u.get("uplift_pct"),
+            "reden": u.get("reden")})
     return sorted(uit, key=lambda m: (m["jaar"], m["periode_nummer"], m["merk"] or ""))
 
 
@@ -1300,6 +1293,20 @@ def promotions(conn, retailer_id: str) -> dict:
     # van het gemiddelde houdt één uitschieter (een andere, niet-bevestigde
     # actie) uit de basislijn. Bevestigde periodes blijven er sowieso buiten,
     # dus herimport van een bevestigde periode verschuift niets.
+    # Wat NIET meetelt als normale periode: bevestigde acties, voorgestelde
+    # acties, en periodes die niet volledig geleverd zijn. Eén definitie voor
+    # zowel de basislijn van de uplift als het gemiddelde hieronder — anders
+    # staan er twee versies van "een normale week" op dezelfde pagina.
+    uitgesloten = {}
+    for su in suggestions:
+        # Alleen echte voorstellen tellen als actie. Zonder volume/artikelniveau
+        # staat élke periode in de lijst (om handmatig te kunnen aanvinken);
+        # die allemaal uitsluiten zou het gemiddelde leegmaken.
+        if not su["bevestigd"] and not su["suggestie"]:
+            continue
+        sleutel = ((su["merk"], su["land"], su["banner"]), su["periode"])
+        uitgesloten[sleutel] = "actie" if su["bevestigd"] else "voorstel"
+
     uplift = []
     for merk, land, banner, periode in sorted(confirmed, key=lambda c: sort_key(c[3])):
         scope = (merk, land, banner)
@@ -1311,8 +1318,8 @@ def promotions(conn, retailer_id: str) -> dict:
         # mediaan, en een actie in een lopende week heeft nog geen uplift.
         baseline_revs = [agg["omzet"] for (s, p), agg in per_scope_period.items()
                          if s == scope and period_year(p) == jaar
-                         and (merk, land, banner, p) not in confirmed
-                         and is_afgesloten(p)]
+                         and (s, p) not in uitgesloten
+                         and kwaliteit.get((s, p), "volledig") == "volledig"]
         regel = {"merk": merk, "land": land, "banner": banner, "periode": periode,
                  "jaar": jaar, "omzet": promo_rev, "basisperiodes": len(baseline_revs)}
         if not is_afgesloten(periode):
@@ -1333,15 +1340,6 @@ def promotions(conn, retailer_id: str) -> dict:
     # gemiddelde omzet per periode ZONDER acties en zonder onvolledige
     # periodes. Voorgestelde acties tellen ook niet mee — een niet-bevestigde
     # actieweek trekt het "normale" niveau anders omhoog.
-    uitgesloten = {}
-    for su in suggestions:
-        # Alleen echte voorstellen tellen als actie. Zonder volume/artikelniveau
-        # staat élke periode in de lijst (om handmatig te kunnen aanvinken);
-        # die allemaal uitsluiten zou het gemiddelde leegmaken.
-        if not su["bevestigd"] and not su["suggestie"]:
-            continue
-        sleutel = ((su["merk"], su["land"], su["banner"]), su["periode"])
-        uitgesloten[sleutel] = "actie" if su["bevestigd"] else "voorstel"
     basis = promo_mod.gemiddelde_periodeomzet(per_scope_period, kwaliteit, uitgesloten)
 
     # Per merk het totaal: de opdracht vraagt om een gemiddelde per merk, maar

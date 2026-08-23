@@ -502,11 +502,22 @@ de normale schommeling (max 2), volumereactie, bereik, en volledigheid van de da
 Onvolledige data plafonneert de score op 2. Het is een **vuistregel, geen kans**; het
 scherm toont per score welke signalen meetelden, zodat hij na te rekenen is.
 
+**Eén definitie van "een normale periode"**, gebruikt door zowel de basislijn van de
+uplift als het gemiddelde: buiten de telling vallen bevestigde acties, voorgestelde
+acties, en periodes die niet volledig geleverd zijn — die laatste zijn geen lage omzet
+maar geen waarneming.
+
 **Gemiddelde periodeomzet zonder acties** (Promoties-pagina, per merk × land × formule
-plus een merktotaal): het niveau waartegen een actie afgezet hoort te worden. Buiten de
-telling vallen bevestigde acties, voorgestelde acties, en periodes die niet volledig
-geleverd zijn — die laatste zijn geen lage omzet maar geen waarneming. De uitgesloten
-periodes staan er met reden bij.
+plus een merktotaal): het niveau waartegen een actie afgezet hoort te worden. De
+uitgesloten periodes staan er met reden bij.
+
+**Uplift** van een bevestigde actie = `(omzet in de actieperiode − basislijn) /
+basislijn`, met de basislijn als **mediaan** van de normale periodes van hetzelfde jaar
+binnen dezelfde scope. Mediaan en niet gemiddelde, zodat één uitschieter de basislijn
+niet optilt; alleen hetzelfde jaar, want een omzetregime van twee jaar terug is geen
+referentie. Geen uitspraak bij een lopende periode of bij minder dan drie bruikbare
+basisperiodes. De marker op het dashboard haalt zijn uplift uit dezelfde berekening —
+twee keer hetzelfde getal uitrekenen loopt vroeg of laat uiteen.
 
 Feeds zonder volume of artikelniveau (ICI) kunnen geen stukprijs berekenen. Daar staat
 elke periode in de lijst om handmatig aan te vinken; die tellen dan níét als voorstel en

@@ -234,7 +234,8 @@ describe("TrendChart — promoties", () => {
 
   it("zonder uplift zegt de hovertekst waarom", () => {
     render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
-      promoties={[promo({ uplift_pct: null, basislijn: null })]} />);
-    expect(screen.getByText(/te weinig vergelijkbare periodes/)).toBeInTheDocument();
+      promoties={[promo({ uplift_pct: null, basislijn: null,
+                          reden: "te weinig basisperiodes" })]} />);
+    expect(screen.getByText(/geen uplift: te weinig basisperiodes/)).toBeInTheDocument();
   });
 });
