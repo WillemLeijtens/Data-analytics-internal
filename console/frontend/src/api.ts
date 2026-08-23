@@ -96,3 +96,12 @@ export type Milestone = {
   merk: string | null;
   aangemaakt_op: string; aangemaakt_door: string | null;
 };
+
+/** Een bevestigde actie, klaar om op de trendgrafiek te zetten. Dezelfde
+ *  vorm als een mijlpaal (jaar + periodenummer) zodat de grafiek beide op
+ *  één manier kan tekenen. */
+export type PromoMarker = {
+  merk: string | null; land: string | null; banner: string | null;
+  jaar: number; periode_nummer: number; periode: string;
+  omzet: number; basislijn: number | null; uplift_pct: number | null;
+};

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { Milestone } from "../api";
+import { Milestone, PromoMarker } from "../api";
 import { TrendChart } from "../components/shared";
 
 // De grafiek is de enige plek waar je een mijlpaal zet: je klikt op de week
@@ -158,5 +158,83 @@ describe("TrendChart — mijlpalen", () => {
       mijlpalen={[mijlpaal()]} onMijlpaal={vi.fn()} onMijlpaalWeg={weg} />);
     fireEvent.click(screen.getByRole("button", { name: /introductie nieuw item verwijderen/i }));
     expect(weg).toHaveBeenCalledWith(1);
+  });
+});
+
+
+// Promotiemarkers staan naast de mijlpalen in dezelfde grafiek. Ze moeten
+// zonder kleur uit elkaar te houden zijn (andere vorm) en hun eigen schuifje
+// en filters hebben — een actie is iets anders dan een mijlpaal.
+
+function promo(over: Partial<PromoMarker> = {}): PromoMarker {
+  return {
+    merk: "TWEEZERMAN", land: "NL", banner: null, jaar: 2026,
+    periode_nummer: 11, periode: "2026-W11", omzet: 1200, basislijn: 1000,
+    uplift_pct: 20, ...over,
+  };
+}
+
+describe("TrendChart — promoties", () => {
+  it("zonder acties verandert er niets aan de grafiek", () => {
+    render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
+      promoties={[]} />);
+    expect(screen.queryByLabelText("Promoties tonen")).not.toBeInTheDocument();
+  });
+
+  it("een actie krijgt een eigen kleur en een andere vorm dan een mijlpaal", () => {
+    const { container } = render(<TrendChart series={series} years={jaren} isEuro
+      periodWord="Week" mijlpalen={[mijlpaal()]} promoties={[promo()]} />);
+    const kleuren = Array.from(container.querySelectorAll("path"))
+      .map((el) => el.getAttribute("fill")).filter(Boolean);
+    expect(kleuren).toContain("var(--promo)");
+    // De mijlpaal gebruikt een jaarkleur, de actie niet — anders lijkt hij bij
+    // een van de lijnen te horen.
+    expect(kleuren.filter((k) => k === "var(--promo)")).toHaveLength(1);
+    const vormen = Array.from(container.querySelectorAll("path"))
+      .map((el) => el.getAttribute("d"));
+    // Ruit (vier zijden) voor de mijlpaal, driehoek (drie punten) voor de actie.
+    expect(vormen.some((d) => d?.includes("l4,4 l-4,4 l-4,-4 z"))).toBe(true);
+    expect(vormen.some((d) => d?.includes("l5,7 l-10,0 z"))).toBe(true);
+  });
+
+  it("de hovertekst noemt de uplift met de twee bedragen", () => {
+    render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
+      promoties={[promo()]} />);
+    // getByTitle kijkt alleen naar een <title> direct onder de <svg>; die van
+    // een marker zit in een groep, dus zoeken op de tekst zelf.
+    const titel = screen.getByText(/Actie week 11 2026/);
+    expect(titel.textContent).toMatch(/\+20%/);
+    expect(titel.textContent).toMatch(/tegen een basislijn van/);
+  });
+
+  it("het eigen schuifje zet alleen de acties uit", () => {
+    const { container } = render(<TrendChart series={series} years={jaren} isEuro
+      periodWord="Week" mijlpalen={[mijlpaal()]} promoties={[promo()]} />);
+    const promoKleuren = () => Array.from(container.querySelectorAll("path"))
+      .filter((el) => el.getAttribute("fill") === "var(--promo)").length;
+    expect(promoKleuren()).toBe(1);
+    fireEvent.click(screen.getByLabelText("Promoties tonen"));
+    expect(promoKleuren()).toBe(0);
+    // De mijlpaal staat er nog: twee soorten, twee schuifjes.
+    expect(lijst()).toHaveLength(1);
+  });
+
+  it("filteren op merk raakt alleen de promotiemarkers", () => {
+    const { container } = render(<TrendChart series={series} years={jaren} isEuro
+      periodWord="Week" mijlpalen={[mijlpaal()]}
+      promoties={[promo(), promo({ merk: "ALESSANDRO", periode: "2026-W12",
+                                   periode_nummer: 12 })]} />);
+    const promoKleuren = () => Array.from(container.querySelectorAll("path"))
+      .filter((el) => el.getAttribute("fill") === "var(--promo)").length;
+    expect(promoKleuren()).toBe(2);
+    fireEvent.click(screen.getByRole("button", { name: "ALESSANDRO" }));
+    expect(promoKleuren()).toBe(1);
+    expect(lijst()).toHaveLength(1);   // de mijlpaal blijft staan
+  });
+
+  it("zonder uplift zegt de hovertekst waarom", () => {
+    render(<TrendChart series={series} years={jaren} isEuro periodWord="Week"
+      promoties={[promo({ uplift_pct: null, basislijn: null })]} />);
+    expect(screen.getByText(/te weinig vergelijkbare periodes/)).toBeInTheDocument();
   });
 });

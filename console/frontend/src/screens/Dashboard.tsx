@@ -568,6 +568,7 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
         <TrendChart series={data.trend.series[effMetric] ?? {}} years={data.trend.jaren}
           isEuro={effMetric !== "volume"} periodWord={pWord}
           mijlpalen={mijlpalen ?? []}
+          promoties={data.promoties ?? []}
           // Filtert de gebruiker op merk, dan zijn dát de merken die in beeld
           // zijn; anders alles waar deze retailer data van heeft.
           merken={merk.length ? merk : filters.merk}
@@ -579,6 +580,24 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
             await apiSend(`/${ctx.retailer}/milestones/${id}`, "DELETE");
             herlaadMijlpalen();
           }} />
+        {data.promoties?.length > 0 && (() => {
+          // Wat de markers samen zeggen. Doorklikken kan naar Promoties, waar
+          // de basislijn en de artikelen achter elke actie staan.
+          const met = data.promoties.filter((p: any) => p.uplift_pct != null);
+          const gem = met.length
+            ? met.reduce((a: number, p: any) => a + p.uplift_pct, 0) / met.length : null;
+          return (
+            <p className="sub" style={{ marginTop: 10, display: "flex", gap: 8,
+                                        alignItems: "baseline", flexWrap: "wrap" }}>
+              <span style={{ color: "var(--promo)" }}>▲</span>
+              {data.promoties.length} bevestigde actie{data.promoties.length === 1 ? "" : "s"}
+              {gem != null && <> · gemiddelde uplift <b className={gem >= 0 ? "sig-green" : "sig-red"}>
+                {gem >= 0 ? "+" : ""}{gem.toFixed(1)}%</b></>}
+              <a style={{ cursor: "pointer" }}
+                onClick={() => ctx.go(ctx.retailer, "promoties")}>Naar promoties</a>
+            </p>
+          );
+        })()}
         {(() => {
           // De som zakt vanaf het punt waar een merk-feed stopt; zonder deze
           // melding leest een achterlopende levering als omzetdaling. Maar

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { BRAND_COLORS, Datagat, Milestone, apiGet, apiSend, fmtEur, fmtNum, merkKleur } from "../api";
+import { BRAND_COLORS, Datagat, Milestone, PromoMarker, apiGet, apiSend, fmtEur, fmtNum, merkKleur } from "../api";
 import { ThemaModus, bepaalThema, bewaarModus, leesModus, pasToe, volgSysteem } from "../theme";
 
 /** Uniform laden/fout-gedrag voor de leesschermen: elke API-fout wordt een
@@ -121,9 +121,12 @@ export function DeltaTag({ pct }: { pct: number | null }) {
 type Series = Record<number, Record<number, number>>; // year -> periodNum -> value
 
 export function TrendChart({ series, years, isEuro, periodWord,
-  mijlpalen, merken, onMijlpaal, onMijlpaalWeg }:
+  mijlpalen, promoties, merken, onMijlpaal, onMijlpaalWeg }:
   { series: Series; years: number[]; isEuro: boolean; periodWord: string;
     mijlpalen?: Milestone[];
+    /** Bevestigde acties. Eigen kleur en vorm, want een actie is iets anders
+     *  dan een mijlpaal en mag daar niet mee te verwarren zijn. */
+    promoties?: PromoMarker[];
     /** Merken waarvan deze retailer data heeft — de enige geldige keuzes. */
     merken?: string[];
     onMijlpaal?: (m: { jaar: number; periode_nummer: number; tekst: string;
@@ -136,6 +139,11 @@ export function TrendChart({ series, years, isEuro, periodWord,
   // veel zijn en je puur naar het verloop wil kijken.
   const [toonMijlpalen, setToonMijlpalen] = useState(true);
   const [mijlpaalJaar, setMijlpaalJaar] = useState<number | null>(null);
+  // Acties: eigen schuifje en eigen filter. Ze staan los van de mijlpalen —
+  // het zijn twee soorten gebeurtenissen met een eigen vraag erachter.
+  const [toonPromoties, setToonPromoties] = useState(true);
+  const [promoMerk, setPromoMerk] = useState<string | null>(null);
+  const [promoJaar, setPromoJaar] = useState<number | null>(null);
   const [nieuw, setNieuw] = useState<{ jaar: number; periode: number } | null>(null);
   const [tekst, setTekst] = useState("");
   const [merk, setMerk] = useState("");
@@ -177,7 +185,23 @@ export function TrendChart({ series, years, isEuro, periodWord,
   // Buiten de getoonde periodes valt niets te tekenen — de x-as loopt maar
   // zo ver als de data reikt. In de lijst eronder staat hij wél, met
   // vermelding, zodat een mijlpaal niet spoorloos verdwijnt.
-  const opDeAs = (m: Milestone) => m.periode_nummer >= minX && m.periode_nummer <= maxX;
+  const opDeAs = (m: { periode_nummer: number }) =>
+    m.periode_nummer >= minX && m.periode_nummer <= maxX;
+
+  const alleActies = promoties ?? [];
+  const promoMerken = Array.from(new Set(alleActies.map((a) => a.merk ?? "ONBEKEND"))).sort();
+  const promoJaren = Array.from(new Set(alleActies.map((a) => a.jaar))).sort();
+  const acties = toonPromoties
+    ? alleActies.filter((a) => (promoMerk == null || (a.merk ?? "ONBEKEND") === promoMerk)
+                            && (promoJaar == null || a.jaar === promoJaar))
+    : [];
+  const actieTekst = (a: PromoMarker) =>
+    `Actie ${periodWord.toLowerCase()} ${a.periode_nummer} ${a.jaar}`
+    + (a.merk ? ` · ${a.merk}` : "")
+    + (a.uplift_pct != null
+        ? ` — ${a.uplift_pct > 0 ? "+" : ""}${a.uplift_pct.toLocaleString("nl-NL")}%`
+          + ` (${fmtEur(a.omzet)} tegen een basislijn van ${fmtEur(a.basislijn)})`
+        : " — te weinig vergelijkbare periodes voor een uplift");
 
   const merkKeuzes = merken ?? [];
   const plaats = async () => {
@@ -238,6 +262,18 @@ export function TrendChart({ series, years, isEuro, periodWord,
           const d = pts.map((p, j) => `${j ? "L" : "M"}${x(p)},${y(series[yr][p])}`).join(" ");
           return <path key={yr} d={d} fill="none" stroke={colors[colors.length - years.length + i]} strokeWidth={yr === years[years.length - 1] ? 2 : 1.4} />;
         })}
+        {acties.filter(opDeAs).map((a) => (
+          <g key={`${a.merk}-${a.periode}`} style={{ pointerEvents: "none" }}>
+            <line x1={x(a.periode_nummer)} x2={x(a.periode_nummer)} y1={PAD} y2={H - PAD + 5}
+              stroke="var(--promo)" strokeWidth={1} opacity={0.5} />
+            {/* Driehoekje ONDER de as: andere kleur én andere vorm dan de
+                mijlpaalruit, zodat de twee ook zonder kleur uit elkaar te
+                houden zijn. */}
+            <path d={`M${x(a.periode_nummer)},${H - PAD + 4} l5,7 l-10,0 z`}
+              fill="var(--promo)" />
+            <title>{actieTekst(a)}</title>
+          </g>
+        ))}
         {zichtbaar.filter(opDeAs).map((m) => (
           <g key={m.id} style={{ pointerEvents: "none" }}>
             <line x1={x(m.periode_nummer)} x2={x(m.periode_nummer)} y1={PAD - 6} y2={H - PAD}
@@ -274,6 +310,11 @@ export function TrendChart({ series, years, isEuro, periodWord,
             <div key={m.id} style={{ marginTop: 4 }}>
               <span style={{ color: jaarKleur(m.jaar) }}>◆</span> {m.jaar}
               {m.merk ? ` · ${m.merk}` : ""}: {m.tekst}
+            </div>
+          ))}
+          {acties.filter((a) => a.periode_nummer === hover).map((a) => (
+            <div key={`${a.merk}-${a.periode}`} style={{ marginTop: 4 }}>
+              <span style={{ color: "var(--promo)" }}>▲</span> {actieTekst(a).replace("Actie ", "")}
             </div>
           ))}
           {/* Zonder deze regel weet niemand dat de grafiek klikbaar is. */}
@@ -327,6 +368,34 @@ export function TrendChart({ series, years, isEuro, periodWord,
         {years.map((yr, i) => (
           <span key={yr}><span style={{ display: "inline-block", width: 14, height: 2, background: colors[colors.length - years.length + i], verticalAlign: "middle", marginRight: 5 }} />{yr}</span>
         ))}
+        {alleActies.length > 0 && (
+          <span style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+              <input type="checkbox" checked={toonPromoties} role="switch"
+                aria-label="Promoties tonen"
+                onChange={(e) => setToonPromoties(e.target.checked)} />
+              <span style={{ color: "var(--promo)" }}>▲</span> Promoties ({alleActies.length})
+            </label>
+            {toonPromoties && promoMerken.length > 1 && (
+              <span className="chips" style={{ display: "inline-flex", gap: 6 }}>
+                {promoMerken.map((m) => (
+                  <button key={m} className={`chip ${promoMerk === m ? "" : "off"}`}
+                    aria-pressed={promoMerk === m}
+                    onClick={() => setPromoMerk(promoMerk === m ? null : m)}>{m}</button>
+                ))}
+              </span>
+            )}
+            {toonPromoties && promoJaren.length > 1 && (
+              <span className="chips" style={{ display: "inline-flex", gap: 6 }}>
+                {promoJaren.map((jr) => (
+                  <button key={jr} className={`chip ${promoJaar === jr ? "" : "off"}`}
+                    aria-pressed={promoJaar === jr}
+                    onClick={() => setPromoJaar(promoJaar === jr ? null : jr)}>{jr}</button>
+                ))}
+              </span>
+            )}
+          </span>
+        )}
         {kanMijlpalen && alle.length > 0 && (
           <span style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
             <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
