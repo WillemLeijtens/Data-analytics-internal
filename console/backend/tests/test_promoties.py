@@ -305,3 +305,92 @@ def test_handmatig_bevestigde_periode_valt_wel_buiten_het_gemiddelde(client):
     assert b["periodes"] == 6
     assert b["gemiddelde"] == pytest.approx(100.0)
     assert b["uitgesloten"] == [{"periode": "2026-04", "reden": "actie"}]
+
+
+# --------------------------------------- bevindingen wiskundige review
+
+def test_vaste_prijs_die_zakt_is_het_hardste_bewijs():
+    """F2: bij een prijs die het hele jaar exact vaststond is de MAD nul en
+    bestaat er geen z-score. Dat is geen 'te weinig data' maar juist het
+    sterkste prijssignaal — en zo hoort het ook te scoren."""
+    score, delen = promoties.zekerheid(
+        z=None, volume_respons=0.5, bereik="assortiment", kwaliteit="volledig",
+        stabiel_en_gedaald=True, n_referentie=20)
+    assert delen[0]["punten"] == 2
+    assert "nooit beweegt" in delen[0]["tekst"]
+    assert score == 5
+
+
+def test_wankele_referentie_drukt_het_prijssignaal():
+    """F6: een MAD op vier waarnemingen is wankel; onder de zes
+    referentieperiodes is het prijssignaal maximaal een punt waard."""
+    vol, _ = promoties.zekerheid(z=8.0, volume_respons=None, bereik=None,
+                                 kwaliteit="volledig", n_referentie=20)
+    wankel, delen = promoties.zekerheid(z=8.0, volume_respons=None, bereik=None,
+                                        kwaliteit="volledig", n_referentie=4)
+    assert vol - wankel == 1
+    assert "4 referentieperiodes" in delen[0]["tekst"]
+
+
+def test_staartartikelen_krijgen_geen_bereikpunt():
+    """F4: 'artikel'-bereik met alleen staartartikelen kreeg een punt met de
+    tekst "noemenswaardig volume" — terwijl dat er juist niet was."""
+    _, delen = promoties.zekerheid(z=3.5, volume_respons=None, bereik="staart",
+                                   kwaliteit="volledig", n_referentie=20)
+    bereik_deel = next(d for d in delen if d["naam"] == "bereik")
+    assert bereik_deel["punten"] == 0
+    assert "zonder noemenswaardig volume" in bereik_deel["tekst"]
+
+
+def test_periodekwaliteit_begin_en_einde_zijn_geen_gat():
+    """F3: een merk dat in week 20 instapt kreeg week 1-19 als 'niet
+    geleverd', en een scope die alleen in 2026 bestaat heel 2025. Vóór de
+    eerste en ná de laatste levering is geen gat (zelfde regel als
+    engine/datagaten.py); alleen binnenliggende gaten tellen."""
+    def rij(periode, merk):
+        return {"periode": periode, "merk": merk, "land": "NL", "banner": None}
+    key = lambda r: (r["merk"], r["land"], r["banner"])  # noqa: E731
+    rows = ([rij(f"2026-W{w:02d}", "VAST") for w in range(1, 11)]
+            # LAAT begint in week 5 en slaat week 7 over.
+            + [rij(f"2026-W{w:02d}", "LAAT") for w in (5, 6, 8, 9, 10)]
+            # ALLEEN25 bestaat alleen in 2025.
+            + [rij(f"2025-W{w:02d}", "ALLEEN25") for w in (1, 2, 3)])
+    kw = promoties.periodekwaliteit(rows, key, vandaag=__import__("datetime").date(2027, 6, 1))
+
+    laat = ("LAAT", "NL", None)
+    assert kw[(laat, "2026-W07")] == "niet_geleverd"          # binnenliggend gat
+    assert (laat, "2026-W01") not in kw                       # vóór de start: geen gat
+    a25 = ("ALLEEN25", "NL", None)
+    assert not any(s == a25 and p.startswith("2026") for (s, p) in kw), \
+        "een scope zonder leveringen in een jaar hoort dat jaar niet te bestaan"
+
+
+def test_referentie_wordt_niet_vervuild_door_eigen_voorstellen(client):
+    """F5: niet-bevestigde actieweken zaten in de detectiereferentie. Bij een
+    actierijk merk zakt de mediaan mee en blaast de MAD op, wat de z-scores
+    drukt. De twee-pass rekent de definitieve cijfers zonder de gevlagde
+    weken: op dit patroon (om de week -20%) hoort de normale prijs € 20 te
+    zijn en elke actieweek een strakke z te krijgen."""
+    weken = range(1, 21)
+    laad(client, [art("31210001", normaal(
+        20.0, 100, weken, {w: (16.0, 200) for w in range(2, 21, 2)}))])
+    d = client.get("/api/kruidvat/promoties").json()
+    actie = [s for s in d["suggesties"] if s["suggestie"]]
+    assert len(actie) == 10
+    # De referentie is de mediaan van de 10 normale weken (prijsrelatief 1,0);
+    # elke actieweek ligt daar exact 20% onder.
+    assert all(s["drop_pct"] == pytest.approx(20.0, abs=0.1) for s in actie)
+    # En de referentie telt alleen de normale weken.
+    assert actie[0]["referentieperiodes"] == 10
+
+
+def test_index_zakt_niet_als_duur_artikel_ontbreekt_eind_tot_eind(client):
+    """F1, end-to-end: het dure artikel verkoopt één week niets; met een
+    niveau-index leek dat -67% actie, met relatieven is er geen suggestie."""
+    weken = range(1, 11)
+    laad(client, [
+        art("31210001", normaal(5.0, 100, weken)),
+        art("31210002", {f"2026{w:02d}": (100, 2500.0) for w in weken if w != 5}),
+    ])
+    d = client.get("/api/kruidvat/promoties").json()
+    assert [s for s in d["suggesties"] if s["periode"] == "2026-W05"] == []

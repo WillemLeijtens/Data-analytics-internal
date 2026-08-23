@@ -1145,19 +1145,27 @@ def prijzen_per_artikel(rows, key) -> tuple[dict, dict]:
 
 
 def prijsindex(rows, key) -> dict[tuple, dict[str, float]]:
-    """Prijsindex per scope per periode, met een VASTE artikelmix.
+    """Prijsindex per scope per periode, als gewogen gemiddelde van
+    prijsRELATIEVEN (prijs ÷ eigen jaarmediaan per artikel). ~1,0 = normaal.
 
-    De stukprijs van een hele scope (omzet ÷ volume over alle artikelen)
-    beweegt net zo hard mee met de verkoopmix als met de prijs. Bij Kruidvat
-    lopen de artikelprijzen van € 6,09 tot € 25,22: verkoopt het goedkope
-    artikel een week wat meer, dan 'daalt' de gemiddelde prijs zonder dat er
-    iets is afgeprijsd. Op de echte data leverde dat 42 van de 121 weken een
-    actie-suggestie op, waarvan 16 puur mixverschuiving.
+    Twee mixeffecten moeten eruit, en dat vergt twee ingrepen:
 
-    Daarom per artikel de eigen prijs volgen en die met vaste gewichten
-    (het jaarvolume van dat artikel) optellen. Wat overblijft is prijs.
-    Gewichten en basisprijzen zijn per JAAR, want een prijspeil dat over de
-    jaren stijgt zou anders elk ouder jaar als 'afgeprijsd' bestempelen.
+    * De VERKOOPmix: de stukprijs van een scope (omzet ÷ volume) zakt al als
+      het goedkope artikel een week wat meer verkoopt. Daarom per artikel de
+      eigen prijs volgen, met vaste gewichten (het jaarvolume). Op de echte
+      Kruidvat-data was 16 van 42 "acties" puur deze mixverschuiving.
+    * De AANWEZIGHEIDSmix: een gewogen gemiddelde van prijsníveaus middelt
+      alleen de artikelen die die week verkochten. Valt een duur artikel een
+      week uit (geen verkoop — heel gewoon bij langzaamlopers), dan zakt zo'n
+      index zonder dat er iets is afgeprijsd. Op de echte Etos-data schommelt
+      de gewichtsdekking per week tussen 73% en 97% en verschoof dit ~20% van
+      de vlaggen. Daarom relatieven: elk artikel draagt zijn eigen
+      prijsverándering bij (≈1 in een normale week), en een ontbrekend
+      artikel verschuift het niveau niet.
+
+    Gewichten en basisprijzen (de mediaanprijs per artikel) zijn per JAAR,
+    want een prijspeil dat over de jaren stijgt zou anders elk ouder jaar als
+    'afgeprijsd' bestempelen.
     """
     prijzen, gewicht = prijzen_per_artikel(rows, key)
 
@@ -1166,13 +1174,14 @@ def prijsindex(rows, key) -> dict[tuple, dict[str, float]]:
     for sleutel in prijzen:
         per_scope_jaar[(sleutel[0], sleutel[1])].append(sleutel)
     for (scope, _jaar), sleutels in per_scope_jaar.items():
+        basis = {s: median(prijzen[s].values()) for s in sleutels}
         periodes = {p for s in sleutels for p in prijzen[s]}
         for periode in periodes:
             teller = noemer = 0.0
             for s in sleutels:
                 prijs = prijzen[s].get(periode)
-                if prijs is not None and gewicht[s]:
-                    teller += prijs * gewicht[s]
+                if prijs is not None and gewicht[s] and basis[s]:
+                    teller += (prijs / basis[s]) * gewicht[s]
                     noemer += gewicht[s]
             if noemer:
                 index[scope][periode] = teller / noemer
@@ -1221,20 +1230,45 @@ def promotions(conn, retailer_id: str) -> dict:
                 negeer = {p for p in waarden
                           if (merk, land, banner, p) in confirmed
                           or kwaliteit.get((scope, p), "volledig") != "volledig"}
+                # Twee passes. Niet-bevestigde actieweken zitten in pas 1 nog
+                # in de referentie; bij een actierijk merk (PATCHOLOGY: 15 van
+                # 33 weken) zakt de mediaan dan mee en blaast de MAD op, wat
+                # de z-scores drukt. Pas 1 vlagt met de vervuilde referentie,
+                # pas 2 rekent de definitieve cijfers met de gevlagde weken in
+                # `negeer` — dezelfde regel die de uplift-basislijn al volgt.
+                # Deterministisch: er is geen derde pas.
+                ref1 = promo_mod.referentie(waarden, negeer)
+                if ref1 and ref1[0]:
+                    gevlagd = {p for p, w in waarden.items()
+                               if (ref1[0] - w) / ref1[0] >= threshold}
+                    negeer = negeer | gevlagd
                 ref = promo_mod.referentie(waarden, negeer)
+                if ref is None:
+                    # Te veel weken gevlagd om nog een referentie over te
+                    # houden: dan is de pas-1-referentie de beste die er is.
+                    ref = ref1
+                    negeer = {p for p in waarden
+                              if (merk, land, banner, p) in confirmed
+                              or kwaliteit.get((scope, p), "volledig") != "volledig"}
                 vol_ref = promo_mod.referentie(
                     {p: per_scope_period[(scope, p)]["volume"] for p in waarden}, negeer)
                 for periode, waarde in sorted(waarden.items(),
                                               key=lambda kv: sort_key(kv[0])):
                     is_confirmed = (merk, land, banner, periode) in confirmed
                     drop = z = None
+                    stabiel_en_gedaald = False
                     if ref and ref[0]:
                         mid, spreiding, _n = ref
                         drop = (mid - waarde) / mid
                         z = ((mid - waarde) / spreiding) if spreiding else None
+                        # Spreiding nul = de prijs stond het hele jaar vast.
+                        # Geen z-score (delen door nul), maar een afwijking is
+                        # dan juist het hardste bewijs.
+                        stabiel_en_gedaald = spreiding == 0 and drop > 0
                     acties = promo_mod.artikelacties(
                         prijzen, gewicht, scope, jaar, periode, threshold, negeer)
-                    verkocht = promo_mod._artikelen_met_verkoop(prijzen, scope, jaar, periode)
+                    verkocht = promo_mod._artikelen_met_verkoop(
+                        prijzen, scope, jaar, periode, negeer)
                     bereik, telt_mee = promo_mod.bereik_van(acties, verkocht)
                     # Twee ingangen: de hele lijn zakt (index onder de drempel)
                     # of één artikel met gewicht is afgeprijsd. Dat tweede geval
@@ -1247,7 +1281,10 @@ def promotions(conn, retailer_id: str) -> dict:
                     if vol_ref and vol_ref[0]:
                         respons = (nu_vol - vol_ref[0]) / vol_ref[0]
                     kw = kwaliteit.get((scope, periode), "volledig")
-                    score, delen = promo_mod.zekerheid(z, respons, bereik, kw)
+                    score, delen = promo_mod.zekerheid(
+                        z, respons, bereik, kw,
+                        stabiel_en_gedaald=stabiel_en_gedaald,
+                        n_referentie=ref[2] if ref else None)
                     suggestions.append({
                         "merk": merk, "land": land, "banner": banner, "periode": periode,
                         # Eén decimaal: bij hele procenten toonde een daling van
@@ -1255,7 +1292,7 @@ def promotions(conn, retailer_id: str) -> dict:
                         # de regel tegen.
                         "suggestie": (f"afgeprijsd, -{drop * 100:.1f}%".replace(".", ",")
                                       if breed else
-                                      (f"{len(acties)} artikel(en) afgeprijsd"
+                                      (f"{sum(1 for a in acties if a['volumeaandeel_pct'] >= promo_mod.ARTIKEL_VOLUMEAANDEEL * 100)} artikel(en) afgeprijsd"
                                        if telt_mee else None)),
                         "bevestigd": is_confirmed,
                         "drop_pct": round(drop * 100, 1) if drop is not None else None,
@@ -1334,8 +1371,12 @@ def promotions(conn, retailer_id: str) -> dict:
             regel.update({"basislijn": base,
                           "uplift_pct": round((promo_rev - base) / base * 100, 1)
                           if base else None})
+            if not base:
+                regel["reden"] = "basislijn is nul"
         uplift.append(regel)
-    uplift.sort(key=lambda u: -(u["uplift_pct"] or 0))
+    # Regels zonder uitspraak onderaan — niet gemengd tussen plus en min
+    # alsof "geen oordeel" hetzelfde is als nul.
+    uplift.sort(key=lambda u: (u["uplift_pct"] is None, -(u["uplift_pct"] or 0)))
     # Het basisniveau waartegen een actie afgezet hoort te worden: de
     # gemiddelde omzet per periode ZONDER acties en zonder onvolledige
     # periodes. Voorgestelde acties tellen ook niet mee — een niet-bevestigde
