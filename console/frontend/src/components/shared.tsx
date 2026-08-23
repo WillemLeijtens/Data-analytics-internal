@@ -201,7 +201,7 @@ export function TrendChart({ series, years, isEuro, periodWord,
     + (a.uplift_pct != null
         ? ` — ${a.uplift_pct > 0 ? "+" : ""}${a.uplift_pct.toLocaleString("nl-NL")}%`
           + ` (${fmtEur(a.omzet)} tegen een basislijn van ${fmtEur(a.basislijn)})`
-        : " — te weinig vergelijkbare periodes voor een uplift");
+        : ` — geen uplift: ${a.reden ?? "te weinig vergelijkbare periodes"}`);
 
   const merkKeuzes = merken ?? [];
   const plaats = async () => {

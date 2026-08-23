@@ -219,6 +219,49 @@ def test_bevestigde_actie_wordt_een_marker_op_het_dashboard(client):
         (m["omzet"] - m["basislijn"]) / m["basislijn"] * 100, abs=0.05)
 
 
+def test_dashboard_en_promotiepagina_tonen_dezelfde_uplift(client):
+    """Twee berekeningen van hetzelfde getal lopen vroeg of laat uiteen. De
+    marker haalt zijn uplift daarom uit dezelfde bron als de pagina."""
+    weken = range(1, 15)
+    laad(client, [
+        art("31210001", normaal(20.0, 100, weken, {5: (10.0, 400), 9: (12.0, 300)})),
+    ])
+    d = client.get("/api/kruidvat/promoties").json()
+    # Week 5 bevestigen, week 9 blijft een voorstel.
+    client.put("/api/kruidvat/promoties", json={"bevestigd": [
+        {"merk": "TWEEZERMAN", "land": "NL", "banner": "KV", "periode": "2026-W05"}]})
+
+    pagina = next(u for u in client.get("/api/kruidvat/promoties").json()["uplift"]
+                  if u["periode"] == "2026-W05")
+    marker = next(m for m in client.get("/api/kruidvat/dashboard").json()["promoties"]
+                  if m["periode"] == "2026-W05")
+    assert marker["uplift_pct"] == pagina["uplift_pct"]
+    assert marker["basislijn"] == pytest.approx(pagina["basislijn"])
+    assert marker["omzet"] == pytest.approx(pagina["omzet"])
+
+
+def test_basislijn_laat_voorgestelde_acties_ook_weg(client):
+    """Eén definitie van 'een normale week'. De basislijn telde voorgestelde
+    acties nog wel mee, terwijl het gemiddelde ze uitsloot — dan staan er twee
+    versies van hetzelfde begrip op één pagina."""
+    weken = range(1, 15)
+    laad(client, [
+        art("31210001", normaal(20.0, 100, weken, {5: (10.0, 400), 9: (10.0, 400)})),
+    ])
+    client.put("/api/kruidvat/promoties", json={"bevestigd": [
+        {"merk": "TWEEZERMAN", "land": "NL", "banner": "KV", "periode": "2026-W05"}]})
+
+    d = client.get("/api/kruidvat/promoties").json()
+    u = next(x for x in d["uplift"] if x["periode"] == "2026-W05")
+    b = next(x for x in d["basis"] if x["merk"] == "TWEEZERMAN")
+    # Week 9 is een voorstel en zit dus in geen van beide.
+    assert u["basisperiodes"] == b["periodes"] == 12
+    assert u["basislijn"] == pytest.approx(b["mediaan"])
+    # De normale week is 100 x € 20; de actieweek deed € 4.000.
+    assert u["basislijn"] == pytest.approx(2000.0)
+    assert u["uplift_pct"] == pytest.approx(100.0)
+
+
 def test_zonder_bevestiging_geen_markers(client):
     laad(client, [art("31210001", normaal(20.0, 100, range(1, 15), {5: (10.0, 400)}))])
     assert client.get("/api/kruidvat/dashboard").json()["promoties"] == []

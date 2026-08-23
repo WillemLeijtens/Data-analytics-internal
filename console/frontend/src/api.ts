@@ -104,4 +104,6 @@ export type PromoMarker = {
   merk: string | null; land: string | null; banner: string | null;
   jaar: number; periode_nummer: number; periode: string;
   omzet: number; basislijn: number | null; uplift_pct: number | null;
+  /** Waarom er geen uplift is, als die ontbreekt. */
+  reden?: string | null;
 };
