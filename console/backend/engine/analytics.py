@@ -959,12 +959,19 @@ RECENT_PERIODES = 13          # weken; bij een maandfeed 3 maanden
 MIN_OMZET_PER_WINKEL_PER_WEEK = 0.10
 
 
-def _artikel_status(tot, ltot, recent_omzet, n_recent, n_stores, periode_type, jaar,
+def _artikel_status(tot, ltot, ltot_jaar, recent_omzet, n_recent, n_stores, periode_type, jaar,
                     merk_heeft_vorig_jaar=True, merk_heeft_dit_jaar=True):
     """(status, reden, omzet per winkel per week) voor één artikel.
 
-    nieuw     — dit jaar omzet, vorig jaar niet: nieuw in het schap.
-    delisted  — vorig jaar wél omzet, dit jaar niets meer.
+    nieuw     — dit jaar (YTD) omzet, HEEL vorig jaar niet: nieuw in het schap.
+                Getoetst tegen het VOLLEDIGE vorige jaar (`ltot_jaar`), niet
+                het YTD-venster (`ltot`): 2025 is een afgesloten jaar, dus een
+                artikel dat toen pas vanaf week 40 startte hoort niet als
+                NIEUW te gelden alleen omdat het venster t/m de huidige week
+                nog geen 2025-omzet raakt — het bestond gewoon, alleen later.
+    delisted  — vorig jaar (in hetzelfde venster) wél omzet, dit jaar niets
+                meer. Hier telt wél het venster: het gaat om "verkocht dit
+                jaar nog niet waar het toen al liep", niet om het hele jaar.
     delisted? — twijfel: dit jaar wel gestart maar recent stilgevallen, of
                 nog wel omzet maar zo weinig dat het bij dit winkelbestand
                 niet meer op distributie kan wijzen.
@@ -976,10 +983,10 @@ def _artikel_status(tot, ltot, recent_omzet, n_recent, n_stores, periode_type, j
     echte Kruidvat-bestanden), en elk artikel van een merk waarvan de feed
     dit jaar nog niets leverde het label DELISTED.
     """
-    if tot["omzet"] and not ltot["omzet"]:
+    if tot["omzet"] and not ltot_jaar["omzet"]:
         if not merk_heeft_vorig_jaar:
             return None, None, None
-        return "nieuw", f"geen omzet in {jaar - 1}, dit jaar wel", None
+        return "nieuw", f"geen omzet in heel {jaar - 1}, dit jaar wel", None
     if ltot["omzet"] and not tot["omzet"]:
         if not merk_heeft_dit_jaar:
             return None, None, None
@@ -1059,6 +1066,11 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
             "ytd": defaultdict(lambda: {"volume": 0, "omzet": 0.0}),
             "lytd": defaultdict(lambda: {"volume": 0, "omzet": 0.0}),
             "laatste": {"volume": 0, "omzet": 0.0},
+            # Het HELE vorige jaar, niet het YTD-venster — voor de nieuw-toets
+            # hieronder. 2025 is compleet: een artikel dat toen pas vanaf week
+            # 40 startte hoort dit jaar niet als NIEUW te tellen alleen omdat
+            # het venster t/m de huidige week nog geen 2025-omzet raakt.
+            "lytd_jaar": {"volume": 0, "omzet": 0.0},
             "recent_omzet": 0.0, "rijen": []})
         a["rijen"].append(r)
         y, p = period_year(r["periode"]), period_number(r["periode"])
@@ -1066,6 +1078,9 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
         if bucket is not None and p <= upto:
             bucket[p]["volume"] += r["volume"]
             bucket[p]["omzet"] += r["omzet"]
+        if y == y_now - 1:
+            a["lytd_jaar"]["volume"] += r["volume"]
+            a["lytd_jaar"]["omzet"] += r["omzet"]
         if r["periode"] in merk_recent.get(r["merk"], ()):
             a["recent_omzet"] += r["omzet"]
         if r["periode"] == latest:
@@ -1091,7 +1106,7 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
         art_stores, _ = store_count(conn, retailer_id, caps, a["rijen"],
                                     latest, settings)
         status, reden, per_winkel_week = _artikel_status(
-            tot, ltot, a["recent_omzet"], len(merk_recent.get(a["merk"], ())),
+            tot, ltot, a["lytd_jaar"], a["recent_omzet"], len(merk_recent.get(a["merk"], ())),
             art_stores or n_stores, caps["periode"], y_now,
             merk_heeft_vorig_jaar=merk_lytd.get(a["merk"], False),
             merk_heeft_dit_jaar=merk_dit_jaar.get(a["merk"], False))

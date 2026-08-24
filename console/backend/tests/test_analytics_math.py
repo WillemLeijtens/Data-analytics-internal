@@ -402,6 +402,25 @@ def test_artikelstatus_nieuw_delisted_en_twijfel(client):
     assert schraal["omzet_per_winkel_per_week"] == pytest.approx(50 / 530, abs=0.01)
 
 
+def test_artikel_niet_nieuw_als_vorig_jaar_pas_later_op_gang_kwam(client):
+    """Gemeld: een artikel kreeg het label NIEUW terwijl het in 2025 wél omzet
+    had — alleen pas vanaf week 40, ná het YTD-venster (t/m de huidige week)
+    waarmee 2025 werd vergeleken. 2025 is een afgesloten jaar; de nieuw-toets
+    hoort naar het HELE jaar te kijken, niet naar hetzelfde venster als dit
+    jaar — anders leest 'later gestart' als 'nieuw in het schap'."""
+    import seed
+
+    upload(client, "DWH__Sales_Tweezerman_KVNL_laatstarter.xlsx", seed.make_dwh_xlsx([
+        {"sku": "31210009", "gtin": "31210009", "desc": "Laatstarter",
+         "brand": "TWEEZERMAN",
+         "weeks": {**{f"2025{w:02d}": (5, 100.0) for w in range(40, 46)},
+                   **{f"2026{w:02d}": (5, 100.0) for w in range(1, 21)}}},
+    ]))
+    per = {a["ean"]: a for a in client.get("/api/kruidvat/artikelen").json()["artikelen"]}
+    assert per["31210009"]["status"] != "nieuw"
+    assert per["31210009"]["totaal_lytd"]["omzet"] == pytest.approx(0.0)  # buiten het venster
+
+
 def test_artikelstatus_zonder_winkelaantal_geen_valse_twijfel(client):
     """Zonder winkelaantal is 'te weinig per winkel' niet te berekenen; dan
     hoort er geen twijfelvlag te staan in plaats van een gegokte."""
