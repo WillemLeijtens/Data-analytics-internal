@@ -173,14 +173,18 @@ def analyse(client):
     return client.get("/api/etos/dashboard").json()["winkelanalyse"]
 
 
-def test_standaard_blijft_een_en_twee(client):
-    """Niets ingesteld = rekenen zoals voorheen, zodat een bestaande
-    installatie niet ineens andere aantallen toont."""
+def test_standaard_drempels_met_ritmefilter(client):
+    """Niets ingesteld = vloer 1/2, met het eigen ritme eroverheen. Alle vier
+    de winkels verkochten wekelijks (ritme 1): één stille week is dan binnen
+    2x het ritme en dus ruis (B valt weg), drie stille weken is 3x het ritme
+    en dus gestopt (C), zeven ook (D)."""
     laad_stiltes(client)
     w = analyse(client)
     assert (w["letop_vanaf"], w["gestopt_vanaf"]) == (1, 2)
     assert {g["winkel_naam"].split()[1] for g in w["gestopt"]} == {"C", "D"}
-    assert {g["winkel_naam"].split()[1] for g in w["signalen"]} == {"B"}
+    assert w["signalen"] == []
+    # Het ritme staat op de regel, zodat het scherm kan zeggen wáárom.
+    assert all(g["ritme"] == 1 for g in w["gestopt"])
 
 
 def test_drempels_zijn_per_retailer_in_te_stellen(client):
@@ -232,3 +236,52 @@ def test_drempels_gelden_per_retailer(client):
         "winkelsignaal": {"letop_vanaf": 4, "gestopt_vanaf": 6}})
     ici = client.get("/api/ici-paris-xl/instellingen").json()["winkelsignaal"]
     assert ici == {"letop_vanaf": 1, "gestopt_vanaf": 2}
+
+
+# ------------------------------------------------ ritme en geschat gemist
+
+def test_hakkelige_verkoper_ruist_niet_maar_stopt_wel_echt(client):
+    """Een winkel die om de drie weken iets verkoopt (ritme 3) is na zes
+    stille weken niet gestopt — dat is 2x zijn ritme, gewoon zijn patroon.
+    Na tien stille weken (>= 3x ritme) wel."""
+    import seed
+    upload(client, "Data_Grid_57018_ritme.xlsx", seed.make_etos_xlsx([
+        # HAKKEL: verkoop in wk 1,4,7,10,13,16 -> ritme 3; stil vanaf wk 17 (6 stil t/m 22)
+        weken(client, "ETOS HAKKEL - 6001", [1, 4, 7, 10, 13, 16]),
+        # STAKKER: zelfde ritme maar stil vanaf wk 13 (10 stil)
+        weken(client, "ETOS STAKKER - 6002", [1, 4, 7, 10, 12]),
+        # VAST: verkoopt elke week t/m 22, houdt de as op 22 weken
+        weken(client, "ETOS VAST - 6003", range(1, 23)),
+    ], winkels=True))
+    client.put("/api/etos/instellingen", json={
+        "winkelsignaal": {"letop_vanaf": 2, "gestopt_vanaf": 3}})
+    w = analyse(client)
+    namen = lambda lijst: {g["winkel_naam"].split()[1] for g in lijst}  # noqa: E731
+    # HAKKEL: 6 stil, ritme 3 -> geen gestopt (6 < 9) maar wel let op (6 >= 6).
+    assert "HAKKEL" not in namen(w["gestopt"])
+    assert "HAKKEL" in namen(w["signalen"])
+    # STAKKER: 10 stil, ritme ~2-3 -> gestopt.
+    assert "STAKKER" in namen(w["gestopt"])
+
+
+def test_gemist_wordt_geschat_zonder_vorig_jaar(client):
+    """Zonder vorig jaar stond hier overal € 0 en was de kolom — en de
+    sortering erop — betekenisloos. Nu: eigen gemiddelde per actieve periode,
+    gedeeld door het ritme, maal de stilte."""
+    import seed
+    upload(client, "Data_Grid_57018_gemist.xlsx", seed.make_etos_xlsx([
+        # Elke week € 10, stil vanaf wk 11: 4 stille weken t/m 14.
+        weken(client, "ETOS WEG - 6001", range(1, 11)),
+        weken(client, "ETOS VAST - 6002", range(1, 15)),
+    ], winkels=True))
+    client.put("/api/etos/instellingen", json={
+        "winkelsignaal": {"letop_vanaf": 2, "gestopt_vanaf": 3}})
+    w = analyse(client)
+    weg = next(g for g in w["gestopt"] if "WEG" in g["winkel_naam"])
+    assert weg["gemist_bron"] == "geschat"
+    # € 10 per week, ritme 1, 4 stille weken -> ± € 40.
+    assert weg["gemist_zelfde_venster"] == pytest.approx(40.0)
+    assert w["gemiste_omzet"] == pytest.approx(40.0)
+    # De reeks gaat mee voor de sparkline: alleen de weken mét omzet.
+    # (JSON-sleutels zijn strings, ook als het weeknummers waren.)
+    assert {int(k) for k in weg["reeks"]} == set(range(1, 11))

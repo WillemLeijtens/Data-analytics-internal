@@ -339,21 +339,53 @@ def winkelanalyse(rows, caps: dict, jaar: int,
         if not w["nu"].get(laatste) and (met_omzet or vorig_totaal):
             vanaf = (met_omzet[-1] if met_omzet else 0) + 1
             leeg = [m for m in maanden if m >= vanaf]
+
+            # Het eigen verkoopritme: de mediane tussenpoos tussen periodes
+            # mét omzet. Eén vaste drempel kent dit verschil niet: een winkel
+            # die elke week verkoopt en er 3 stilvalt is alarmerender dan een
+            # hakkelige verkoper die er 6 niets doet. De ingestelde drempels
+            # blijven de VLOER; het ritme schaalt automatisch mee. Onder de
+            # drie verkoopperiodes is er geen ritme om op te leunen en geldt
+            # alleen de vloer.
+            ritme = None
+            if len(met_omzet) >= 3:
+                tussenpozen = sorted(b - a for a, b in zip(met_omzet, met_omzet[1:]))
+                ritme = tussenpozen[len(tussenpozen) // 2]
+            stil = len(leeg)
+            is_gestopt = stil >= gestopt_vanaf and (ritme is None or stil >= 3 * ritme)
+            is_letop = stil >= letop_vanaf and (ritme is None or stil >= 2 * ritme)
+
+            # Gemist: dezelfde periodes vorig jaar als die er zijn. Zonder
+            # vorig jaar (Etos begon in 2026) bleef hier € 0 staan en was de
+            # hele kolom — en de sortering erop — betekenisloos. Dan een
+            # schatting op het eigen ritme: gemiddelde omzet per ACTIEVE
+            # periode gedeeld door de tussenpoos = verwachte omzet per
+            # kalenderperiode, maal de stilte.
+            gemist = sum(v for m, v in w["vorig"].items() if vanaf <= m <= laatste)
+            gemist_bron = "vorig_jaar"
+            if not vorig_totaal and met_omzet:
+                per_actieve = dit_jaar / len(met_omzet)
+                gemist = per_actieve / (ritme or 1) * stil
+                gemist_bron = "geschat"
+
             regel = {
                 "winkel_id": w["winkel_id"], "winkel_naam": w["winkel_naam"],
                 "merk": w["merk"], "laatste_maand": met_omzet[-1] if met_omzet else None,
-                "maanden_zonder_omzet": len(leeg),
+                "maanden_zonder_omzet": stil,
+                "ritme": ritme,
                 "omzet_dit_jaar": dit_jaar,
-                # Wat we in dezelfde maanden vorig jaar wél verkochten.
-                "gemist_zelfde_venster": sum(v for m, v in w["vorig"].items()
-                                             if vanaf <= m <= laatste),
+                "gemist_zelfde_venster": round(gemist, 2),
+                "gemist_bron": gemist_bron,
+                # De weekreeks van dit jaar, alleen voor gemelde rijen: de
+                # sparkline laat zien of het verval abrupt was of hakkelig.
+                "reeks": {m: round(v, 2) for m, v in sorted(w["nu"].items())},
                 "omzet_vorig_jaar": vorig_totaal}
             # Onder de "let op"-drempel valt de regel helemaal weg: bij een
             # weekfeed is één lege week ruis, en een lijst vol ruis leert je
             # het scherm te negeren.
-            if len(leeg) >= gestopt_vanaf:
+            if is_gestopt:
                 gestopt.append(regel)
-            elif len(leeg) >= letop_vanaf:
+            elif is_letop:
                 signalen.append(regel)
         elif met_omzet and not vorig_totaal and w["merk"] in met_historie:
             toegevoegd.append({
