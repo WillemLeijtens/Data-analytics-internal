@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { apiGet, apiSend, fmtEur, YEAR_COLORS } from "../api";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { apiGet, apiSend, fmtEur } from "../api";
 import { ShellCtx } from "../App";
 import { BrandDot, EmptyProfileCard, LevelStrip, LoadState, Uitleg } from "../components/shared";
 
@@ -14,8 +14,9 @@ const REDEN: Record<string, string> = {
 export default function Promoties({ ctx }: { ctx: ShellCtx }) {
   const [data, setData] = useState<any>(null);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
-  const [jaar, setJaar] = useState<string>("ALLE");
   const [saved, setSaved] = useState<string | null>(null);
+  // Ketent de automatische saves, zodat ze elkaar nooit inhalen.
+  const wachtrij = useRef(Promise.resolve());
   // Welke suggestieregel is uitgeklapt naar zijn artikelen.
   const [open, setOpen] = useState<string | null>(null);
   const [uitlegOpen, setUitlegOpen] = useState(false);
@@ -32,36 +33,30 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
 
   const key = (s: any) => `${s.merk}|${s.land}|${s.banner ?? ""}|${s.periode}`;
 
-  const uplift = useMemo(() => {
-    if (!data) return [];
-    return (data.uplift as any[]).filter((u) => jaar === "ALLE" || String(u.jaar) === jaar);
-  }, [data, jaar]);
-
   if (!data) return <LoadState error={error} reload={load} />;
   if (!data.available) return <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />;
 
   const pw = data.periode_type === "maand" ? "Maand" : "Week";
   const nConfirmed = Object.values(checked).filter(Boolean).length;
-  // Promoties zonder genoeg basisperiodes hebben géén percentage; die mogen
-  // het gemiddelde en de uitersten niet als nul omlaag trekken.
-  const metPct = uplift.filter((u) => u.uplift_pct != null);
-  // Jaarkleuren ankeren op het nieuwste jaar in de dáta, niet op een
-  // hardgecodeerd kalenderjaar dat elk jaar zou verschuiven.
-  const maxJaar = Math.max(...(data.uplift as any[]).map((u) => u.jaar), 0);
-  const maxAbs = Math.max(1, ...metPct.map((u) => Math.abs(u.uplift_pct)));
-  const avg = metPct.length ? metPct.reduce((a, u) => a + u.uplift_pct, 0) / metPct.length : null;
 
-  const save = async () => {
+  /** Een vinkje slaat zichzelf op. De PUT is een volledige vervanging (dus
+   *  idempotent); de keten garandeert dat snel achter elkaar klikken nooit
+   *  een oudere staat als laatste op de server laat landen. Na elke
+   *  geslaagde PUT een verse load: bevestigen verandert de uplift, de
+   *  basisregel en de markers op het dashboard. Mislukt hij, dan herstelt
+   *  diezelfde load de vinkjes naar wat de server echt heeft — geen stil
+   *  verlies. */
+  const zetVinkje = (s: any, aan: boolean) => {
+    const nieuw = { ...checked, [key(s)]: aan };
+    setChecked(nieuw);
     const bevestigd = (data.suggesties as any[])
-      .filter((s) => checked[key(s)])
-      .map((s) => ({ merk: s.merk, land: s.land, banner: s.banner, periode: s.periode }));
-    try {
-      await apiSend(`/${ctx.retailer}/promoties`, "PUT", { bevestigd });
-      setSaved(`${bevestigd.length} ${pw.toLowerCase()}(en) bevestigd`);
-      load();
-    } catch (e: any) {
-      setSaved(`Opslaan mislukt: ${e?.message ?? e}`);
-    }
+      .filter((x) => nieuw[key(x)])
+      .map((x) => ({ merk: x.merk, land: x.land, banner: x.banner, periode: x.periode }));
+    wachtrij.current = wachtrij.current
+      .then(() => apiSend(`/${ctx.retailer}/promoties`, "PUT", { bevestigd }))
+      .then(() => { setSaved(`${bevestigd.length} ${pw.toLowerCase()}(en) bevestigd`); })
+      .catch((e: any) => { setSaved(`Opslaan mislukt: ${e?.message ?? e}`); })
+      .then(load);
   };
 
   return (
@@ -214,7 +209,7 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
                   <td>
                     <input type="checkbox" className="checkbox" checked={!!checked[key(s)]}
                       aria-label={`Markeer ${s.merk} ${s.periode} als promotie`}
-                      onChange={(e) => setChecked({ ...checked, [key(s)]: e.target.checked })} />
+                      onChange={(e) => zetVinkje(s, e.target.checked)} />
                   </td>
                 </tr>
                 {open === key(s) && !!s.artikelen?.length && (
@@ -238,66 +233,17 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
               )}
             </tbody>
           </table>
-          <div style={{ display: "flex", gap: 14, alignItems: "center", marginTop: 12 }}>
-            <button className="btn" onClick={save}>Opslaan</button>
-            <span className="sub">{saved ?? `${nConfirmed} ${pw.toLowerCase()}(en) aangevinkt`}</span>
-          </div>
+          <p className="sub" style={{ marginTop: 12 }}>
+            {saved ?? `${nConfirmed} ${pw.toLowerCase()}(en) aangevinkt`} · wijzigingen
+            worden direct opgeslagen
+          </p>
 
-          <h2>Omzeteffect per promotie</h2>
-          <div className="card">
-            <div className="seg" style={{ marginBottom: 12 }}>
-              {["ALLE", ...Array.from(new Set((data.uplift as any[]).map((u) => String(u.jaar)))).sort()].map((j) => (
-                <button key={j} className={jaar === j ? "on" : ""} onClick={() => setJaar(j)}>{j}</button>
-              ))}
-            </div>
-            {uplift.length ? (
-              <>
-                <div className="sub" style={{ marginBottom: 10 }}>
-                  {metPct.length} promoties gemeten · gem.{" "}
-                  <b className={avg != null && avg >= 0 ? "sig-green" : "sig-red"}>
-                    {avg != null ? `${avg >= 0 ? "+" : ""}${avg.toFixed(1)}%` : "—"}
-                  </b>
-                  {metPct.length > 0 && <>
-                    {" "}· beste <b className="sig-green">+{Math.max(...metPct.map((u) => u.uplift_pct)).toFixed(1)}%</b>{" "}
-                    · zwakste <b className="sig-red">{Math.min(...metPct.map((u) => u.uplift_pct)).toFixed(1)}%</b>
-                  </>}
-                  {uplift.length > metPct.length &&
-                    ` · ${uplift.length - metPct.length} zonder genoeg basisperiodes`}
-                </div>
-                {uplift.map((u) => (
-                  <div key={`${u.merk}${u.periode}`} style={{ display: "grid", gridTemplateColumns: "170px 1fr 70px", gap: 10, alignItems: "center", margin: "5px 0" }}>
-                    <span style={{ fontSize: 11.5 }}>{u.merk} · {u.periode}</span>
-                    <div className="bar-track" style={{ height: 8 }}>
-                      {u.uplift_pct != null && <div className="bar-fill" style={{
-                        height: 8,
-                        width: `${(Math.abs(u.uplift_pct) / maxAbs) * 100}%`,
-                        background: u.uplift_pct < 0 ? "var(--neg)"
-                          : YEAR_COLORS[maxJaar - u.jaar] ?? "var(--t-fg3)",
-                      }} />}
-                    </div>
-                    {u.uplift_pct != null ? (
-                      // De twee bedragen erbij: zonder de actie-omzet en de
-                      // basislijn is het percentage niet na te rekenen, en een
-                      // cijfer dat je niet kunt controleren vertrouw je
-                      // terecht niet.
-                      <b style={{ fontSize: 12 }} className={u.uplift_pct >= 0 ? "" : "sig-red"}
-                        title={`${fmtEur(u.omzet)} in de actie tegen een basislijn van `
-                          + `${fmtEur(u.basislijn)} — de mediaan van ${u.basisperiodes} `
-                          + `${pw.toLowerCase()}(en) zonder actie in ${u.jaar}.`}>
-                        {u.uplift_pct >= 0 ? "+" : ""}{u.uplift_pct}%
-                      </b>
-                    ) : (
-                      <span className="sub" style={{ fontSize: 10.5 }}
-                        title={u.reden === "periode loopt nog" ? undefined
-                          : `Maar ${u.basisperiodes} ${pw.toLowerCase()}(en) zonder actie in ${u.jaar}`}>
-                        {u.reden ?? "te weinig basis"}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </>
-            ) : <p className="sub">Nog geen bevestigde promoties{jaar !== "ALLE" ? ` in ${jaar}` : ""}.</p>}
-          </div>
+          <p className="sub" style={{ marginTop: 14 }}>
+            Het omzeteffect van de bevestigde acties staat op het{" "}
+            <a style={{ cursor: "pointer" }}
+              onClick={() => ctx.go(ctx.retailer, "dashboard")}>dashboard</a>,
+            bij de trendgrafiek met de actiemarkers.
+          </p>
         </div>
 
         <div className="card">

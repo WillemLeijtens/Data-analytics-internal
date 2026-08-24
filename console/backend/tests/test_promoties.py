@@ -238,6 +238,8 @@ def test_dashboard_en_promotiepagina_tonen_dezelfde_uplift(client):
     assert marker["uplift_pct"] == pagina["uplift_pct"]
     assert marker["basislijn"] == pytest.approx(pagina["basislijn"])
     assert marker["omzet"] == pytest.approx(pagina["omzet"])
+    # De kaart op het dashboard toont de context van de basislijn mee.
+    assert marker["basisperiodes"] == pagina["basisperiodes"] > 0
 
 
 def test_basislijn_laat_voorgestelde_acties_ook_weg(client):

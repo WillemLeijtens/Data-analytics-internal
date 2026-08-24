@@ -541,6 +541,12 @@ Feeds zonder volume of artikelniveau (ICI) kunnen geen stukprijs berekenen. Daar
 elke periode in de lijst om handmatig aan te vinken; die tellen dan níét als voorstel en
 blijven dus gewoon meedoen in het gemiddelde.
 
+Vinkjes in de suggestietabel **slaan zichzelf op** (de PUT is een volledige
+vervanging; opeenvolgende saves zijn geketend zodat snel klikken nooit een oudere staat
+als laatste laat landen; mislukt een save, dan herstelt een verse load de vinkjes naar
+de servertruth). De kaart **"Omzeteffect per promotie"** staat op het dashboard, onder
+de trendgrafiek met de actiemarkers, en volgt daar het merkfilter.
+
 Bevestigde acties verschijnen ook als **markering op de trendgrafiek van het dashboard**,
 in een eigen kleur (`--promo`) en een eigen vorm (driehoek onder de as, tegenover de
 ruit van een mijlpaal) — zodat de twee soorten ook zonder kleur te onderscheiden zijn.

@@ -1106,6 +1106,10 @@ def promo_markers(conn, retailer_id: str, rows, caps: dict) -> list[dict]:
             "periode": u["periode"], "omzet": round(u["omzet"], 2),
             "basislijn": round(u["basislijn"], 2) if u.get("basislijn") else None,
             "uplift_pct": u.get("uplift_pct"),
+            # Het aantal normale periodes achter de basislijn: de kaart op het
+            # dashboard toont de bedragen mét deze context, anders is het
+            # percentage daar niet na te rekenen.
+            "basisperiodes": u.get("basisperiodes", 0),
             "reden": u.get("reden")})
     return sorted(uit, key=lambda m: (m["jaar"], m["periode_nummer"], m["merk"] or ""))
 
