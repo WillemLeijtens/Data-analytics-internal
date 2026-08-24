@@ -223,6 +223,113 @@ def test_herimport_ytd_vervangt_zonder_dubbeltelling(client):
     assert eerste > 0
 
 
+def _etos_art(upc, weeks, winkel=None, stad=None):
+    r = {"upc": upc, "naam": f"ARTIKEL {upc}", "merk": "TWEEZERMAN",
+         "merk_nr": 2278, "weeks": weeks}
+    if winkel:
+        r["winkel"], r["stad"] = winkel, stad or "Sneek"
+    return r
+
+
+def test_korrelwissel_vervangt_in_plaats_van_te_verdubbelen(client):
+    """Etos stapte over van de artikelniveau-export naar dezelfde widget MÉT
+    Store-kolommen. De dedup-sleutel bevat winkel_id, dus die twee vormen van
+    dezelfde verkoop botsten nooit en bleven naast elkaar staan: elke week die
+    in beide bestanden zat telde dubbel.
+
+    Gemeten op de echte Etos-data: week 32 stond op EUR 52.200 in plaats van
+    EUR 26.100, waardoor het dashboard voor week 33 -56,2% meldde terwijl de
+    werkelijke daling -12,4% was."""
+    import db
+    import seed
+    week = {"202632": (100.0, 10)}
+
+    upload(client, "Data_Grid_57018_oud.xlsx",
+           seed.make_etos_xlsx([_etos_art("111", week)], winkels=False))
+
+    def totaal():
+        with db.get_conn() as conn:
+            r = conn.execute("SELECT COALESCE(SUM(omzet),0) o, COUNT(*) n FROM sellout_facts"
+                             " WHERE retailer_id='etos' AND periode='2026-W32'").fetchone()
+            return r["o"], r["n"]
+
+    assert totaal() == (100.0, 1)
+
+    upload(client, "Data_Grid_57018_winkels.xlsx",
+           seed.make_etos_xlsx([_etos_art("111", week, winkel="ETOS SNEEK - 6001")],
+                               winkels=True))
+    omzet, rijen = totaal()
+    assert omzet == 100.0, "dezelfde verkoop op een andere korrel mag niet dubbel tellen"
+    assert rijen == 1
+    with db.get_conn() as conn:
+        # De WINKELregel blijft staan: die draagt de meeste informatie.
+        assert conn.execute("SELECT winkel_id FROM sellout_facts WHERE retailer_id='etos'"
+                            " AND periode='2026-W32'").fetchone()["winkel_id"] == "6001"
+
+
+def test_korrelwissel_laat_andere_periodes_ongemoeid(client):
+    """Alleen de combinaties die het nieuwe bestand levert vervallen op de
+    andere korrel. Artikelniveau-historie van weken die nooit op winkelniveau
+    geleverd zijn, moet blijven staan."""
+    import db
+    import seed
+    upload(client, "Data_Grid_57018_oud.xlsx",
+           seed.make_etos_xlsx([_etos_art("111", {"202631": (80.0, 8),
+                                                  "202632": (100.0, 10)})], winkels=False))
+    upload(client, "Data_Grid_57018_winkels.xlsx",
+           seed.make_etos_xlsx([_etos_art("111", {"202632": (100.0, 10)},
+                                          winkel="ETOS SNEEK - 6001")], winkels=True))
+    with db.get_conn() as conn:
+        per = {r["periode"]: (r["o"], r["w"]) for r in conn.execute(
+            "SELECT periode, SUM(omzet) o, COUNT(*) w FROM sellout_facts"
+            " WHERE retailer_id='etos' GROUP BY periode")}
+    assert per["2026-W31"] == (80.0, 1), "week 31 stond niet in het nieuwe bestand"
+    assert per["2026-W32"] == (100.0, 1)
+
+
+def test_migratie_ruimt_bestaande_dubbeltelling_op(client, monkeypatch):
+    """De importerfix voorkomt nieuwe dubbeltellingen; migratie 020 haalt weg
+    wat er al stond. Deze test bouwt de situatie van vóór de fix na: dezelfde
+    verkoop op beide korrels naast elkaar."""
+    import db
+    import seed
+    upload(client, "Data_Grid_57018_winkels.xlsx",
+           seed.make_etos_xlsx([_etos_art("111", {"202631": (80.0, 8),
+                                                  "202632": (100.0, 10)},
+                                          winkel="ETOS SNEEK - 6001")], winkels=True))
+    with db.get_conn() as conn:
+        for periode, omzet, vol in (("2026-W31", 80.0, 8), ("2026-W32", 100.0, 10),
+                                    # Week 20 bestaat ALLEEN op artikelniveau en
+                                    # is dus echte historie, geen dubbeltelling.
+                                    ("2026-W20", 55.0, 5)):
+            conn.execute(
+                "INSERT INTO sellout_facts (retailer_id, import_id, periode_type, periode,"
+                " land, banner, winkel_id, winkel_naam, merk, artikel_ean, artikel_naam,"
+                " volume, omzet) VALUES ('etos', 1, 'week', ?, 'NL', NULL, NULL, NULL,"
+                " 'TWEEZERMAN', '111', 'ARTIKEL 111', ?, ?)", (periode, vol, omzet))
+        conn.execute("DELETE FROM schema_migrations WHERE name='020_dedup_korrelwissel.sql'")
+
+    def per_periode():
+        with db.get_conn() as conn:
+            return {r["periode"]: (r["o"], r["n"]) for r in conn.execute(
+                "SELECT periode, SUM(omzet) o, COUNT(*) n FROM sellout_facts"
+                " WHERE retailer_id='etos' GROUP BY periode")}
+
+    assert per_periode()["2026-W32"] == (200.0, 2), "opzet: dubbeltelling staat klaar"
+
+    for naam in ("db", "seed", "main"):
+        sys.modules.pop(naam, None)
+    importlib.import_module("main")          # draait de migraties opnieuw
+    import db as db2
+    with db2.get_conn() as conn:
+        na = {r["periode"]: (r["o"], r["n"]) for r in conn.execute(
+            "SELECT periode, SUM(omzet) o, COUNT(*) n FROM sellout_facts"
+            " WHERE retailer_id='etos' GROUP BY periode")}
+    assert na["2026-W31"] == (80.0, 1)
+    assert na["2026-W32"] == (100.0, 1)
+    assert na["2026-W20"] == (55.0, 1), "alleen-artikelniveau historie blijft staan"
+
+
 # ---------------------------------------------------------------- fail-closed
 
 def test_merkental_mismatch_fails(client):

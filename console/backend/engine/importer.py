@@ -32,9 +32,24 @@ _SLEUTEL_SQL = ("COALESCE(merk,'')||CHAR(31)||COALESCE(land,'')||CHAR(31)"
                 "||COALESCE(banner,'')||CHAR(31)||COALESCE(winkel_id,'')||CHAR(31)"
                 "||COALESCE(artikel_ean,'')||CHAR(31)||periode")
 
+# Dezelfde sleutel ZONDER winkel_id: dezelfde verkoop, alleen op een andere
+# korrel geleverd. Zie _replace_redelivered_facts.
+_GROVE_KEY = ("merk", "land", "banner", "artikel_ean")
+
+
+def _grove_sleutel_sql(alias: str = "") -> str:
+    p = f"{alias}." if alias else ""
+    return ("||CHAR(31)||".join(f"COALESCE({p}{k},'')" for k in _GROVE_KEY)
+            + f"||CHAR(31)||{p}periode")
+
 
 def _sleutel(fact: dict) -> str:
     return "\x1f".join("" if fact.get(k) is None else str(fact.get(k)) for k in _FACT_KEY[:-1]) \
+        + "\x1f" + str(fact["periode"])
+
+
+def _grove_sleutel(fact: dict) -> str:
+    return "\x1f".join("" if fact.get(k) is None else str(fact.get(k)) for k in _GROVE_KEY) \
         + "\x1f" + str(fact["periode"])
 
 
@@ -52,16 +67,54 @@ def _replace_redelivered_facts(conn, retailer_id: str, facts: list[dict]):
     losse COALESCE-vergelijkingen scant SQLite de sleuteltabel opnieuw voor
     élke feitregel (EXPLAIN QUERY PLAN: 'SCAN k'), wat bij een ICI-import
     van 4355 regels neerkomt op miljoenen vergelijkingen. Nu is het één
-    indexopzoeking per regel."""
+    indexopzoeking per regel.
+
+    KORRELWISSEL. De sleutel bevat winkel_id, en dat is precies genoeg zolang
+    een retailer op één korrel blijft leveren. Etos stapte over van de
+    artikelniveau-export naar dezelfde widget mét Store-kolommen: dezelfde
+    week, hetzelfde artikel, maar winkel_id NULL tegen winkel_id '6001'. Die
+    sleutels botsen nooit, dus de oude regels bleven naast de nieuwe staan en
+    elke week die in BEIDE bestanden zat telde dubbel. Gemeten op de echte
+    Etos-data: week 32 stond op EUR 52.200 in plaats van EUR 26.100, waardoor
+    het dashboard voor week 33 -56,2% meldde terwijl de werkelijke daling
+    -12,4% was.
+
+    Daarom vervalt óók de andere korrel van dezelfde verkoop: levert dit
+    bestand een (merk, land, banner, artikel, periode) op winkelniveau, dan
+    verdwijnt de artikelniveau-regel van diezelfde combinatie, en andersom.
+    Dat kan nooit twee ECHTE regels raken — het is per definitie dezelfde
+    verkoop, anders geteld. Regels die dit bestand niet levert (andere weken,
+    andere merken) blijven staan, dus historie op de oude korrel blijft."""
     conn.execute("DROP TABLE IF EXISTS temp._nieuwe_sleutels")
+    conn.execute("DROP TABLE IF EXISTS temp._nieuwe_grof")
     conn.execute("CREATE TEMP TABLE _nieuwe_sleutels (sleutel TEXT PRIMARY KEY)")
+    # Per grove sleutel: levert dit bestand hem op winkelniveau (1) of op
+    # artikelniveau (0)? Beide kan, en dan vervalt er aan die kant niets.
+    conn.execute("CREATE TEMP TABLE _nieuwe_grof "
+                 "(sleutel TEXT PRIMARY KEY, met_winkel INT, zonder_winkel INT)")
     conn.executemany(
         "INSERT OR IGNORE INTO temp._nieuwe_sleutels (sleutel) VALUES (?)",
         [(s,) for s in sorted({_sleutel(f) for f in facts})])
+    grof: dict[str, list[int]] = {}
+    for f in facts:
+        vlag = grof.setdefault(_grove_sleutel(f), [0, 0])
+        vlag[0 if f.get("winkel_id") else 1] = 1
+    conn.executemany(
+        "INSERT OR IGNORE INTO temp._nieuwe_grof (sleutel, met_winkel, zonder_winkel) "
+        "VALUES (?, ?, ?)", [(s, v[0], v[1]) for s, v in sorted(grof.items())])
     conn.execute(
         f"DELETE FROM sellout_facts WHERE retailer_id = ? AND ({_SLEUTEL_SQL}) "
         "IN (SELECT sleutel FROM temp._nieuwe_sleutels)", (retailer_id,))
+    conn.execute(
+        "DELETE FROM sellout_facts WHERE retailer_id = ? AND rowid IN ("
+        "  SELECT f.rowid FROM sellout_facts f JOIN temp._nieuwe_grof g"
+        f"    ON g.sleutel = ({_grove_sleutel_sql('f')})"
+        "  WHERE f.retailer_id = ?"
+        "    AND ((f.winkel_id IS NULL AND g.met_winkel = 1)"
+        "      OR (f.winkel_id IS NOT NULL AND g.zonder_winkel = 1)))",
+        (retailer_id, retailer_id))
     conn.execute("DROP TABLE temp._nieuwe_sleutels")
+    conn.execute("DROP TABLE temp._nieuwe_grof")
 
 
 def run_import(conn, filename: str, content: bytes,
