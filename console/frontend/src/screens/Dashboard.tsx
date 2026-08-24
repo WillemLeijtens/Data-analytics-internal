@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Milestone, apiSend, fmtEur, fmtNum, merkKleur } from "../api";
 import { ShellCtx } from "../App";
-import { BrandDot, DatagatMelding, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, TijdlijnPanelen, TrendChart, Uitleg, useApi } from "../components/shared";
+import { BrandDot, DatagatMelding, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, OmzeteffectKaart, TijdlijnPanelen, TrendChart, Uitleg, useApi } from "../components/shared";
 
 export type Verdeling = {
   label: string; merk?: string; waarde: number;
@@ -580,24 +580,6 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
             await apiSend(`/${ctx.retailer}/milestones/${id}`, "DELETE");
             herlaadMijlpalen();
           }} />
-        {data.promoties?.length > 0 && (() => {
-          // Wat de markers samen zeggen. Doorklikken kan naar Promoties, waar
-          // de basislijn en de artikelen achter elke actie staan.
-          const met = data.promoties.filter((p: any) => p.uplift_pct != null);
-          const gem = met.length
-            ? met.reduce((a: number, p: any) => a + p.uplift_pct, 0) / met.length : null;
-          return (
-            <p className="sub" style={{ marginTop: 10, display: "flex", gap: 8,
-                                        alignItems: "baseline", flexWrap: "wrap" }}>
-              <span style={{ color: "var(--promo)" }}>▲</span>
-              {data.promoties.length} bevestigde actie{data.promoties.length === 1 ? "" : "s"}
-              {gem != null && <> · gemiddelde uplift <b className={gem >= 0 ? "sig-green" : "sig-red"}>
-                {gem >= 0 ? "+" : ""}{gem.toFixed(1)}%</b></>}
-              <a style={{ cursor: "pointer" }}
-                onClick={() => ctx.go(ctx.retailer, "promoties")}>Naar promoties</a>
-            </p>
-          );
-        })()}
         {(() => {
           // De som zakt vanaf het punt waar een merk-feed stopt; zonder deze
           // melding leest een achterlopende levering als omzetdaling. Maar
@@ -619,6 +601,22 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           );
         })()}
       </div>
+
+      {data.promoties?.length > 0 && (
+        <>
+          <h2 style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+            Omzeteffect per promotie
+            <a className="sub" style={{ cursor: "pointer", textTransform: "none",
+                                        letterSpacing: 0, fontFamily: "Montserrat, sans-serif" }}
+              onClick={() => ctx.go(ctx.retailer, "promoties")}>
+              acties beheren →
+            </a>
+          </h2>
+          {/* Volgt het merkfilter: de markers hierboven zijn al op de
+              zichtbare scopes gefilterd, dus de kaart vanzelf ook. */}
+          <OmzeteffectKaart rijen={data.promoties} periodWord={pWord} />
+        </>
+      )}
 
       {data.tijdlijn?.periodes?.length > 1 && (
         <TijdlijnBlok t={data.tijdlijn} pWord={pWord} />

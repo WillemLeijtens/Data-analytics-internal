@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { BRAND_COLORS, Datagat, Milestone, PromoMarker, apiGet, apiSend, fmtEur, fmtNum, merkKleur } from "../api";
+import { BRAND_COLORS, Datagat, Milestone, PromoMarker, YEAR_COLORS, apiGet, apiSend, fmtEur, fmtNum, merkKleur } from "../api";
 import { ThemaModus, bepaalThema, bewaarModus, leesModus, pasToe, volgSysteem } from "../theme";
 
 /** Uniform laden/fout-gedrag voor de leesschermen: elke API-fout wordt een
@@ -559,6 +559,83 @@ export function DatagatenPaneel({ retailer }: { retailer: string }) {
         <DatagatRij key={`${g.merk}|${g.land}|${g.banner}|${g.van_jaar}|${g.tot_jaar}`}
           retailer={retailer} gat={g} na={reload} />
       ))}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------- Omzeteffect */
+
+/** Het omzeteffect van de bevestigde acties: per actie een balk met de
+ *  uplift, een samenvatting en een jaarfilter. Verhuisd van de
+ *  Promoties-pagina naar het dashboard — daar staan de actiemarkers op de
+ *  trendgrafiek, en daar hoort het effect-overzicht bij. De hovertekst
+ *  draagt de twee bedragen: zonder de actie-omzet en de basislijn is het
+ *  percentage niet na te rekenen. */
+export function OmzeteffectKaart({ rijen, periodWord }:
+  { rijen: (PromoMarker & { basisperiodes?: number })[]; periodWord: string }) {
+  const [jaar, setJaar] = useState<string>("ALLE");
+  if (!rijen.length) return null;
+  const pw = periodWord.toLowerCase();
+  const zicht = rijen.filter((u) => jaar === "ALLE" || String(u.jaar) === jaar);
+  // Acties zonder percentage mogen het gemiddelde en de uitersten niet als
+  // nul omlaag trekken.
+  const metPct = zicht.filter((u) => u.uplift_pct != null);
+  const maxJaar = Math.max(...rijen.map((u) => u.jaar), 0);
+  const maxAbs = Math.max(1, ...metPct.map((u) => Math.abs(u.uplift_pct!)));
+  const avg = metPct.length
+    ? metPct.reduce((a, u) => a + u.uplift_pct!, 0) / metPct.length : null;
+  return (
+    <div className="card">
+      <div className="seg" style={{ marginBottom: 12 }}>
+        {["ALLE", ...Array.from(new Set(rijen.map((u) => String(u.jaar)))).sort()].map((j) => (
+          <button key={j} className={jaar === j ? "on" : ""} onClick={() => setJaar(j)}>{j}</button>
+        ))}
+      </div>
+      {zicht.length ? (
+        <>
+          <div className="sub" style={{ marginBottom: 10 }}>
+            {metPct.length} promoties gemeten · gem.{" "}
+            <b className={avg != null && avg >= 0 ? "sig-green" : "sig-red"}>
+              {avg != null ? `${avg >= 0 ? "+" : ""}${avg.toFixed(1)}%` : "—"}
+            </b>
+            {metPct.length > 0 && <>
+              {" "}· beste <b className="sig-green">+{Math.max(...metPct.map((u) => u.uplift_pct!)).toFixed(1)}%</b>{" "}
+              · zwakste <b className="sig-red">{Math.min(...metPct.map((u) => u.uplift_pct!)).toFixed(1)}%</b>
+            </>}
+            {zicht.length > metPct.length &&
+              ` · ${zicht.length - metPct.length} zonder genoeg basisperiodes`}
+          </div>
+          {zicht.map((u) => (
+            <div key={`${u.merk}${u.periode}`}
+              style={{ display: "grid", gridTemplateColumns: "170px 1fr 70px", gap: 10,
+                       alignItems: "center", margin: "5px 0" }}>
+              <span style={{ fontSize: 11.5 }}>{u.merk} · {u.periode}</span>
+              <div className="bar-track" style={{ height: 8 }}>
+                {u.uplift_pct != null && <div className="bar-fill" style={{
+                  height: 8,
+                  width: `${(Math.abs(u.uplift_pct) / maxAbs) * 100}%`,
+                  background: u.uplift_pct < 0 ? "var(--neg)"
+                    : YEAR_COLORS[maxJaar - u.jaar] ?? "var(--t-fg3)",
+                }} />}
+              </div>
+              {u.uplift_pct != null ? (
+                <b style={{ fontSize: 12 }} className={u.uplift_pct >= 0 ? "" : "sig-red"}
+                  title={`${fmtEur(u.omzet)} in de actie tegen een basislijn van `
+                    + `${fmtEur(u.basislijn)} — de mediaan van ${u.basisperiodes ?? "?"} `
+                    + `${pw}(en) zonder actie in ${u.jaar}.`}>
+                  {u.uplift_pct >= 0 ? "+" : ""}{u.uplift_pct}%
+                </b>
+              ) : (
+                <span className="sub" style={{ fontSize: 10.5 }}
+                  title={u.reden === "periode loopt nog" ? undefined
+                    : `Maar ${u.basisperiodes ?? 0} ${pw}(en) zonder actie in ${u.jaar}`}>
+                  {u.reden ?? "te weinig basis"}
+                </span>
+              )}
+            </div>
+          ))}
+        </>
+      ) : <p className="sub">Nog geen bevestigde promoties{jaar !== "ALLE" ? ` in ${jaar}` : ""}.</p>}
     </div>
   );
 }
