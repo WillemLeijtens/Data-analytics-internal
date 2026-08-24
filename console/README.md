@@ -431,6 +431,23 @@ De gemiste omzet ernaast is wat diezelfde winkel in *dezelfde* periodes vorig
 jaar wél verkocht — niet het hele vorige jaar, want dat telt periodes mee die
 dit jaar nog moeten komen.
 
+De drempels zijn de **ondergrens**; daarbovenop weegt het **eigen verkoopritme**
+van elke winkel×merk mee: de mediane tussenpoos tussen periodes mét omzet (minimaal
+drie verkoopperiodes, anders geldt alleen de vloer). Gestopt vergt stilte ≥ 3× dat
+ritme, "let op" ≥ 2×. Eén vaste drempel kent dit verschil niet: een winkel die elke
+week verkoopt en er drie stilvalt is alarmerender dan een hakkelige verkoper die er
+zes niets doet — en een hogere drempel alleen verzwijgt de eerste terwijl hij blijft
+ruisen bij de tweede. Op de echte Etos-weekdata: 363 → 102 "gestopte" regels op de
+standaardvloer, puur door de ritmefilter.
+
+**Gemist** blijft gebaseerd op dezelfde periodes vorig jaar; is dat jaar niet geladen
+(Etos begon in 2026), dan een schatting op het eigen ritme (gemiddelde omzet per
+actieve periode ÷ tussenpoos × stilte), op het scherm gemarkeerd met ±. Zonder die
+schatting stond de kolom — en de sortering erop — overal op € 0. Elke gemelde rij
+draagt zijn weekreeks mee; het scherm toont die als sparkline, zodat abrupt verval te
+onderscheiden is van hakkelig verkopen. De tabellen tonen de eerste 25 rijen met een
+toon-alles-knop.
+
 Beide drempels zijn **per retailer instelbaar** (Instellingen →
 Doelstellingen → Stille winkels; tabel `winkelsignaal_drempels`). Dat is nodig
 omdat ze in PERIODES tellen terwijl de oorspronkelijke keuze (1 en 2) in

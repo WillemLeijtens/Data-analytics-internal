@@ -580,6 +580,10 @@ export default function Instellingen({ ctx }: { ctx: ShellCtx }) {
             Vanaf hoeveel opeenvolgende {pWord}en zonder omzet een winkel op
             het dashboard onder <b>Let op</b> valt, en vanaf hoeveel onder
             <b> Gestopte winkels</b>. Wat daaronder blijft wordt niet gemeld.
+            Deze drempels zijn de <b>ondergrens</b>: daarbovenop weegt de app
+            automatisch het eigen verkoopritme van elke winkel mee — een
+            winkel die om de drie {pWord}en iets verkoopt is na zes stille{" "}
+            {pWord}en niet gestopt, dat is zijn patroon.
           </p>
           <div className="card" style={{ display: "flex", gap: 22, flexWrap: "wrap",
                                           alignItems: "flex-end" }}>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Milestone, apiSend, fmtEur, fmtNum, merkKleur } from "../api";
 import { ShellCtx } from "../App";
-import { BrandDot, DatagatMelding, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, OmzeteffectKaart, TijdlijnPanelen, TrendChart, Uitleg, useApi } from "../components/shared";
+import { BrandDot, DatagatMelding, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, OmzeteffectKaart, Sparkline, TijdlijnPanelen, TrendChart, Uitleg, useApi } from "../components/shared";
 
 export type Verdeling = {
   label: string; merk?: string; waarde: number;
@@ -221,33 +221,67 @@ function TijdlijnBlok({ t, pWord }: { t: any; pWord: string }) {
   );
 }
 
-/** Winkels zonder omzet in de laatste periode(n) — gestopt of nog signaal. */
+/** Winkels zonder omzet in de laatste periode(n) — gestopt of nog signaal.
+ *
+ *  De sparkline per rij laat zien of het verval abrupt was (gestaag verkopen,
+ *  dan ineens stil — echt signaal) of dat de winkel altijd al hakkelde. Ze
+ *  staat hier en niet in elke tabel: pas op een kórte lijst is hij leesbaar,
+ *  en de ritmefilter houdt de lijst kort. */
 function StilTabel({ rijen, w, pWord, naam, leeg }: {
   rijen: any[]; w: any; pWord: string; naam: (n: number | null) => string; leeg: string;
 }) {
+  const [alles, setAlles] = useState(false);
+  const TOON = 25;
+  const zicht = alles ? rijen : rijen.slice(0, TOON);
+  const reeks = (g: any) => {
+    const uit: Record<number, number> = {};
+    for (const [k, v] of Object.entries(g.reeks ?? {})) uit[Number(k)] = v as number;
+    return uit;
+  };
   return (
+    <>
     <table className="data">
       <thead><tr>
-        <th>Winkel</th><th>Merk</th><th>Laatste omzet</th><th>Zonder omzet</th>
+        <th>Winkel</th><th>Merk</th><th>Verloop {w.jaar}</th>
+        <th>Laatste omzet</th>
+        <th>Zonder omzet<Uitleg tekst={`Gemeten tegen het eigen ritme van de winkel: de drempel uit Instellingen is de ondergrens, en daarbovenop moet de stilte minstens 3x zo lang zijn als de normale tussenpoos tussen twee ${pWord.toLowerCase()}en met verkoop (2x voor "Let op"). Een winkel die om de drie ${pWord.toLowerCase()}en iets verkoopt is na zes stille ${pWord.toLowerCase()}en dus niet gestopt — dat is zijn patroon.`} /></th>
         <th style={{ textAlign: "right" }}>Omzet {w.jaar}</th>
-        <th style={{ textAlign: "right" }} title={`Wat deze winkel in dezelfde ${pWord.toLowerCase()}en van ${w.jaar - 1} verkocht`}>
+        <th style={{ textAlign: "right" }} title={`Wat deze winkel in dezelfde ${pWord.toLowerCase()}en van ${w.jaar - 1} verkocht; zonder ${w.jaar - 1} een schatting op het eigen verkoopritme (±)`}>
           Gemist
         </th>
       </tr></thead>
       <tbody>
-        {rijen.map((g) => (
+        {zicht.map((g) => (
           <tr key={`${g.winkel_id}-${g.merk}`}>
             <td>{g.winkel_naam ?? g.winkel_id}</td>
             <td>{g.merk}</td>
+            <td>{g.reeks ? (
+              <Sparkline ytd={reeks(g)} lytd={{}} isEuro
+                periodWord={pWord} jaar={w.jaar} />
+            ) : <span className="sub">—</span>}</td>
             <td>{g.laatste_maand == null ? `niets in ${w.jaar}` : naam(g.laatste_maand)}</td>
-            <td>{g.maanden_zonder_omzet} {pWord.toLowerCase()}{g.maanden_zonder_omzet === 1 ? "" : "en"}</td>
+            <td title={g.ritme != null
+              ? `Deze winkel verkoopt normaal elke ${g.ritme === 1 ? "" : g.ritme + " "}${pWord.toLowerCase()}${g.ritme === 1 ? "" : "en"}`
+              : undefined}>
+              {g.maanden_zonder_omzet} {pWord.toLowerCase()}{g.maanden_zonder_omzet === 1 ? "" : "en"}
+              {g.ritme > 1 && <span className="sub"> · ritme {g.ritme}</span>}
+            </td>
             <td style={{ textAlign: "right" }}>{fmtEur(g.omzet_dit_jaar)}</td>
-            <td style={{ textAlign: "right" }}>{fmtEur(g.gemist_zelfde_venster)}</td>
+            <td style={{ textAlign: "right" }}>
+              {g.gemist_bron === "geschat" ? "± " : ""}{fmtEur(g.gemist_zelfde_venster)}
+            </td>
           </tr>
         ))}
-        {!rijen.length && <tr><td colSpan={6} className="sub">{leeg}</td></tr>}
+        {!rijen.length && <tr><td colSpan={7} className="sub">{leeg}</td></tr>}
       </tbody>
     </table>
+    {rijen.length > TOON && (
+      <button className="chip off" style={{ marginTop: 8 }}
+        onClick={() => setAlles(!alles)}>
+        {alles ? `toon de eerste ${TOON}` : `toon alle ${rijen.length}`}
+      </button>
+    )}
+    </>
   );
 }
 
@@ -262,7 +296,8 @@ function Winkelanalyse({ w, pWord }: { w: any; pWord: string }) {
       <p className="sub" style={{ marginTop: -6 }}>
         Vergeleken met {w.jaar - 1}, t/m {pWord.toLowerCase()} {naam(w.laatste_maand)}.
         Een winkel telt per merk: een filiaal kan het ene merk laten vallen en het andere houden.
-        “Gemist” is wat de winkel in dezelfde {pWord.toLowerCase()}en van {w.jaar - 1} verkocht.
+        “Gemist” is wat de winkel in dezelfde {pWord.toLowerCase()}en van {w.jaar - 1} verkocht;
+        is {w.jaar - 1} niet geladen, dan een schatting (±) op het eigen verkoopritme.
       </p>
 
       {w.historie_ontbreekt?.length > 0 && (
@@ -286,16 +321,17 @@ function Winkelanalyse({ w, pWord }: { w: any; pWord: string }) {
         Gestopte winkels · {w.gestopt.length} — gemiste omzet {fmtEur(w.gemiste_omzet)}
       </h3>
       <p className="sub" style={{ marginTop: -6 }}>
-        Vanaf {w.gestopt_vanaf} {pWord.toLowerCase()}en zonder omzet.
+        Stilte van minstens {w.gestopt_vanaf} {pWord.toLowerCase()}en
+        (Instellingen → Stille winkels) én minstens 3× het eigen
+        verkoopritme van die winkel.
       </p>
       <StilTabel rijen={w.gestopt} w={w} pWord={pWord} naam={naam}
         leeg="Geen winkels stilgevallen — elke winkel draait nog omzet." />
 
       <h3 style={{ marginTop: 22 }}>Let op · {w.signalen.length}</h3>
       <p className="sub" style={{ marginTop: -6 }}>
-        Eén {pWord.toLowerCase()} zonder omzet na eerdere verkoop — nog geen
-        actie, wel in de gaten houden. Bij een langzaamlopend merk is één lege
-        {" " + pWord.toLowerCase()} vaak gewoon ruis.
+        Stilte van minstens {w.letop_vanaf} {pWord.toLowerCase()}en én 2× het
+        eigen ritme — nog geen actie, wel in de gaten houden.
       </p>
       <StilTabel rijen={w.signalen} w={w} pWord={pWord} naam={naam}
         leeg={`Geen winkels met één lege ${pWord.toLowerCase()}.`} />
