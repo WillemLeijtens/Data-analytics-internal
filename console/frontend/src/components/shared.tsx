@@ -36,6 +36,22 @@ export function LoadState({ error, reload }: { error: string | null; reload?: ()
   );
 }
 
+/** Wat elk niveau-label betekent en waar het de cijfers voor verandert. Eén
+ *  plek, zodat elk scherm met een LevelStrip dezelfde uitleg toont in plaats
+ *  van dat elk scherm het zelf moet weten (zoals eerder alleen Dashboard voor
+ *  OP MAANDNIVEAU deed — SCHATTING had nergens een woord uitleg). */
+const NIVEAU_UITLEG: Record<string, string> = {
+  "OP MERKNIVEAU": "Deze retailer levert geen artikelniveau (geen los product per "
+    + "regel) — analyses rekenen op merkniveau in plaats van per product.",
+  "OP MAANDNIVEAU": "Deze retailer levert per maand; alle analyses rekenen met "
+    + "maanden in plaats van weken.",
+  "SCHATTING": "Deze retailer levert geen winkel-ID per verkoopregel, dus het "
+    + "winkelaantal komt niet uit de feiten maar uit het handmatig ingestelde "
+    + "aantal (Instellingen → Doelstellingen). Cijfers per winkel — zoals "
+    + "\"Omzet per winkel\" — zijn daarmee een schatting op basis van dat "
+    + "ingestelde aantal, geen telling uit de data zelf.",
+};
+
 export function LevelStrip({ labels, uitleg, retailer }:
   { labels: string[]; uitleg?: string; retailer: string }) {
   if (!labels.length) return null;
@@ -43,7 +59,12 @@ export function LevelStrip({ labels, uitleg, retailer }:
     <div className="level-strip">
       <span className="eyebrow">Niveau</span>
       <span className="chips">
-        {labels.map((l) => <span key={l} className="chip static">{l}</span>)}
+        {labels.map((l) => (
+          <span key={l} style={{ display: "inline-flex", alignItems: "center" }}>
+            <span className="chip static">{l}</span>
+            {NIVEAU_UITLEG[l] && <Uitleg tekst={NIVEAU_UITLEG[l]} />}
+          </span>
+        ))}
       </span>
       {uitleg && <span className="sub">{uitleg}</span>}
       <Link to={`/${retailer}/parser`}>Profiel bekijken</Link>

@@ -455,8 +455,7 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
   return (
     <>
       <h1>Dashboard — {ctx.card?.naam}</h1>
-      <LevelStrip labels={data.labels} retailer={ctx.retailer}
-        uitleg={data.labels.includes("OP MAANDNIVEAU") ? "Deze retailer levert per maand; alle analyses rekenen met maanden." : undefined} />
+      <LevelStrip labels={data.labels} retailer={ctx.retailer} />
       <DatagatMelding retailer={ctx.retailer} go={ctx.go} />
 
       <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap", margin: "16px 0 4px" }}>
