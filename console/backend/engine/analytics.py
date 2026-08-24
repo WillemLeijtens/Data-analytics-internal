@@ -1044,8 +1044,12 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
         merk_periodes[r["merk"]].add(r["periode"])
     n_terug = RECENT_PERIODES if caps["periode"] == "week" else 3
     merk_recent, merk_lytd, merk_dit_jaar, merk_venster = {}, {}, {}, {}
+    merk_eerste = {}
     for m, ps in merk_periodes.items():
         eigen_as = sorted(ps, key=sort_key)
+        # De vroegste periode die dit merk überhaupt levert — de ondergrens
+        # van wat over "sinds wanneer ligt dit artikel er" te zeggen valt.
+        merk_eerste[m] = eigen_as[0]
         # Het "recente venster": ongeveer drie maanden, in de korrel van de
         # feed — gemeten op de as van het merk zelf.
         merk_recent[m] = set(eigen_as[-n_terug:])
@@ -1105,6 +1109,21 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
         # landen en formules mee waar het artikel helemaal niet ligt.
         art_stores, _ = store_count(conn, retailer_id, caps, a["rijen"],
                                     latest, settings)
+        # ON COUNTER: de eerste periode waarin voor dit artikel omzet gemeten
+        # is, in de korrel die de retailer levert (week bij Etos/Kruidvat,
+        # maand bij ICI). Over ALLE geladen jaren, niet alleen dit jaar —
+        # anders zou elk artikel elk jaar opnieuw "on counter" gaan.
+        #
+        # Regels zonder omzet tellen niet mee: een 0-regel betekent dat het
+        # artikel die week gemeten is maar niets verkocht, en dat is niet het
+        # moment dat het in het schap kwam.
+        met_omzet = [r["periode"] for r in a["rijen"] if r["omzet"]]
+        eerste = min(met_omzet, key=sort_key) if met_omzet else None
+        # Valt die eerste meting samen met de start van de feed van dit merk,
+        # dan is dit een ONDERGRENS: het artikel lag er mogelijk al eerder,
+        # maar zo ver terug is er simpelweg geen data. Dat hoort erbij te
+        # staan, anders leest een datagrens als een introductiedatum.
+        begrensd = eerste is not None and eerste == merk_eerste.get(a["merk"])
         status, reden, per_winkel_week = _artikel_status(
             tot, ltot, a["lytd_jaar"], a["recent_omzet"], len(merk_recent.get(a["merk"], ())),
             art_stores or n_stores, caps["periode"], y_now,
@@ -1130,6 +1149,7 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
             "sparkline": {"ytd": {p: dict(v) for p, v in sorted(a["ytd"].items())},
                           "lytd": {p: dict(v) for p, v in sorted(a["lytd"].items())}},
             "laatste_periode": a["laatste"], "totaal_ytd": tot, "totaal_lytd": ltot,
+            "on_counter": eerste, "on_counter_begrensd": begrensd,
             "status": status, "status_reden": reden,
             "dekking": dekking_mod.per_artikel(alle_gaten, a["rijen"], caps),
             "omzet_per_winkel_per_week": per_winkel_week,

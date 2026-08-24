@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { fmtEur, fmtNum } from "../api";
+import { fmtEur, fmtNum, fmtPeriode } from "../api";
 import { ShellCtx } from "../App";
-import { ArtikelSignalen, BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, Sparkline, TrendChart, useApi } from "../components/shared";
+import { ArtikelSignalen, BrandDot, DeltaTag, EmptyProfileCard, LevelStrip, LoadState, MultiChips, Sparkline, TrendChart, Uitleg, useApi } from "../components/shared";
 
 export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
   const [metric, setMetric] = useState<"volume" | "omzet">("omzet");
@@ -74,7 +74,9 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
       </div>
       <table className="data">
         <thead><tr>
-          <th>Artikel</th><th>Merk</th><th>YTD vs LYTD</th><th></th>
+          <th>Artikel</th><th>Merk</th>
+          <th>On counter<Uitleg tekst={`De eerste ${pWord.toLowerCase()} waarin voor dit artikel omzet gemeten is, over alle geladen jaren. Een ${pWord.toLowerCase()} waarin het artikel wél gemeten is maar niets verkocht telt niet mee. Staat er "≤" bij, dan valt die eerste meting samen met de start van de aanlevering van dit merk: het artikel lag er mogelijk al eerder, maar zo ver terug is er geen data.`} /></th>
+          <th>YTD vs LYTD</th><th></th>
           <th>Laatste {pWord.toLowerCase()}</th><th>Totaal YTD</th>
         </tr></thead>
         <tbody>
@@ -86,6 +88,18 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
                 <span className="mono sub">{a.ean}</span>
               </td>
               <td><BrandDot merk={a.merk} />{a.merk}</td>
+              {/* Begrensd = de eerste meting valt samen met de start van de
+                  feed van dit merk. Dan is dit een ondergrens en geen
+                  introductiemoment; zonder dat teken leest een datagrens als
+                  een datum waarop het artikel in het schap kwam. */}
+              <td style={{ whiteSpace: "nowrap" }}
+                title={a.on_counter_begrensd
+                  ? "Valt samen met de start van de aanlevering van dit merk — "
+                    + "mogelijk lag het artikel er al eerder"
+                  : undefined}>
+                {a.on_counter_begrensd && <span className="sub">≤ </span>}
+                {fmtPeriode(a.on_counter)}
+              </td>
               <td>
                 <Sparkline ytd={toSeries(a.sparkline.ytd, metric)} lytd={toSeries(a.sparkline.lytd, metric)}
                   isEuro={isEuro} periodWord={pWord} jaar={data.jaar} />

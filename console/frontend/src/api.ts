@@ -61,6 +61,21 @@ export const fmtEur = (v: number | null | undefined, digits = 0) =>
 export const fmtNum = (v: number | null | undefined) =>
   v == null ? "—" : v.toLocaleString("nl-NL");
 
+const MAAND_KORT = ["", "jan", "feb", "mrt", "apr", "mei", "jun",
+  "jul", "aug", "sep", "okt", "nov", "dec"];
+
+/** Een canonieke periode ("2025-W40" of "2026-03") als leesbare tekst. De
+ *  korrel komt uit de string zelf, want die verschilt per retailer: Etos en
+ *  Kruidvat leveren weken, ICI Paris maanden. */
+export function fmtPeriode(p: string | null | undefined): string {
+  if (!p) return "—";
+  const [jaar, rest] = p.split("-");
+  if (!rest) return p;
+  if (rest.toUpperCase().startsWith("W")) return `wk ${Number(rest.slice(1))} ${jaar}`;
+  const m = Number(rest);
+  return m >= 1 && m <= 12 ? `${MAAND_KORT[m]} ${jaar}` : p;
+}
+
 export async function apiGet<T = any>(path: string): Promise<T> {
   const r = await fetch(`/api${path}`);
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
