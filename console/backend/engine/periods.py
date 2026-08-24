@@ -101,6 +101,23 @@ def _vandaag_nl() -> dt.date:
     return dt.datetime.now(ZoneInfo("Europe/Amsterdam")).date()
 
 
+def vorige_periode(period: str) -> str:
+    """De kalenderperiode direct vóór deze — voor week-op-week/maand-op-maand
+    vergelijkingen (in tegenstelling tot dezelfde periode vorig jaar). Rondt
+    de jaarwisseling correct af: week 1 wordt de laatste ISO-week van het
+    voorgaande jaar (52 of 53), niet "week 0"."""
+    jaar, nummer = period_year(period), period_number(period)
+    if period_type_of(period) == "maand":
+        return f"{jaar - 1}-12" if nummer == 1 else f"{jaar}-{nummer - 1:02d}"
+    if nummer > 1:
+        return f"{jaar}-W{nummer - 1:02d}"
+    # 28 december valt door de ISO-definitie altijd in de laatste week van
+    # het jaar — een robuuste manier om 52 vs. 53 weken te onderscheiden.
+    vorig_jaar = jaar - 1
+    laatste_week = dt.date(vorig_jaar, 12, 28).isocalendar()[1]
+    return f"{vorig_jaar}-W{laatste_week:02d}"
+
+
 def is_afgesloten(period: str, vandaag: dt.date | None = None) -> bool:
     """Is deze periode voorbij, of loopt hij nog?
 
