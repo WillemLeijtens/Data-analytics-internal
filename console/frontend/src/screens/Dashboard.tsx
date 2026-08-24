@@ -260,11 +260,20 @@ function StilTabel({ rijen, w, pWord, naam, leeg }: {
                 periodWord={pWord} jaar={w.jaar} />
             ) : <span className="sub">—</span>}</td>
             <td>{g.laatste_maand == null ? `niets in ${w.jaar}` : naam(g.laatste_maand)}</td>
-            <td title={g.ritme != null
-              ? `Deze winkel verkoopt normaal elke ${g.ritme === 1 ? "" : g.ritme + " "}${pWord.toLowerCase()}${g.ritme === 1 ? "" : "en"}`
-              : undefined}>
+            <td>
               {g.maanden_zonder_omzet} {pWord.toLowerCase()}{g.maanden_zonder_omzet === 1 ? "" : "en"}
-              {g.ritme > 1 && <span className="sub"> · ritme {g.ritme}</span>}
+              {g.ritme > 1 && (
+                <span className="sub"> · ritme {g.ritme}
+                  <Uitleg tekst={
+                    `"Ritme" is hoe vaak deze winkel normaal verkoopt: elke ${g.ritme} `
+                    + `${pWord.toLowerCase()}en. Dat is de mediane tussenpoos tussen `
+                    + `${pWord.toLowerCase()}en mét omzet dit jaar. De stilte-drempel `
+                    + `schaalt hiermee mee (zie kolomkop) — pas na ${3 * g.ritme} stille `
+                    + `${pWord.toLowerCase()}en (2× ${2 * g.ritme} voor "Let op") is dit `
+                    + `voor déze winkel afwijkend, niet bij haar eigen normale patroon.`
+                  } />
+                </span>
+              )}
             </td>
             <td style={{ textAlign: "right" }}>{fmtEur(g.omzet_dit_jaar)}</td>
             <td style={{ textAlign: "right" }}>
