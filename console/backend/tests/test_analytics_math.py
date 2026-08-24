@@ -402,6 +402,33 @@ def test_artikelstatus_nieuw_delisted_en_twijfel(client):
     assert schraal["omzet_per_winkel_per_week"] == pytest.approx(50 / 530, abs=0.01)
 
 
+def test_on_counter_is_de_eerste_periode_met_omzet(client):
+    """Het on-counter-moment: de eerste periode waarin voor dit artikel omzet
+    gemeten is, in de korrel die de retailer levert. Over alle geladen jaren,
+    en een 0-regel telt niet mee — gemeten zonder verkoop is niet 'in het
+    schap gekomen'."""
+    import seed
+
+    upload(client, "DWH__Sales_Tweezerman_KVNL_oncounter.xlsx", seed.make_dwh_xlsx([
+        # Merk start in 2025-W10; dit artikel verkoopt pas vanaf 2025-W30.
+        {"sku": "31210001", "gtin": "31210001", "desc": "Vroege loper",
+         "brand": "TWEEZERMAN",
+         "weeks": {**{f"2025{w:02d}": (5, 100.0) for w in range(10, 40)},
+                   **{f"2026{w:02d}": (5, 100.0) for w in range(1, 21)}}},
+        {"sku": "31210002", "gtin": "31210002", "desc": "Latere start",
+         "brand": "TWEEZERMAN",
+         "weeks": {**{f"2025{w:02d}": (5, 100.0) for w in range(30, 40)},
+                   **{f"2026{w:02d}": (5, 100.0) for w in range(1, 21)}}},
+    ]))
+    per = {a["ean"]: a for a in client.get("/api/kruidvat/artikelen").json()["artikelen"]}
+    # Valt samen met de start van de merk-feed: ondergrens, niet de introductie.
+    assert per["31210001"]["on_counter"] == "2025-W10"
+    assert per["31210001"]["on_counter_begrensd"] is True
+    # Begint ná de feedstart: dit is wél een echt waargenomen startmoment.
+    assert per["31210002"]["on_counter"] == "2025-W30"
+    assert per["31210002"]["on_counter_begrensd"] is False
+
+
 def test_artikel_niet_nieuw_als_vorig_jaar_pas_later_op_gang_kwam(client):
     """Gemeld: een artikel kreeg het label NIEUW terwijl het in 2025 wél omzet
     had — alleen pas vanaf week 40, ná het YTD-venster (t/m de huidige week)
