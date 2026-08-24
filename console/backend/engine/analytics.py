@@ -18,7 +18,7 @@ from . import fallback
 from . import promoties as promo_mod
 from . import winkelniveau
 from .periods import (is_afgesloten, period_number, period_type_of,
-                      period_year, sort_key)
+                      period_year, sort_key, vorige_periode)
 from .profile import active_profile, capabilities
 
 LABEL_TEST = "PROFIEL IN TEST"
@@ -647,6 +647,22 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         # Geen percentage is eerlijker dan een omgekeerd leesbaar percentage.
         return round((now - prev) / prev * 100, 1) if prev and prev > 0 else None
 
+    # Vorige periode (week-op-week of maand-op-maand) voor de KPI-kaarten
+    # bovenaan het dashboard — losstaand van de YoY-vergelijking hieronder.
+    # De kalenderperiode direct vóór de laatste, niet zomaar de vorige rij
+    # met data: zonder data in die exacte periode (gat, of de feed begint
+    # hier pas) blijft het percentage leeg in plaats van te vergelijken met
+    # een willekeurige oudere periode die als "vorige week" zou uitlezen.
+    vorige = vorige_periode(latest)
+    vorige_rows = [r for r in rows if r["periode"] == vorige]
+    if vorige_rows:
+        vorige_kpi = agg(vorige_rows)
+        vorige_n_stores, _ = store_count(conn, retailer_id, caps, rows, vorige, settings)
+        vorige_per_store = (vorige_kpi["omzet"] / vorige_n_stores) if vorige_n_stores else None
+    else:
+        vorige_kpi = {"omzet": None, "volume": None}
+        vorige_per_store = None
+
     # YTD per merk, op regelniveau. Elke regel gebruikt het EIGEN venster van
     # dat merk (1..tot_periode, op beide jaren toegepast) zodat de regel
     # intern appels-met-appels is; een merk zonder vorig jaar krijgt geen
@@ -840,14 +856,21 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
         "laatste_periode_compleet": latest_compleet,
         "kpi": {
             "omzet": {"waarde": kpi["omzet"],
+                      "delta_pct": delta(kpi["omzet"], vorige_kpi["omzet"]),
+                      "vorige_periode": vorige if vorige_rows else None,
                       "breakdown": brand_breakdown(latest_rows, "omzet"),
                       "breakdowns": {d: dim_breakdown(latest_rows, "omzet", d)
                                      for d in dimensies}},
             "volume": {"waarde": kpi["volume"],
+                       "delta_pct": delta(kpi["volume"], vorige_kpi["volume"]),
+                       "vorige_periode": vorige if vorige_rows else None,
                        "breakdown": brand_breakdown(latest_rows, "volume"),
                        "breakdowns": {d: dim_breakdown(latest_rows, "volume", d)
                                       for d in dimensies}},
             "omzet_per_winkel": {"waarde": per_store, "winkels": n_stores,
+                                 "delta_pct": delta(per_store, vorige_per_store)
+                                              if per_store is not None else None,
+                                 "vorige_periode": vorige if vorige_rows else None,
                                  "schatting": not from_facts,
                                  "breakdown": store_breakdown(latest),
                                  "breakdowns": {d: store_breakdown(latest, d)

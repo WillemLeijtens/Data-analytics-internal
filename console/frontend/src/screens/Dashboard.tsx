@@ -8,14 +8,26 @@ export type Verdeling = {
   winkels?: number | null; target?: number | null;
 };
 
-function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro }: {
+function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro, deltaPct, vorigePeriode, pWord }: {
   label: string; tag: string; tagAccent?: boolean; value: string; sub?: string;
   breakdown?: Verdeling[]; isEuro?: boolean;
+  /** Vergelijking met de kalenderperiode direct ervoor — géén cijfer bij een
+   *  gat vóór de laatste periode, dan zou het als "vorige week" uitlezen
+   *  terwijl het een oudere periode is (zie engine/analytics.dashboard). */
+  deltaPct?: number | null; vorigePeriode?: string | null; pWord?: string;
 }) {
   const max = Math.max(1, ...(breakdown ?? []).map((b) => b.waarde));
   return (
     <div className="card">
-      <div className="kpi-label">{label}<span className={`tag ${tagAccent ? "accent" : ""}`}>{tag}</span></div>
+      <div className="kpi-label">{label}
+        <span style={{ display: "inline-flex", gap: 6 }}>
+          {deltaPct !== undefined && (
+            <DeltaTag pct={deltaPct}
+              titel={vorigePeriode ? `Vs. ${pWord?.toLowerCase()} ${vorigePeriode}` : undefined} />
+          )}
+          <span className={`tag ${tagAccent ? "accent" : ""}`}>{tag}</span>
+        </span>
+      </div>
       <div className="kpi-value">{value}</div>
       {sub && <div className="kpi-sub">{sub}</div>}
       {breakdown?.map((b) => (
@@ -482,15 +494,18 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       <div className="grid kpi">
         <KpiCard label="Omzet" tag={data.laatste_periode_compleet === false ? "LOPEND" : pWord.toUpperCase()}
           tagAccent={data.laatste_periode_compleet === false} isEuro
-          value={fmtEur(k.omzet.waarde)} breakdown={verdeling(k.omzet)} />
+          value={fmtEur(k.omzet.waarde)} breakdown={verdeling(k.omzet)}
+          deltaPct={k.omzet.delta_pct} vorigePeriode={k.omzet.vorige_periode} pWord={pWord} />
         {hasVolume && <KpiCard label="Volume"
           tag={data.laatste_periode_compleet === false ? "LOPEND" : pWord.toUpperCase()}
           tagAccent={data.laatste_periode_compleet === false}
-          value={fmtNum(k.volume.waarde)} breakdown={verdeling(k.volume)} />}
+          value={fmtNum(k.volume.waarde)} breakdown={verdeling(k.volume)}
+          deltaPct={k.volume.delta_pct} vorigePeriode={k.volume.vorige_periode} pWord={pWord} />}
         <KpiCard label="Omzet per winkel" tag={k.omzet_per_winkel.schatting ? "SCHATTING" : "WINKEL"}
           tagAccent={k.omzet_per_winkel.schatting}
           value={fmtEur(k.omzet_per_winkel.waarde)} isEuro
           breakdown={verdeling(k.omzet_per_winkel)}
+          deltaPct={k.omzet_per_winkel.delta_pct} vorigePeriode={k.omzet_per_winkel.vorige_periode} pWord={pWord}
           sub={k.omzet_per_winkel.winkels
             // Bij een SCHATTING komt het aantal uit Instellingen; "met omzet"
             // zou dan een telling suggereren die er niet is.

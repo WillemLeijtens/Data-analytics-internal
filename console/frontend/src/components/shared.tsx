@@ -110,10 +110,10 @@ export function BrandDot({ merk }: { merk: string | null }) {
   return <span className="brand-dot" style={{ background: merkKleur(merk) }} />;
 }
 
-export function DeltaTag({ pct }: { pct: number | null }) {
-  if (pct == null) return <span className="tag">—</span>;
+export function DeltaTag({ pct, titel }: { pct: number | null; titel?: string }) {
+  if (pct == null) return <span className="tag" title={titel}>—</span>;
   const cls = pct > 0 ? "pos" : pct < 0 ? "neg" : "";
-  return <span className={`tag ${cls}`}>{pct > 0 ? "+" : ""}{pct.toLocaleString("nl-NL")}%</span>;
+  return <span className={`tag ${cls}`} title={titel}>{pct > 0 ? "+" : ""}{pct.toLocaleString("nl-NL")}%</span>;
 }
 
 /* ------------------------------------------------------------ TrendChart */

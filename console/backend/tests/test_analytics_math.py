@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from engine import analytics  # noqa: E402
-from engine.periods import is_afgesloten  # noqa: E402
+from engine.periods import is_afgesloten, vorige_periode  # noqa: E402
 from test_parser_flow import upload  # noqa: E402
 
 
@@ -577,6 +577,16 @@ def test_is_afgesloten_week_en_maand():
     assert is_afgesloten("2025-W53", dt.date(2025, 12, 31)) is True
 
 
+def test_vorige_periode_rondt_jaarwisseling_af():
+    assert vorige_periode("2026-W32") == "2026-W31"
+    # Week 1 -> laatste ISO-week van het vorige jaar (2025 heeft er 52).
+    assert vorige_periode("2026-W01") == "2025-W52"
+    # 2026 heeft zelf 53 ISO-weken.
+    assert vorige_periode("2027-W01") == "2026-W53"
+    assert vorige_periode("2026-08") == "2026-07"
+    assert vorige_periode("2026-01") == "2025-12"
+
+
 def test_dashboard_markeert_lopende_periode(client, monkeypatch):
     import seed
     upload(client, "DWH__Sales_Tweezerman_KVNL_wk32.xlsx", seed.make_dwh_xlsx([{
@@ -599,6 +609,34 @@ def test_dashboard_markeert_lopende_periode(client, monkeypatch):
     assert dash["kpi"]["omzet"]["waarde"] == pytest.approx(40.0)
     assert dash["ytd"]["tot_periode"] == 31
     assert dash["ytd"]["omzet"]["nu"] == pytest.approx(100.0)
+
+
+def test_kpi_toont_week_op_week_delta(client):
+    """De KPI-kaarten bovenaan (Omzet/Volume/Omzet per winkel) vergelijken met
+    de kalenderperiode direct ervoor, los van de YoY-vergelijking verderop."""
+    import seed
+    upload(client, "DWH__Sales_Tweezerman_KVNL_wow.xlsx", seed.make_dwh_xlsx([{
+        "sku": "31210001", "gtin": "4049469072773", "desc": "Slant",
+        "brand": "TWEEZERMAN",
+        "weeks": {"202631": (10, 100.0), "202632": (12, 120.0)}}]))
+    kpi = client.get("/api/kruidvat/dashboard").json()["kpi"]
+    assert kpi["omzet"]["waarde"] == pytest.approx(120.0)
+    assert kpi["omzet"]["delta_pct"] == pytest.approx(20.0)
+    assert kpi["omzet"]["vorige_periode"] == "2026-W31"
+    assert kpi["volume"]["delta_pct"] == pytest.approx(20.0)
+
+
+def test_kpi_delta_ontbreekt_zonder_vorige_periode(client):
+    """Een gat vóór de laatste periode (of de allereerste levering) mag geen
+    percentage tonen tegen een willekeurige oudere periode — dat zou als
+    'vorige week' uitlezen terwijl het dat niet is."""
+    import seed
+    upload(client, "DWH__Sales_Tweezerman_KVNL_gap.xlsx", seed.make_dwh_xlsx([{
+        "sku": "31210001", "gtin": "4049469072773", "desc": "Slant",
+        "brand": "TWEEZERMAN", "weeks": {"202632": (12, 120.0)}}]))
+    kpi = client.get("/api/kruidvat/dashboard").json()["kpi"]
+    assert kpi["omzet"]["delta_pct"] is None
+    assert kpi["omzet"]["vorige_periode"] is None
 
 
 # ------------------------------------------------- P3-validaties
