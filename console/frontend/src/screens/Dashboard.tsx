@@ -157,8 +157,8 @@ const MAANDEN = ["", "jan", "feb", "mrt", "apr", "mei", "jun",
 
 
 /** Omzet per winkel over tijd, met het winkelbestand eronder. Een stijgend
- *  gemiddelde kan van beter verkopen komen of van minder winkels; de
- *  decompositie eronder splitst dat exact.
+ *  gemiddelde kan van beter verkopen komen of van minder winkels — beide
+ *  panelen op dezelfde tijdas maken dat verschil zichtbaar.
  *
  *  De "Categorie"-stand combineert zelfgekozen categorieën (bijv. Shampoo +
  *  Conditioners tot "Wash & Care") tot één lijn — via een EIGEN fetch, niet
@@ -194,9 +194,7 @@ export function TijdlijnBlok({ t, pWord, retailer, merk, land, banner, categorie
   // In de Categorie-stand komt de tijdas mee uit dezelfde, apart gefilterde
   // respons: die kan een ander periodebereik hebben dan de ongefilterde t.
   const periodes = stand === "categorie" ? (catData?.tijdlijn?.periodes ?? []) : t.periodes;
-  const d = t.decompositie;
   const aangenomen = t.per_merk.some((r: any) => r.bron.includes("aangenomen"));
-  const pct = (v: number) => `${v > 0 ? "+" : ""}${v.toLocaleString("nl-NL")}%`;
   return (
     <>
       <hr className="hairline" />
@@ -229,45 +227,6 @@ export function TijdlijnBlok({ t, pWord, retailer, merk, land, banner, categorie
           <TijdlijnPanelen periodes={periodes} reeksen={reeksen} isMaand={pWord === "Maand"} />
         )}
       </div>
-
-      {stand !== "categorie" && d?.per_merk?.length > 0 && t.vergelijking?.vorig && (
-        <div style={{ marginTop: 14 }}>
-          <div className="eyebrow">Waar komt het verschil vandaan? {t.vergelijking.nu} vs {t.vergelijking.vorig}</div>
-          <table className="data" style={{ marginTop: 8 }}>
-            <thead><tr>
-              <th>Merk</th>
-              <th style={{ textAlign: "right" }}>Omzet</th>
-              <th style={{ textAlign: "right" }}>= winkels</th>
-              <th style={{ textAlign: "right" }}>× per winkel</th>
-              <th>Winkels toen → nu</th>
-            </tr></thead>
-            <tbody>
-              {d.per_merk.map((r: any) => (
-                <tr key={r.merk}>
-                  <td><BrandDot merk={r.merk} />{r.merk}</td>
-                  <td style={{ textAlign: "right" }}><DeltaTag pct={r.omzet_pct} /></td>
-                  <td style={{ textAlign: "right" }}><DeltaTag pct={r.winkels_pct} /></td>
-                  <td style={{ textAlign: "right" }}><DeltaTag pct={r.per_winkel_pct} /></td>
-                  <td className="sub">{r.winkels_toen} → {r.winkels_nu}</td>
-                </tr>
-              ))}
-              {d.totaal && (
-                <tr>
-                  <td><b>Totaal</b></td>
-                  <td style={{ textAlign: "right" }}><DeltaTag pct={d.totaal.omzet_pct} /></td>
-                  <td style={{ textAlign: "right" }}><DeltaTag pct={d.totaal.winkels_pct} /></td>
-                  <td style={{ textAlign: "right" }}><DeltaTag pct={d.totaal.per_winkel_pct} /></td>
-                  <td className="sub">{d.totaal.winkels_toen} → {d.totaal.winkels_nu}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-          <p className="sub" style={{ marginTop: 8 }}>
-            De drie kolommen sluiten exact op elkaar aan: omzet = winkels × omzet per winkel
-            {d.per_merk[0] && ` (${d.per_merk[0].merk}: ${pct(d.per_merk[0].omzet_pct)} = ${pct(d.per_merk[0].winkels_pct)} × ${pct(d.per_merk[0].per_winkel_pct)})`}.
-          </p>
-        </div>
-      )}
 
       {aangenomen && (
         <p className="sub" style={{ marginTop: 10 }}>
