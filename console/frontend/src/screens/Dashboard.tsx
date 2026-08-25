@@ -385,19 +385,21 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
   const [merk, setMerk] = useState<string[]>([]);
   const [land, setLand] = useState<string[]>([]);
   const [banner, setBanner] = useState<string[]>([]);
-  const [metric, setMetric] = useState<"omzet" | "volume" | "per_winkel">("omzet");
+  const [categorie, setCategorie] = useState<string[]>([]);
+  const [metric, setMetric] = useState<"omzet" | "volume" | "per_winkel" | "winkels">("omzet");
   // Uitsplitsing van de tegels: totaal (per merk, zoals altijd), per formule
   // of per land. Zie DIM_LABEL hieronder voor de naamgeving.
-  const [dim, setDim] = useState<"merk" | "banner" | "land">("merk");
+  const [dim, setDim] = useState<"merk" | "banner" | "land" | "categorie">("merk");
 
   // Filters horen bij één retailer: bij het wisselen van tab zou een merk
   // dat de nieuwe retailer niet voert anders een leeg dashboard opleveren.
-  useEffect(() => { setMerk([]); setLand([]); setBanner([]); setDim("merk"); }, [ctx.retailer]);
+  useEffect(() => { setMerk([]); setLand([]); setBanner([]); setCategorie([]); setDim("merk"); }, [ctx.retailer]);
 
   const q = new URLSearchParams();
   if (merk.length) q.set("merk", merk.join(","));
   if (land.length) q.set("land", land.join(","));
   if (banner.length) q.set("banner", banner.join(","));
+  if (categorie.length) q.set("categorie", categorie.join(","));
   const { data, error, reload } = useApi(`/${ctx.retailer}/dashboard?${q}`);
   // Mijlpalen volgen het merkfilter: staat er een merk aan, dan hoor je
   // alleen de mijlpalen van dat merk te zien — anders verklaart een markering
@@ -421,10 +423,11 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           {f.merk.length > 0 && (<span><span className="eyebrow">Merk </span><MultiChips all={f.merk} sel={merk} onChange={setMerk} /></span>)}
           {f.land.length > 0 && (<span><span className="eyebrow">Land </span><MultiChips all={f.land} sel={land} onChange={setLand} /></span>)}
           {f.banner.length > 0 && (<span><span className="eyebrow">Formule </span><MultiChips all={f.banner} sel={banner} onChange={setBanner} /></span>)}
+          {f.categorie?.length > 0 && (<span><span className="eyebrow">Categorie </span><MultiChips all={f.categorie} sel={categorie} onChange={setCategorie} /></span>)}
         </div>
         <div className="card empty-card">
-          <p className="sub">Geen data voor deze filterkeuze — deze combinatie van merk, land en formule komt niet voor.</p>
-          <button className="btn ghost" onClick={() => { setMerk([]); setLand([]); setBanner([]); }}>Filters wissen</button>
+          <p className="sub">Geen data voor deze filterkeuze — deze combinatie van filters komt niet voor.</p>
+          <button className="btn ghost" onClick={() => { setMerk([]); setLand([]); setBanner([]); setCategorie([]); }}>Filters wissen</button>
         </div>
       </>) : (
         <div className="card empty-card"><p className="sub">Nog geen data geïmporteerd voor deze retailer.</p></div>
@@ -464,6 +467,7 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
             waarschuwing={merkWaarschuwing} /></span>)}
         {filters.land.length > 0 && (<span><span className="eyebrow">Land </span><MultiChips all={filters.land} sel={land} onChange={setLand} /></span>)}
         {filters.banner.length > 0 && (<span><span className="eyebrow">Formule </span><MultiChips all={filters.banner} sel={banner} onChange={setBanner} /></span>)}
+        {filters.categorie?.length > 0 && (<span><span className="eyebrow">Categorie </span><MultiChips all={filters.categorie} sel={categorie} onChange={setCategorie} /></span>)}
         <span className="sub" style={{ marginLeft: "auto" }}>
           {(merk.length || filters.merk.length)} van {filters.merk.length} merken
         </span>
@@ -487,6 +491,9 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           )}
           {dims.includes("land") && (
             <button className={effDim === "land" ? "on" : ""} onClick={() => setDim("land")}>Per land</button>
+          )}
+          {dims.includes("categorie") && (
+            <button className={effDim === "categorie" ? "on" : ""} onClick={() => setDim("categorie")}>Per categorie</button>
           )}
         </div>
       )}
@@ -613,7 +620,11 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       )}
 
       <h2>
-        {effMetric === "per_winkel" ? "Omzet per winkel" : effMetric} per {pWord.toLowerCase()}, jaar op jaar
+        {effMetric === "per_winkel" ? "Omzet per winkel"
+          : effMetric === "winkels" ? "Actieve winkels" : effMetric} per {pWord.toLowerCase()}, jaar op jaar
+        {effMetric === "winkels" && (
+          <Uitleg tekst={`Het aantal unieke winkels met omzet, over een voortschrijdend venster van ${pWord === "Week" ? "13 weken" : "3 maanden"} — zo telt een toevallig stille periode niet mee als "winkel weg". Handig om distributiebereik te volgen los van omzet per winkel: minder winkels met méér omzet per winkel kunnen elkaar in dat cijfer verhullen.`} />
+        )}
       </h2>
       <div className="seg" style={{ marginBottom: 14 }}>
         <button className={effMetric === "omzet" ? "on" : ""} onClick={() => setMetric("omzet")}>Omzet</button>
@@ -622,10 +633,12 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           onClick={() => setMetric("volume")}>Volume</button>
         <button className={effMetric === "per_winkel" ? "on" : ""} disabled={!data.trend.series.per_winkel}
           onClick={() => setMetric("per_winkel")}>Per winkel</button>
+        <button className={effMetric === "winkels" ? "on" : ""} disabled={!data.trend.series.winkels}
+          onClick={() => setMetric("winkels")}>Actieve winkels</button>
       </div>
       <div className="card">
         <TrendChart series={data.trend.series[effMetric] ?? {}} years={data.trend.jaren}
-          isEuro={effMetric !== "volume"} periodWord={pWord}
+          isEuro={effMetric === "omzet" || effMetric === "per_winkel"} periodWord={pWord}
           mijlpalen={mijlpalen ?? []}
           promoties={data.promoties ?? []}
           // Filtert de gebruiker op merk, dan zijn dát de merken die in beeld

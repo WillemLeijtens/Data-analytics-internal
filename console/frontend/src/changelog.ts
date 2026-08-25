@@ -5,6 +5,13 @@
 export type ChangelogEntry = { datum: string; titel: string; tekst: string };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { datum: "2026-08-25", titel: "Productcategorie en actieve winkels op het dashboard",
+    tekst: "Levert Etos een Class-kolom in de export, dan is dat nu een "
+      + "eigen filter op het dashboard (naast merk/land/formule) en een "
+      + "uitsplitsing \"Per categorie\" bij de KPI's. De trendgrafiek heeft "
+      + "\"Actieve winkels\" als vierde keuze naast Omzet/Volume/Per winkel: "
+      + "het aantal unieke winkels met omzet, zodat bereik (méér of minder "
+      + "winkels) los te volgen is van omzet per winkel." },
   { datum: "2026-08-24", titel: "Changelog",
     tekst: "Dit overzicht, onderaan het menu — zodat nieuwe functies en fixes "
       + "terug te vinden zijn zonder in de code te hoeven kijken." },

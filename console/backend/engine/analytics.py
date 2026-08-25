@@ -406,24 +406,30 @@ def winkelanalyse(rows, caps: dict, jaar: int,
 
 # ---------------------------------------------------------------- dashboard
 
-def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict:
+def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
+             categorie=None) -> dict:
     caps, base_labels = retailer_caps(conn, retailer_id)
     if caps is None:
         return {"available": False, "reason": "PARSER PROFIEL ONTBREEKT"}
     res = fallback.resolve(caps, week=True, winkel=True, banner=True)
     labels = base_labels + res.labels
 
-    # Eén query; het merk/land/banner-filter is een Python-subset zodat de
-    # filterlijsten (uit all_rows) en de cijfers nooit uiteen kunnen lopen.
+    # Eén query; het merk/land/banner/categorie-filter is een Python-subset
+    # zodat de filterlijsten (uit all_rows) en de cijfers nooit uiteen
+    # kunnen lopen.
     all_rows = load_facts(conn, retailer_id)
     rows = [r for r in all_rows
             if (not merk or r["merk"] in merk)
             and (not land or r["land"] in land)
-            and (not banner or r["banner"] in banner)]
+            and (not banner or r["banner"] in banner)
+            and (not categorie or r["categorie"] in categorie)]
     filters = {
         "merk": sorted({r["merk"] for r in all_rows if r["merk"]}),
         "land": sorted({r["land"] for r in all_rows if r["land"]}),
         "banner": sorted({r["banner"] for r in all_rows if r["banner"]}),
+        # Alleen gevuld als de feed een categorie levert (vandaag: Etos met
+        # de Class-kolom) — anders verschijnt er nergens een zinloze knop.
+        "categorie": sorted({r["categorie"] for r in all_rows if r["categorie"]}),
     }
     if not rows:
         # gefilterd=True: er ís data, alleen niet voor deze filterkeuze. De
@@ -523,6 +529,12 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
     # verkocht" suggereren terwijl de feed simpelweg nog niet geleverd heeft).
     dimensies = ["merk"] + [d for d in ("land", "banner")
                             if caps.get(d) and len({r[d] for r in rows if r[d]}) > 1]
+    # Categorie is geen profielcapability zoals land/banner — de feed levert
+    # het gewoon of niet (vandaag alleen Etos, via de Class-kolom). Zelfde
+    # "meer dan één waarde"-regel: anders is de knop een balk die niets
+    # toevoegt.
+    if len({r["categorie"] for r in rows if r["categorie"]}) > 1:
+        dimensies.append("categorie")
 
     kpi = agg(latest_rows)
     n_stores, from_facts = store_count(conn, retailer_id, caps, rows, latest, settings)
@@ -720,6 +732,19 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None) -> dict
             if y in per_year:
                 per_year[y][period_number(r["periode"])] += r[metric]
         trend["series"][metric] = {y: dict(per_year[y]) for y in years}
+    # Actieve winkels: hergebruikt dezelfde voortschrijdend-venster-telling
+    # als de tijdlijn hieronder (winkels_per_periode, VENSTER) — geen nieuwe
+    # berekening, alleen dezelfde reeks herschikt naar drie jaarlijnen per
+    # periodenummer, zodat hij naast omzet/volume/per_winkel in de
+    # 3-jaars-trendgrafiek gekozen kan worden.
+    winkels_per_p = winkels_per_periode(conn, retailer_id, caps, rows, periods,
+                                        settings, historie)
+    winkels_per_jaar: dict = {y: {} for y in years}
+    for p, (aantal, _bron) in winkels_per_p.items():
+        y = period_year(p)
+        if y in winkels_per_jaar and aantal is not None:
+            winkels_per_jaar[y][period_number(p)] = aantal
+    trend["series"]["winkels"] = winkels_per_jaar
     # Omzet per winkel per periode met het winkelbestand ván dat jaar:
     # één vast aantal over de hele reeks vertekent groei of krimp, maar per
     # losse periode delen zou een winkel die die maand niets verkocht uit de

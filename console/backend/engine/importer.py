@@ -223,11 +223,14 @@ def run_import(conn, filename: str, content: bytes,
     import_id = cur.lastrowid
     conn.executemany(
         "INSERT INTO sellout_facts (retailer_id, import_id, periode_type, periode, land, "
-        "banner, winkel_id, winkel_naam, merk, artikel_ean, artikel_naam, volume, omzet) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "banner, winkel_id, winkel_naam, merk, artikel_ean, artikel_naam, categorie, "
+        "volume, omzet) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [(profile.retailer_id, import_id, result["periode_type"], f["periode"], f["land"],
           f["banner"], f["winkel_id"], f["winkel_naam"], f["merk"], f["artikel_ean"],
-          f["artikel_naam"], f["volume"], f["omzet"]) for f in result["facts"]])
+          # categorie: alleen de Etos-parser levert dit vandaag; andere
+          # profielen laten het veld gewoon leeg (.get, geen KeyError).
+          f["artikel_naam"], f.get("categorie"), f["volume"], f["omzet"])
+         for f in result["facts"]])
     return {"import_id": import_id, "status": status, "filename": filename,
             "retailer_id": profile.retailer_id, "profile_version": profile.version,
             "periode": periode_txt, "rows": len(result["facts"]),

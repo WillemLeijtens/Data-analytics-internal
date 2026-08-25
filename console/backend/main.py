@@ -260,14 +260,14 @@ def _gecachet(sleutel: tuple, bereken, conn):
 
 @app.get("/api/{retailer_id}/dashboard")
 def dashboard(retailer_id: str, merk: str | None = None, land: str | None = None,
-              banner: str | None = None):
+              banner: str | None = None, categorie: str | None = None):
     split = lambda v: v.split(",") if v else None  # noqa: E731
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
         return _gecachet(
-            ("dashboard", retailer_id, merk, land, banner),
-            lambda: analytics.dashboard(conn, retailer_id,
-                                        split(merk), split(land), split(banner)), conn)
+            ("dashboard", retailer_id, merk, land, banner, categorie),
+            lambda: analytics.dashboard(conn, retailer_id, split(merk), split(land),
+                                        split(banner), split(categorie)), conn)
 
 
 @app.get("/api/{retailer_id}/artikelen")
