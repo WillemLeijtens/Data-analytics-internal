@@ -49,7 +49,7 @@ function Sidebar({ ctx, screen }: { ctx: ShellCtx; screen: string }) {
   const item = (id: string, label: string, opts?: { sub?: boolean; disabled?: boolean; title?: string }) => (
     <button
       key={id}
-      className={`nav-item ${opts?.sub ? "sub" : ""} ${screen === id ? "active" : ""} ${opts?.disabled ? "disabled" : ""}`}
+      className={`nav-item ${opts?.sub ? "nav-sub" : ""} ${screen === id ? "active" : ""} ${opts?.disabled ? "disabled" : ""}`}
       title={opts?.disabled ? opts?.title : undefined}
       onClick={() => !opts?.disabled && ctx.go(ctx.retailer, id)}
     >
@@ -72,11 +72,13 @@ function Sidebar({ ctx, screen }: { ctx: ShellCtx; screen: string }) {
       {item("overzicht", "Overzicht")}
       {item("projecten", "Projectcalculator")}
       {group("ANALYSES", <>
+        {/* Conclusie bovenaan: dat is de samenvatting van de vier analyses
+            eronder, dus je begint daar en duikt daarna pas de details in. */}
+        {item("conclusie", "Conclusie", { sub: true, disabled: ctx.retailer === "alle" })}
         {item("dashboard", "Dashboard", { sub: true, disabled: ctx.retailer === "alle" })}
         {item("artikelen", "Artikelanalyse", { sub: true, disabled: ctx.retailer === "alle" || noArticle, title: artTitle })}
         {item("promoties", "Promoties", { sub: true, disabled: ctx.retailer === "alle" })}
         {item("assortiment", "Assortimentsanalyse", { sub: true, disabled: ctx.retailer === "alle" || noArticle, title: artTitle })}
-        {item("conclusie", "Conclusie", { sub: true, disabled: ctx.retailer === "alle" })}
       </>)}
       {group("OPERATIE", <>
         {item("import", "Import", { sub: true })}
