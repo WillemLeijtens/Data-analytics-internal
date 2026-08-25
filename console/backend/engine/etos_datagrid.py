@@ -61,6 +61,16 @@ BRAND_SUFFIX_RE = re.compile(r"\s*-\s*\d+$")
 # is de sleutel (namen verschillen per export in spelling), de naam is voor
 # het scherm.
 STORE_RE = re.compile(r"^(.*?)\s*-\s*(\d+)$")
+# Elke week is normaal "Sales € TY"/"Units TY" (This Year, tegen een impliciet
+# huidig jaar). Kiest iemand in de widget een Time-scope die twee losse
+# periodes vergelijkt (bijv. "4 Fiscal Quarters 202501-202504" tegen
+# "3 Fiscal Quarters 202402-202404" — géén simpele jaar-op-jaar-vergelijking),
+# dan noemt Etos de primaire periode "Focus" in plaats van "TY", want "This
+# Year" klopt dan niet meer als omschrijving. Structureel exact hetzelfde:
+# twee kolommen per week, sales dan units. De vergelijkingsperiode zelf komt
+# niet mee als losse kolommen — alleen het label van de primaire periode
+# verandert.
+SALES_UNITS_LABELS = {("Sales € TY", "Units TY"), ("Sales € Focus", "Units Focus")}
 
 
 def _norm(v) -> str:
@@ -188,9 +198,10 @@ def parse_workbook(content: bytes) -> dict:
             raise ValueError(
                 f"weekkop {raw}: Ending {ending} is niet de ISO-zondag van "
                 f"die week — weekkalender wijkt af; import afgebroken")
-        if subhdr[j] != "Sales € TY" or (j + 1 >= len(subhdr)) or subhdr[j + 1] != "Units TY":
+        if (subhdr[j], subhdr[j + 1] if j + 1 < len(subhdr) else None) not in SALES_UNITS_LABELS:
             raise ValueError(f"weekkop {raw}: verwachtte 'Sales € TY'+'Units TY' "
-                             "eronder; kolomindeling wijkt af")
+                             "(of 'Sales € Focus'+'Units Focus') eronder; "
+                             "kolomindeling wijkt af")
         gezien.append(raw)
         weekcols.append((periode, j))
     if not gezien:

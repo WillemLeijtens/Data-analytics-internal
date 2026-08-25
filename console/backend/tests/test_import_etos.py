@@ -20,6 +20,11 @@ from test_parser_flow import upload  # noqa: E402
 
 from echte_bestanden import MAP as U, bruikbaar, vereist  # noqa: E402
 REAL_ETOS = U / "b9ccb189-Data_Grid_57018_widget.xlsx"
+# Zelfde widget, maar met een Time-scope die twee losse periodes vergelijkt
+# ("4 Fiscal Quarters 202501-202504" tegen "3 Fiscal Quarters 202402-202404")
+# in plaats van een simpele jaar-op-jaar-selectie. Etos noemt de kolommen dan
+# "Sales € Focus"/"Units Focus" in plaats van "Sales € TY"/"Units TY".
+REAL_ETOS_FOCUS = U / "f27a7144-Omzet_volume_per_w...59240_1.xlsx"
 REAL_KV = U / "d62acf54-DWH__Sales_volume__sales_Tweezerman_KVNL_1299_1734396111539283577.xlsx"
 REAL_ICI = U / "fc6fc987-Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__4.xlsx"
 
@@ -105,6 +110,33 @@ def test_real_etos_full_counts(client):
     assert promo["methode"] == "prijsindex"
 
 
+@vereist(REAL_ETOS_FOCUS)
+def test_real_etos_focus_labels_worden_geaccepteerd(client):
+    """Gemeld: een export met een Time-scope die twee losse periodes
+    vergelijkt weigerde met 'weekkop 202520: verwachtte Sales € TY + Units TY
+    eronder; kolomindeling wijkt af'. Etos noemt de kolommen dan 'Sales €
+    Focus'/'Units Focus' in plaats van 'Sales € TY'/'Units TY' — structureel
+    identiek, alleen het label van de primaire periode verschilt.
+
+    Cijfers gepind tegen een ONAFHANKELIJKE telling met openpyxl, buiten de
+    parser om (som van alle gevulde Sales/Units-cellen onder de kolommen met
+    het label 'Sales € Focus')."""
+    r = upload(client, REAL_ETOS_FOCUS.name[9:], REAL_ETOS_FOCUS.read_bytes())
+    assert r["status"] == "ingelezen" and r["retailer_id"] == "etos", \
+        f"{r['status']} — {r.get('detail')}"
+
+    import db
+    with db.get_conn() as conn:
+        tot = conn.execute(
+            "SELECT SUM(omzet) o, SUM(volume) v, COUNT(DISTINCT artikel_ean) a, "
+            "COUNT(DISTINCT merk) m, MIN(periode) van, MAX(periode) tot "
+            "FROM sellout_facts WHERE retailer_id='etos'").fetchone()
+        assert tot["o"] == pytest.approx(946226.14, abs=0.01)
+        assert tot["v"] == 57094
+        assert tot["a"] == 36 and tot["m"] == 3
+        assert (tot["van"], tot["tot"]) == ("2025-W20", "2025-W52")
+
+
 @vereist(REAL_ETOS)
 def test_real_etos_renamed_still_recognised(client):
     r = upload(client, "kopie van rapportage etos (3).xlsx", REAL_ETOS.read_bytes())
@@ -184,6 +216,19 @@ def test_alle_vijf_bestanden_samen_geeft_meerjarige_analyse(client):
 
 
 # ---------------------------------------------------------------- gegenereerd
+
+def test_focus_labels_gegenereerd(client):
+    """Zelfde als test_real_etos_focus_labels_worden_geaccepteerd, maar op
+    een gegenereerd bestand — draait ook zonder het echte sample-bestand."""
+    def hernoem(ws):
+        for cell in ws[21]:                    # subkoprij
+            if cell.value == "Sales € TY":
+                cell.value = "Sales € Focus"
+            elif cell.value == "Units TY":
+                cell.value = "Units Focus"
+    r = upload(client, "Data_Grid_focus_widget.xlsx", _herbouw(_demo(), hernoem))
+    assert r["status"] == "ingelezen" and r["rows"] == 9
+
 
 def test_generated_etos_imports_and_analyses(client):
     r = upload(client, "Data_Grid_99999_widget.xlsx", _demo())
