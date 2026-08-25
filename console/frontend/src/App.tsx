@@ -12,6 +12,7 @@ import ImportStatus from "./screens/ImportStatus";
 import Parser from "./screens/Parser";
 import Instellingen from "./screens/Instellingen";
 import Projecten from "./screens/Projecten";
+import Changelog from "./screens/Changelog";
 
 const SIG_DOT: Record<string, string> = {
   green: "dot-green", orange: "dot-orange", red: "dot-red", grey: "dot-grey",
@@ -19,7 +20,7 @@ const SIG_DOT: Record<string, string> = {
 
 // Screens that exist for the 'alle retailers' tab (README: Overzicht, Import,
 // Import status); everything else needs a concrete retailer.
-const ALL_SCREENS = new Set(["overzicht", "projecten", "import", "import-status"]);
+const ALL_SCREENS = new Set(["overzicht", "projecten", "import", "import-status", "changelog"]);
 
 export type ShellCtx = {
   retailer: string;                 // 'alle' | retailer id
@@ -81,7 +82,10 @@ function Sidebar({ ctx, screen }: { ctx: ShellCtx; screen: string }) {
         {item("parser", "Parser", { sub: true, disabled: ctx.retailer === "alle" })}
       </>)}
       {item("instellingen", "Instellingen", { disabled: ctx.retailer === "alle" })}
-      <div className="foot">Willem Leijtens</div>
+      <div className="sidebar-bottom">
+        {item("changelog", "Changelog")}
+        <div className="foot">Willem Leijtens</div>
+      </div>
     </nav>
   );
 }
@@ -139,6 +143,7 @@ function Shell() {
       case "import-status": return <ImportStatus ctx={ctx} />;
       case "parser": return <Parser ctx={ctx} />;
       case "instellingen": return <Instellingen ctx={ctx} />;
+      case "changelog": return <Changelog />;
       default: return <Navigate to={`/${retailer}/overzicht`} replace />;
     }
   };

@@ -46,8 +46,9 @@ body {
 }
 .nav-group svg { transition: transform 200ms ease; }
 .nav-group.closed svg { transform: rotate(-90deg); }
+.sidebar-bottom { margin-top: auto; }
 .sidebar .foot {
-  margin-top: auto; padding: 20px 24px 8px;
+  padding: 20px 24px 8px;
   font-family: "Brittany Signature", cursive; font-size: 21px; color: var(--t-sidebar-fg2);
 }
 
