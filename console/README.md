@@ -738,6 +738,44 @@ die toegang ooit breder wordt dan het kleine team waarvoor deze app is
 gebouwd (zie ook de sectie over autorisatie hierboven — dezelfde
 overweging geldt hier).
 
+## Conclusie per retailer
+
+Het scherm **Conclusie** (Analyses) vat per retailer samen wat de cijfers
+zeggen over omzet, assortiment, winkelontwikkeling en promoties, met concrete
+adviezen. Dat gebeurt in twee lagen, om dezelfde reden als bij de
+contractanalyse: **het model schrijft de zin, de cijfers blijven
+deterministisch**.
+
+1. `engine/conclusie.bevindingen()` haalt de opvallende feiten uit de vier
+   bestaande analyses en zet ze om in items met een ernst (rood/oranje/info).
+   Die laag rekent zelf niets nieuws uit — hij selecteert — en werkt **zonder
+   API-sleutel**. Zonder sleutel toont het scherm alleen de bevindingen, en
+   dat is op zichzelf al bruikbaar.
+2. Claude krijgt **alléén die bevindingen** (enkele KB's, nooit de ruwe
+   reeksen) en schrijft er een samenvatting en hoogstens vier adviezen bij.
+
+Wat de tekst noemt hoort dus in de bevindingen te staan, en die staan eronder
+op het scherm — elke zin is terug te leiden tot een cijfer.
+`controleer_getallen()` toetst dat na afloop: een getal in de tekst dat
+nergens uit volgt, komt als waarschuwing boven de conclusie te staan in plaats
+van stil te worden geslikt (net als een onaannemelijke contractdatum). De
+`bevindingen` gaan als JSON-momentopname mee de database in, zodat een
+conclusie narekenbaar blijft óók nadat de data veranderd is.
+
+**Verversen kost een API-call, dus dat gebeurt alleen als het nodig is.**
+`vingerafdruk()` legt de staat van de data van déze retailer vast, zónder
+datum erin. Wijkt de huidige vingerafdruk af van die bij het schrijven, dan is
+de tekst verouderd en werkt het scherm hem bij zodra je hem opent. Bewust niet
+opgehangen aan de analysecache-versie uit `main.py`: die bevat de datum van
+vandaag, en dan zou élke nacht elke conclusie van elke retailer herschreven
+worden zonder dat er iets veranderd is. En bewust per retailer: een import
+voor Kruidvat veroudert de conclusie van Etos niet.
+
+`retailer_conclusies` staat in `_BUITEN_DATAVERSIE` (`main.py`). Een conclusie
+is een *gevolg* van de analyses; telde de tabel mee in de dataversie, dan zou
+elke opgeslagen conclusie de cache van álle analyses van álle retailers
+leegtrekken.
+
 ## Nieuwe retailer toevoegen
 
 1. Upload een bestand van de retailer: onbekend ⇒ **PROFIEL NODIG** in de

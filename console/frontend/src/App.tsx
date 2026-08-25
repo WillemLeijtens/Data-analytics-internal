@@ -13,6 +13,7 @@ import Parser from "./screens/Parser";
 import Instellingen from "./screens/Instellingen";
 import Projecten from "./screens/Projecten";
 import Changelog from "./screens/Changelog";
+import Conclusie from "./screens/Conclusie";
 
 const SIG_DOT: Record<string, string> = {
   green: "dot-green", orange: "dot-orange", red: "dot-red", grey: "dot-grey",
@@ -75,6 +76,7 @@ function Sidebar({ ctx, screen }: { ctx: ShellCtx; screen: string }) {
         {item("artikelen", "Artikelanalyse", { sub: true, disabled: ctx.retailer === "alle" || noArticle, title: artTitle })}
         {item("promoties", "Promoties", { sub: true, disabled: ctx.retailer === "alle" })}
         {item("assortiment", "Assortimentsanalyse", { sub: true, disabled: ctx.retailer === "alle" || noArticle, title: artTitle })}
+        {item("conclusie", "Conclusie", { sub: true, disabled: ctx.retailer === "alle" })}
       </>)}
       {group("OPERATIE", <>
         {item("import", "Import", { sub: true })}
@@ -143,6 +145,7 @@ function Shell() {
       case "import-status": return <ImportStatus ctx={ctx} />;
       case "parser": return <Parser ctx={ctx} />;
       case "instellingen": return <Instellingen ctx={ctx} />;
+      case "conclusie": return <Conclusie ctx={ctx} />;
       case "changelog": return <Changelog />;
       default: return <Navigate to={`/${retailer}/overzicht`} replace />;
     }
