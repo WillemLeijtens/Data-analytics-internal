@@ -50,6 +50,19 @@ for (const [naam, sel] of [["licht", 'html[data-theme="light"]'], ["donker", 'ht
   const t = { ...cat, ...tokens(sel) };
   const kaart = t["t-card"], pagina = t["t-bg"];
   console.log(`\n${naam.toUpperCase()} — op kaart ${kaart} / pagina ${pagina}`);
+  // De sidebar is een EIGEN ondergrond, niet de kaart of de pagina. Die
+  // stond hier eerst niet in, en zo kon de menutekst maandenlang op 2,78:1
+  // staan zonder dat deze tool iets meldde: het menu-item erfde de
+  // metadata-kleur, die alleen tegen de lichte pagina getoetst werd.
+  const zijbalk = t["t-sidebar"];
+  for (const sleutel of ["t-sidebar-fg", "t-sidebar-fg2"]) {
+    const kleur = t[sleutel];
+    if (!kleur) continue;
+    const a = ratio(kleur, zijbalk);
+    if (a < 4.5) gezakt++;
+    console.log(`  ${a >= 4.5 ? "ok  " : "ZAKT"} --${sleutel.padEnd(9)} ${kleur}  ` +
+      `${a.toFixed(2)} op sidebar ${zijbalk}  (tekst, norm 4.5)`);
+  }
   for (const [groep, norm, label] of [[TEKST, 4.5, "tekst"], [UI, 3.0, "ui"], [REEKS, 0, "reeks"]]) {
     for (const sleutel of groep) {
       const kleur = t[sleutel];

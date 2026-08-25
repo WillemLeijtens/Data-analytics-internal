@@ -5,6 +5,15 @@
 export type ChangelogEntry = { datum: string; titel: string; tekst: string };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { datum: "2026-08-25", titel: "Menu weer leesbaar, Conclusie bovenaan",
+    tekst: "Elk ingesprongen menu-item kreeg per ongeluk de grijstint van "
+      + "gedempte tekst — 2,78:1 in het lichte thema, ver onder de norm — "
+      + "waardoor het hele menu eruitzag alsof er niets te klikken viel. "
+      + "Werkende items zijn nu duidelijk leesbaar en uitgeschakelde items "
+      + "duidelijk zwakker, zodat je het verschil ziet. \"Conclusie\" staat "
+      + "nu bovenaan bij Analyses, en de knop \"Opnieuw schrijven\" is "
+      + "vervangen door een vraagteken dat uitlegt wanneer de tekst "
+      + "vanzelf opnieuw geschreven wordt." },
   { datum: "2026-08-25", titel: "Conclusie per retailer",
     tekst: "Nieuw scherm onder Analyses: wat de cijfers van deze retailer "
       + "zeggen over omzet, assortiment, winkelontwikkeling en promoties, plus "

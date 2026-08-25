@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Conclusie from "../screens/Conclusie";
 
@@ -55,8 +55,23 @@ describe("Conclusie", () => {
     }));
     toon();
     expect(await screen.findByText("Eerder geschreven.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Opnieuw schrijven/ })).toBeDisabled();
     expect(apiSend).not.toHaveBeenCalled();
+  });
+
+  it("legt bij het vraagteken uit wanneer er een nieuwe tekst komt", async () => {
+    vi.mocked(apiGet).mockResolvedValue(antwoord({
+      sleutel_ingesteld: true, verouderd: false,
+      conclusie: { samenvatting: "Actueel.", advies: [], waarschuwingen: [],
+                   gegenereerd_op: "2026-08-25T10:00:00" },
+    }));
+    toon();
+    await screen.findByText("Actueel.");
+    // Geen knop meer: de tekst werkt zichzelf bij, dus valt er niets te drukken.
+    expect(screen.queryByRole("button", { name: /schrijven/i })).not.toBeInTheDocument();
+    const vraagteken = screen.getByRole("button", { name: /Uitleg: Deze tekst wordt automatisch/ });
+    fireEvent.mouseEnter(vraagteken);
+    expect(screen.getByText(/nieuwe data voor déze retailer is geïmporteerd/))
+      .toBeInTheDocument();
   });
 
   it("schrijft vanzelf een conclusie als er nog geen is", async () => {

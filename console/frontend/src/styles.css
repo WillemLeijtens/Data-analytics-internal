@@ -35,8 +35,19 @@ body {
 }
 .nav-item:hover { background: var(--t-sidebar-hover); }
 .nav-item.active { background: var(--t-sidebar-active); }
-.nav-item.disabled { color: color-mix(in oklab, var(--t-sidebar-fg) 32%, transparent); cursor: not-allowed; }
-.nav-item.sub { padding-left: 48px; }
+/* Ingesprongen item binnen een groep. Heette eerst `sub` — maar dat is ook
+   de app-brede klasse voor gedempte tekst (`.sub`, verderop). Gelijke
+   specificiteit, dus die won: élk werkend menu-item kreeg de
+   metadata-grijstint, in het lichte thema 2,78:1 tegen de sidebar. Ver
+   onder de 4,5-norm, en donkerder dan de uitgeschakelde stand — waardoor
+   het hele menu eruitzag alsof er niets aan te klikken viel.
+   Nu een eigen naam, en een kleur die bewust ONDER de witte hoofditems
+   zit maar ruim boven de norm blijft (7,63:1 licht / 8,43:1 donker). */
+.nav-item.nav-sub { padding-left: 48px; color: var(--t-sidebar-fg2); }
+/* Ná .nav-sub: beide zijn even specifiek, dus deze moet winnen bij een
+   uitgeschakeld sub-item. 45% geeft 3,78:1 — duidelijk zwakker dan de
+   7,63 van een werkend item, en toch leesbaar. */
+.nav-item.disabled { color: color-mix(in oklab, var(--t-sidebar-fg) 45%, transparent); cursor: not-allowed; }
 .nav-group {
   display: flex; align-items: center; gap: 6px; width: 100%;
   background: none; border: 0; cursor: pointer;

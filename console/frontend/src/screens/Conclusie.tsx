@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiGet, apiSend } from "../api";
 import { ShellCtx } from "../App";
-import { EmptyProfileCard, LoadState } from "../components/shared";
+import { EmptyProfileCard, LoadState, Uitleg } from "../components/shared";
 
 /** De vier onderdelen in leesvolgorde, met de kop die erboven komt. */
 const ONDERDELEN: [string, string][] = [
@@ -147,19 +147,18 @@ export default function Conclusie({ ctx }: { ctx: ShellCtx }) {
                   </ol>
                 </>
               )}
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 18 }}>
+              <div style={{ display: "flex", alignItems: "center", marginTop: 18 }}>
                 <span className="sub">
                   Geschreven op {tijd(c.gegenereerd_op)}
                   {c.gegenereerd_door && c.gegenereerd_door !== "onbekend"
                     ? ` door ${c.gegenereerd_door}` : ""}
                 </span>
-                <button className="btn ghost" style={{ marginLeft: "auto" }}
-                  disabled={bezig || !data.sleutel_ingesteld}
-                  title={data.sleutel_ingesteld ? undefined
-                    : "Hiervoor is een Anthropic-sleutel nodig (Instellingen)"}
-                  onClick={schrijf}>
-                  {bezig ? "Bezig…" : "Opnieuw schrijven"}
-                </button>
+                <Uitleg tekst={
+                  "Deze tekst wordt automatisch opnieuw geschreven zodra er nieuwe data "
+                  + "voor déze retailer is geïmporteerd — je ziet dat de eerstvolgende "
+                  + "keer dat je dit scherm opent. Zolang de cijfers hetzelfde blijven, "
+                  + "blijft ook deze tekst staan en wordt er niets opnieuw geschreven. "
+                  + "Een import voor een andere retailer verandert hier niets aan."} />
               </div>
             </div>
           )}
