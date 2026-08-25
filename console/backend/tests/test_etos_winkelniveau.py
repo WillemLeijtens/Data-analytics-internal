@@ -113,23 +113,6 @@ def test_winkelniveau_opent_dezelfde_analyse_als_bij_ici(client):
     assert d["winkelanalyse"]["beschikbaar"] is True
 
 
-def test_actieve_winkels_in_de_trendreeks(client):
-    """De 3-jaars-trendgrafiek (data.trend.series) kan nu ook op 'Actieve
-    winkels' gekozen worden — dezelfde voortschrijdend-venster-telling als
-    winkels_per_periode(), niet een nieuwe berekening. Met 5 winkels die
-    elke week verkopen blijft de telling voor élke periode 5: het venster
-    kijkt terug, dus zelfs periode 1 bevat al alle 5 (elke winkel verkocht
-    daar al)."""
-    met_winkels(client, [
-        art(f"12078000{i}", "TWEEZERMAN",
-            {f"2026{w:02d}": (10.0, 1) for w in range(1, 13)},
-            f"ETOS FILIAAL {i} - 60{i:02d}")
-        for i in range(1, 6)])
-    d = client.get("/api/etos/dashboard").json()
-    winkels_2026 = d["trend"]["series"]["winkels"]["2026"]
-    assert winkels_2026 and all(v == 5 for v in winkels_2026.values())
-
-
 # ------------------------------------------- automatisch ingevulde winkels
 
 def test_winkelaantallen_komen_geteld_uit_de_import(client):

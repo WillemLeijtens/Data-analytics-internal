@@ -175,7 +175,6 @@ def test_real_etos_class_zonder_upc_id_kolom(client):
                            "OVERIGE GEZICHTSVERZORGING", "SHAMPOO", "TREATMENTS"}
 
     dash = client.get("/api/etos/dashboard").json()
-    assert "categorie" in dash["dimensies"]
     assert "SHAMPOO" in dash["filters"]["categorie"]
 
     # Willems eigen indeling herbouwd via het filter: Wash & Care
@@ -214,7 +213,6 @@ def test_categorie_filter_gegenereerd(client):
     assert r["status"] == "ingelezen" and r["rows"] == 9
 
     dash = client.get("/api/etos/dashboard").json()
-    assert "categorie" in dash["dimensies"]
     assert sorted(dash["filters"]["categorie"]) == \
         ["GEZICHTSMASKERS", "NAGELVERZORGING", "SHAMPOO"]
 

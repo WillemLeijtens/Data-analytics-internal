@@ -239,12 +239,21 @@ Schema: zie `profiles/*.json` (PROMPT.md §3). Kernregels:
   breekt de import fail-closed af — net als een winkelnaam zonder nummer.
   Een lege `Class`-cel bij een verder geldig product is GEEN fout (in
   tegenstelling tot een onherkenbare winkelnaam): de omzet blijft gewoon
-  meetellen, alleen zonder categorie. `categorie` wordt daarmee, zodra de
-  feed het levert, een extra dimensie naast merk/land/formule — een eigen
-  filterknop op het dashboard, en een vierde keuze ("Actieve winkels", het
-  aantal unieke winkels met omzet over het voortschrijdend venster van
-  `winkels_per_periode`) naast Omzet/Volume/Per winkel in de 3-jaars-trend.
-  Andere retailers/parsers laten dit veld gewoon `NULL`.
+  meetellen, alleen zonder categorie. Andere retailers/parsers laten dit
+  veld gewoon `NULL`.
+
+  `categorie` is BEWUST geen pagina-brede filter naast merk/land/formule: het
+  aantal winkels is een telling van UNIEKE winkels, en twee losse
+  categoriereeksen los bij elkaar optellen zou een winkel die dezelfde week
+  beide categorieën verkocht dubbel tellen. Combineren moet dus vóór het
+  tellen gebeuren, op de rijen. Daarom zit categorie alleen lokaal in de
+  grafiek "Omzet per winkel over tijd" (`TijdlijnBlok`, Dashboard.tsx): een
+  "Categorie"-stand naast Per merk/Totaal, met een eigen `MultiChips`-keuze
+  die zelfgekozen categorieën samenvoegt tot één lijn (bijv. Shampoo +
+  Conditioners → "Wash & Care") via een eigen fetch naar `/dashboard` met
+  `categorie=...` — hetzelfde bestaande filter op `dashboard()`, alleen niet
+  meer pagina-breed aangeroepen. De merk/land/formule-filters bovenaan
+  blijven gewoon van toepassing op die fetch.
 - **Bootstrap draait bij elke start** (idempotent): een nieuw meegeleverd
   profiel komt zo ook op een bestaande installatie aan.
 - **Capabilities worden afgeleid** uit mapping + constants (of liggen bij een

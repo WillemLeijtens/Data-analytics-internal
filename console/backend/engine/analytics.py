@@ -529,12 +529,6 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
     # verkocht" suggereren terwijl de feed simpelweg nog niet geleverd heeft).
     dimensies = ["merk"] + [d for d in ("land", "banner")
                             if caps.get(d) and len({r[d] for r in rows if r[d]}) > 1]
-    # Categorie is geen profielcapability zoals land/banner — de feed levert
-    # het gewoon of niet (vandaag alleen Etos, via de Class-kolom). Zelfde
-    # "meer dan één waarde"-regel: anders is de knop een balk die niets
-    # toevoegt.
-    if len({r["categorie"] for r in rows if r["categorie"]}) > 1:
-        dimensies.append("categorie")
 
     kpi = agg(latest_rows)
     n_stores, from_facts = store_count(conn, retailer_id, caps, rows, latest, settings)
@@ -732,19 +726,6 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
             if y in per_year:
                 per_year[y][period_number(r["periode"])] += r[metric]
         trend["series"][metric] = {y: dict(per_year[y]) for y in years}
-    # Actieve winkels: hergebruikt dezelfde voortschrijdend-venster-telling
-    # als de tijdlijn hieronder (winkels_per_periode, VENSTER) — geen nieuwe
-    # berekening, alleen dezelfde reeks herschikt naar drie jaarlijnen per
-    # periodenummer, zodat hij naast omzet/volume/per_winkel in de
-    # 3-jaars-trendgrafiek gekozen kan worden.
-    winkels_per_p = winkels_per_periode(conn, retailer_id, caps, rows, periods,
-                                        settings, historie)
-    winkels_per_jaar: dict = {y: {} for y in years}
-    for p, (aantal, _bron) in winkels_per_p.items():
-        y = period_year(p)
-        if y in winkels_per_jaar and aantal is not None:
-            winkels_per_jaar[y][period_number(p)] = aantal
-    trend["series"]["winkels"] = winkels_per_jaar
     # Omzet per winkel per periode met het winkelbestand ván dat jaar:
     # één vast aantal over de hele reeks vertekent groei of krimp, maar per
     # losse periode delen zou een winkel die die maand niets verkocht uit de

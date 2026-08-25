@@ -157,14 +157,44 @@ const MAANDEN = ["", "jan", "feb", "mrt", "apr", "mei", "jun",
 
 
 /** Omzet per winkel over tijd, met het winkelbestand eronder. Een stijgend
- *  gemiddelde kan van beter verkopen komen of van minder winkels; de
- *  decompositie eronder splitst dat exact. */
-function TijdlijnBlok({ t, pWord }: { t: any; pWord: string }) {
-  const [alles, setAlles] = useState(false);
-  const reeksen = alles ? [{ ...t.totaal, merk: "TOTAAL" }] : t.per_merk;
-  const d = t.decompositie;
+ *  gemiddelde kan van beter verkopen komen of van minder winkels — beide
+ *  panelen op dezelfde tijdas maken dat verschil zichtbaar.
+ *
+ *  De "Categorie"-stand combineert zelfgekozen categorieën (bijv. Shampoo +
+ *  Conditioners tot "Wash & Care") tot één lijn — via een EIGEN fetch, niet
+ *  door twee losse categoriereeksen client-side op te tellen. Het
+ *  winkelaantal is een telling van UNIEKE winkels: een winkel die dezelfde
+ *  week zowel shampoo als conditioner verkocht zou bij optellen dubbel
+ *  meetellen. De combinatie moet dus vóór het tellen gebeuren — op de rijen,
+ *  niet op het resultaat — en dat doet de backend al exact zo via het
+ *  bestaande categorie-filter op /dashboard. */
+export function TijdlijnBlok({ t, pWord, retailer, merk, land, banner, categorieOpties }: {
+  t: any; pWord: string; retailer: string;
+  merk: string[]; land: string[]; banner: string[]; categorieOpties: string[];
+}) {
+  const [stand, setStand] = useState<"merk" | "totaal" | "categorie">("merk");
+  const [gekozenCategorie, setGekozenCategorie] = useState<string[]>([]);
+
+  const catQuery = (() => {
+    if (stand !== "categorie" || gekozenCategorie.length === 0) return null;
+    const q = new URLSearchParams();
+    if (merk.length) q.set("merk", merk.join(","));
+    if (land.length) q.set("land", land.join(","));
+    if (banner.length) q.set("banner", banner.join(","));
+    q.set("categorie", gekozenCategorie.join(","));
+    return `/${retailer}/dashboard?${q}`;
+  })();
+  const { data: catData, error: catError } = useApi(catQuery);
+
+  const reeksen = stand === "categorie"
+    ? (catData?.tijdlijn?.totaal
+        ? [{ ...catData.tijdlijn.totaal, merk: gekozenCategorie.join(" + ") }]
+        : [])
+    : stand === "totaal" ? [{ ...t.totaal, merk: "TOTAAL" }] : t.per_merk;
+  // In de Categorie-stand komt de tijdas mee uit dezelfde, apart gefilterde
+  // respons: die kan een ander periodebereik hebben dan de ongefilterde t.
+  const periodes = stand === "categorie" ? (catData?.tijdlijn?.periodes ?? []) : t.periodes;
   const aangenomen = t.per_merk.some((r: any) => r.bron.includes("aangenomen"));
-  const pct = (v: number) => `${v > 0 ? "+" : ""}${v.toLocaleString("nl-NL")}%`;
   return (
     <>
       <hr className="hairline" />
@@ -176,51 +206,27 @@ function TijdlijnBlok({ t, pWord }: { t: any; pWord: string }) {
         {t.venster > 1 && ` Het winkelaantal is een voortschrijdend gemiddelde over ${t.venster} ${pWord.toLowerCase()}en, omdat een losse ${pWord.toLowerCase()} bij langzame merken te veel ruis geeft.`}
       </p>
       <div className="seg" style={{ margin: "10px 0 14px" }}>
-        <button className={!alles ? "on" : ""} onClick={() => setAlles(false)}>Per merk</button>
-        <button className={alles ? "on" : ""} onClick={() => setAlles(true)}>Totaal</button>
+        <button className={stand === "merk" ? "on" : ""} onClick={() => setStand("merk")}>Per merk</button>
+        <button className={stand === "totaal" ? "on" : ""} onClick={() => setStand("totaal")}>Totaal</button>
+        {categorieOpties.length > 0 && (
+          <button className={stand === "categorie" ? "on" : ""} onClick={() => setStand("categorie")}>Categorie</button>
+        )}
       </div>
-      <div className="card">
-        <TijdlijnPanelen periodes={t.periodes} reeksen={reeksen} isMaand={pWord === "Maand"} />
-      </div>
-
-      {d?.per_merk?.length > 0 && t.vergelijking?.vorig && (
-        <div style={{ marginTop: 14 }}>
-          <div className="eyebrow">Waar komt het verschil vandaan? {t.vergelijking.nu} vs {t.vergelijking.vorig}</div>
-          <table className="data" style={{ marginTop: 8 }}>
-            <thead><tr>
-              <th>Merk</th>
-              <th style={{ textAlign: "right" }}>Omzet</th>
-              <th style={{ textAlign: "right" }}>= winkels</th>
-              <th style={{ textAlign: "right" }}>× per winkel</th>
-              <th>Winkels toen → nu</th>
-            </tr></thead>
-            <tbody>
-              {d.per_merk.map((r: any) => (
-                <tr key={r.merk}>
-                  <td><BrandDot merk={r.merk} />{r.merk}</td>
-                  <td style={{ textAlign: "right" }}><DeltaTag pct={r.omzet_pct} /></td>
-                  <td style={{ textAlign: "right" }}><DeltaTag pct={r.winkels_pct} /></td>
-                  <td style={{ textAlign: "right" }}><DeltaTag pct={r.per_winkel_pct} /></td>
-                  <td className="sub">{r.winkels_toen} → {r.winkels_nu}</td>
-                </tr>
-              ))}
-              {d.totaal && (
-                <tr>
-                  <td><b>Totaal</b></td>
-                  <td style={{ textAlign: "right" }}><DeltaTag pct={d.totaal.omzet_pct} /></td>
-                  <td style={{ textAlign: "right" }}><DeltaTag pct={d.totaal.winkels_pct} /></td>
-                  <td style={{ textAlign: "right" }}><DeltaTag pct={d.totaal.per_winkel_pct} /></td>
-                  <td className="sub">{d.totaal.winkels_toen} → {d.totaal.winkels_nu}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-          <p className="sub" style={{ marginTop: 8 }}>
-            De drie kolommen sluiten exact op elkaar aan: omzet = winkels × omzet per winkel
-            {d.per_merk[0] && ` (${d.per_merk[0].merk}: ${pct(d.per_merk[0].omzet_pct)} = ${pct(d.per_merk[0].winkels_pct)} × ${pct(d.per_merk[0].per_winkel_pct)})`}.
-          </p>
+      {stand === "categorie" && (
+        <div style={{ margin: "0 0 14px" }}>
+          <span className="eyebrow">Combineer tot één lijn </span>
+          <MultiChips all={categorieOpties} sel={gekozenCategorie} onChange={setGekozenCategorie} />
         </div>
       )}
+      <div className="card">
+        {stand === "categorie" && gekozenCategorie.length === 0 ? (
+          <p className="sub">Kies één of meer categorieën om samen te voegen tot één lijn.</p>
+        ) : stand === "categorie" && !catData ? (
+          <LoadState error={catError} />
+        ) : (
+          <TijdlijnPanelen periodes={periodes} reeksen={reeksen} isMaand={pWord === "Maand"} />
+        )}
+      </div>
 
       {aangenomen && (
         <p className="sub" style={{ marginTop: 10 }}>
@@ -385,21 +391,19 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
   const [merk, setMerk] = useState<string[]>([]);
   const [land, setLand] = useState<string[]>([]);
   const [banner, setBanner] = useState<string[]>([]);
-  const [categorie, setCategorie] = useState<string[]>([]);
-  const [metric, setMetric] = useState<"omzet" | "volume" | "per_winkel" | "winkels">("omzet");
+  const [metric, setMetric] = useState<"omzet" | "volume" | "per_winkel">("omzet");
   // Uitsplitsing van de tegels: totaal (per merk, zoals altijd), per formule
   // of per land. Zie DIM_LABEL hieronder voor de naamgeving.
-  const [dim, setDim] = useState<"merk" | "banner" | "land" | "categorie">("merk");
+  const [dim, setDim] = useState<"merk" | "banner" | "land">("merk");
 
   // Filters horen bij één retailer: bij het wisselen van tab zou een merk
   // dat de nieuwe retailer niet voert anders een leeg dashboard opleveren.
-  useEffect(() => { setMerk([]); setLand([]); setBanner([]); setCategorie([]); setDim("merk"); }, [ctx.retailer]);
+  useEffect(() => { setMerk([]); setLand([]); setBanner([]); setDim("merk"); }, [ctx.retailer]);
 
   const q = new URLSearchParams();
   if (merk.length) q.set("merk", merk.join(","));
   if (land.length) q.set("land", land.join(","));
   if (banner.length) q.set("banner", banner.join(","));
-  if (categorie.length) q.set("categorie", categorie.join(","));
   const { data, error, reload } = useApi(`/${ctx.retailer}/dashboard?${q}`);
   // Mijlpalen volgen het merkfilter: staat er een merk aan, dan hoor je
   // alleen de mijlpalen van dat merk te zien — anders verklaart een markering
@@ -423,11 +427,10 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           {f.merk.length > 0 && (<span><span className="eyebrow">Merk </span><MultiChips all={f.merk} sel={merk} onChange={setMerk} /></span>)}
           {f.land.length > 0 && (<span><span className="eyebrow">Land </span><MultiChips all={f.land} sel={land} onChange={setLand} /></span>)}
           {f.banner.length > 0 && (<span><span className="eyebrow">Formule </span><MultiChips all={f.banner} sel={banner} onChange={setBanner} /></span>)}
-          {f.categorie?.length > 0 && (<span><span className="eyebrow">Categorie </span><MultiChips all={f.categorie} sel={categorie} onChange={setCategorie} /></span>)}
         </div>
         <div className="card empty-card">
-          <p className="sub">Geen data voor deze filterkeuze — deze combinatie van filters komt niet voor.</p>
-          <button className="btn ghost" onClick={() => { setMerk([]); setLand([]); setBanner([]); setCategorie([]); }}>Filters wissen</button>
+          <p className="sub">Geen data voor deze filterkeuze — deze combinatie van merk, land en formule komt niet voor.</p>
+          <button className="btn ghost" onClick={() => { setMerk([]); setLand([]); setBanner([]); }}>Filters wissen</button>
         </div>
       </>) : (
         <div className="card empty-card"><p className="sub">Nog geen data geïmporteerd voor deze retailer.</p></div>
@@ -467,7 +470,6 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
             waarschuwing={merkWaarschuwing} /></span>)}
         {filters.land.length > 0 && (<span><span className="eyebrow">Land </span><MultiChips all={filters.land} sel={land} onChange={setLand} /></span>)}
         {filters.banner.length > 0 && (<span><span className="eyebrow">Formule </span><MultiChips all={filters.banner} sel={banner} onChange={setBanner} /></span>)}
-        {filters.categorie?.length > 0 && (<span><span className="eyebrow">Categorie </span><MultiChips all={filters.categorie} sel={categorie} onChange={setCategorie} /></span>)}
         <span className="sub" style={{ marginLeft: "auto" }}>
           {(merk.length || filters.merk.length)} van {filters.merk.length} merken
         </span>
@@ -491,9 +493,6 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           )}
           {dims.includes("land") && (
             <button className={effDim === "land" ? "on" : ""} onClick={() => setDim("land")}>Per land</button>
-          )}
-          {dims.includes("categorie") && (
-            <button className={effDim === "categorie" ? "on" : ""} onClick={() => setDim("categorie")}>Per categorie</button>
           )}
         </div>
       )}
@@ -620,11 +619,7 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       )}
 
       <h2>
-        {effMetric === "per_winkel" ? "Omzet per winkel"
-          : effMetric === "winkels" ? "Actieve winkels" : effMetric} per {pWord.toLowerCase()}, jaar op jaar
-        {effMetric === "winkels" && (
-          <Uitleg tekst={`Het aantal unieke winkels met omzet, over een voortschrijdend venster van ${pWord === "Week" ? "13 weken" : "3 maanden"} — zo telt een toevallig stille periode niet mee als "winkel weg". Handig om distributiebereik te volgen los van omzet per winkel: minder winkels met méér omzet per winkel kunnen elkaar in dat cijfer verhullen.`} />
-        )}
+        {effMetric === "per_winkel" ? "Omzet per winkel" : effMetric} per {pWord.toLowerCase()}, jaar op jaar
       </h2>
       <div className="seg" style={{ marginBottom: 14 }}>
         <button className={effMetric === "omzet" ? "on" : ""} onClick={() => setMetric("omzet")}>Omzet</button>
@@ -633,12 +628,10 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           onClick={() => setMetric("volume")}>Volume</button>
         <button className={effMetric === "per_winkel" ? "on" : ""} disabled={!data.trend.series.per_winkel}
           onClick={() => setMetric("per_winkel")}>Per winkel</button>
-        <button className={effMetric === "winkels" ? "on" : ""} disabled={!data.trend.series.winkels}
-          onClick={() => setMetric("winkels")}>Actieve winkels</button>
       </div>
       <div className="card">
         <TrendChart series={data.trend.series[effMetric] ?? {}} years={data.trend.jaren}
-          isEuro={effMetric === "omzet" || effMetric === "per_winkel"} periodWord={pWord}
+          isEuro={effMetric !== "volume"} periodWord={pWord}
           mijlpalen={mijlpalen ?? []}
           promoties={data.promoties ?? []}
           // Filtert de gebruiker op merk, dan zijn dát de merken die in beeld
@@ -691,7 +684,9 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
       )}
 
       {data.tijdlijn?.periodes?.length > 1 && (
-        <TijdlijnBlok t={data.tijdlijn} pWord={pWord} />
+        <TijdlijnBlok t={data.tijdlijn} pWord={pWord} retailer={ctx.retailer}
+          merk={merk} land={land} banner={banner}
+          categorieOpties={filters.categorie ?? []} />
       )}
 
       {data.winkelanalyse?.beschikbaar && <Winkelanalyse w={data.winkelanalyse} pWord={pWord} />}
