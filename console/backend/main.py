@@ -23,8 +23,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import db
-from engine import (analytics, contracts, datagaten, importer, projecten,
-                    signals, winkelhistorie, winkelniveau)
+from engine import (analytics, conclusie as conclusie_mod, contracts, datagaten,
+                    importer, projecten, signals, winkelhistorie, winkelniveau)
 from engine import parser as parser_mod
 from engine.periods import sort_key
 from engine.profile import active_profile, capabilities, get_profiles
@@ -215,10 +215,17 @@ _CACHE_MAX = 64
 # bijgewerkt; die moeten op inhoud vergeleken worden.
 _KLEIN = 200
 
-# De sleutel van de Anthropic-config staat in dit tabelletje. In de
-# cachesleutel zetten voegt niets toe en zou hem onnodig ronddragen; de
-# analyses hangen er ook niet van af.
-_NIET_HASHEN = {"anthropic_config"}
+# Tabellen die GEEN invoer van een analyse zijn en dus helemaal buiten de
+# dataversie blijven — niet op inhoud én niet op rijtelling.
+#
+#   * `anthropic_config`: de API-sleutel. Meedragen in de cachesleutel voegt
+#     niets toe en de analyses hangen er niet van af.
+#   * `retailer_conclusies`: een conclusie is juist een GEVOLG van de
+#     analyses. Telde hij mee, dan zou elke opgeslagen conclusie de cache van
+#     álle analyses van álle retailers leegtrekken — en omdat de tabel van nul
+#     rijen af groeit, is alleen de inhoudshash overslaan niet genoeg: de
+#     rijtelling verandert dan nog steeds (gepind in test_conclusie.py).
+_BUITEN_DATAVERSIE = {"anthropic_config", "retailer_conclusies"}
 
 
 def _data_versie(conn) -> tuple:
@@ -226,7 +233,8 @@ def _data_versie(conn) -> tuple:
 
     tabellen = [r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' "
-        "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+        "AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        if r[0] not in _BUITEN_DATAVERSIE]
     if not tabellen:
         return (_vandaag_nl().isoformat(), (), ())
     vraag = " UNION ALL ".join(
@@ -240,7 +248,7 @@ def _data_versie(conn) -> tuple:
     # tabellen gaan daarom op inhoud mee.
     inhoud = []
     for naam, (aantal, _) in zip(tabellen, tellingen):
-        if naam in _NIET_HASHEN or aantal > _KLEIN:
+        if aantal > _KLEIN:
             continue
         inhoud.append((naam, tuple(tuple(r) for r in conn.execute(f"SELECT * FROM {naam}"))))
     return (_vandaag_nl().isoformat(), tellingen, tuple(inhoud))
@@ -345,6 +353,39 @@ def lees_datagaten(retailer_id: str):
                     "gaten": datagaten.met_oordeel(conn, retailer_id, rows, caps)}
 
         return _gecachet(("datagaten", retailer_id), bereken, conn)
+
+
+@app.get("/api/{retailer_id}/conclusie")
+def lees_conclusie(retailer_id: str):
+    """De opgeslagen conclusie plus verse bevindingen. Kost GEEN API-call.
+
+    De bevindingen gaan door de analysecache omdat ze de vier analyses
+    aanroepen; de opgeslagen tekst en de vingerafdruk komen er daarna vers
+    bij, want die veranderen buiten de dataversie om."""
+    with db.get_conn() as conn:
+        _retailer_or_404(conn, retailer_id)
+        bev = _gecachet(("conclusie-bevindingen", retailer_id),
+                        lambda: conclusie_mod.bevindingen(conn, retailer_id), conn)
+        return conclusie_mod.lees(conn, retailer_id, bev)
+
+
+class ConclusieBody(BaseModel):
+    door: str | None = None
+
+
+@app.post("/api/{retailer_id}/conclusie")
+def schrijf_conclusie(retailer_id: str, request: Request,
+                      body: ConclusieBody | None = None):
+    """Laat Claude een nieuwe conclusie schrijven. Dit kost een API-call, dus
+    het scherm doet dit alleen als de vorige conclusie verouderd is of als
+    iemand er expliciet om vraagt."""
+    with db.get_conn() as conn:
+        _retailer_or_404(conn, retailer_id)
+        wie = _gebruiker(request, body.door if body else None)
+        try:
+            return conclusie_mod.genereer(conn, retailer_id, wie)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
 
 
 class DatagatOordeelBody(BaseModel):

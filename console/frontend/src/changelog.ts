@@ -5,6 +5,15 @@
 export type ChangelogEntry = { datum: string; titel: string; tekst: string };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { datum: "2026-08-25", titel: "Conclusie per retailer",
+    tekst: "Nieuw scherm onder Analyses: wat de cijfers van deze retailer "
+      + "zeggen over omzet, assortiment, winkelontwikkeling en promoties, plus "
+      + "concrete adviezen. De app berekent eerst zelf de bevindingen — die "
+      + "staan onder de tekst, zodat elke zin te herleiden is tot een cijfer — "
+      + "en laat Claude daar de samenvatting op schrijven. Noemt de tekst een "
+      + "getal dat niet uit de bevindingen komt, dan wordt dat gemeld. Zonder "
+      + "Anthropic-sleutel werkt het scherm ook: dan zie je alleen de "
+      + "bevindingen. De conclusie werkt zichzelf bij zodra er nieuwe data is." },
   { datum: "2026-08-25", titel: "Categorieën combineren in \"Omzet per winkel over tijd\"",
     tekst: "Levert Etos een Class-kolom in de export, dan is er nu een "
       + "\"Categorie\"-stand in de grafiek \"Omzet per winkel over tijd\": "
