@@ -25,6 +25,11 @@ REAL_ETOS = U / "b9ccb189-Data_Grid_57018_widget.xlsx"
 # in plaats van een simpele jaar-op-jaar-selectie. Etos noemt de kolommen dan
 # "Sales € Focus"/"Units Focus" in plaats van "Sales € TY"/"Units TY".
 REAL_ETOS_FOCUS = U / "f27a7144-Omzet_volume_per_w...59240_1.xlsx"
+# Zelfde export, maar met de Class-kolom (productcategorie) toegevoegd aan de
+# widget — Etos laat daarbij de aparte UPC ID-kolom weg; het EAN zit dan nog
+# wel in UPC Name als suffix. Cijfers zijn identiek aan REAL_ETOS_FOCUS
+# (zelfde onderliggende dataset, alleen andere kolomsamenstelling).
+REAL_ETOS_KLASSE = U / "5219fb24-Omzet_volume_per_w...59240_2.xlsx"
 REAL_KV = U / "d62acf54-DWH__Sales_volume__sales_Tweezerman_KVNL_1299_1734396111539283577.xlsx"
 REAL_ICI = U / "fc6fc987-Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__4.xlsx"
 
@@ -135,6 +140,105 @@ def test_real_etos_focus_labels_worden_geaccepteerd(client):
         assert tot["v"] == 57094
         assert tot["a"] == 36 and tot["m"] == 3
         assert (tot["van"], tot["tot"]) == ("2025-W20", "2025-W52")
+
+
+@vereist(REAL_ETOS_KLASSE)
+def test_real_etos_class_zonder_upc_id_kolom(client):
+    """Gemeld: Willem vroeg of Etos een productcategorie kan leveren. Ja —
+    de widget heeft een Class-kolom ('SHAMPOO - 3', 'HAARSTYLING - 186', …),
+    maar laat daarbij de aparte UPC ID-kolom weg. Het EAN moet dan uit UPC
+    Name gehaald worden ('... - 120789317 (Sz: )').
+
+    Cijfers gepind tegen REAL_ETOS_FOCUS: dezelfde onderliggende dataset,
+    dus omzet/volume/artikelen/periodes moeten exact overeenkomen — het
+    bewijst dat de EAN-uit-naam-extractie dezelfde artikelen oplevert als
+    de aparte UPC ID-kolom."""
+    r = upload(client, REAL_ETOS_KLASSE.name[9:], REAL_ETOS_KLASSE.read_bytes())
+    assert r["status"] == "ingelezen" and r["retailer_id"] == "etos", \
+        f"{r['status']} — {r.get('detail')}"
+
+    import db
+    with db.get_conn() as conn:
+        tot = conn.execute(
+            "SELECT SUM(omzet) o, SUM(volume) v, COUNT(DISTINCT artikel_ean) a, "
+            "MIN(periode) van, MAX(periode) tot FROM sellout_facts "
+            "WHERE retailer_id='etos'").fetchone()
+        assert tot["o"] == pytest.approx(946226.14, abs=0.01)
+        assert tot["v"] == 57094
+        assert tot["a"] == 36
+        assert (tot["van"], tot["tot"]) == ("2025-W20", "2025-W52")
+
+        klassen = {r2["categorie"] for r2 in conn.execute(
+            "SELECT DISTINCT categorie FROM sellout_facts WHERE retailer_id='etos'")}
+        assert klassen == {"CONDITIONERS", "COSMETICA ACCESSOIRES", "GEZICHTSCREMES",
+                           "GEZICHTSMASKERS", "HAARSTYLING", "NAGELVERZORGING",
+                           "OVERIGE GEZICHTSVERZORGING", "SHAMPOO", "TREATMENTS"}
+
+    dash = client.get("/api/etos/dashboard").json()
+    assert "categorie" in dash["dimensies"]
+    assert "SHAMPOO" in dash["filters"]["categorie"]
+
+    # Willems eigen indeling herbouwd via het filter: Wash & Care
+    # (Shampoo/Conditioners/Treatments) tegenover Styling (Haarstyling).
+    wash = client.get("/api/etos/dashboard?merk=BJ%C3%96RN%20AX%C3%89N"
+                      "&categorie=SHAMPOO,CONDITIONERS,TREATMENTS").json()
+    styling = client.get("/api/etos/dashboard?merk=BJ%C3%96RN%20AX%C3%89N"
+                         "&categorie=HAARSTYLING").json()
+    assert wash["kpi"]["omzet"]["waarde"] > 0
+    assert styling["kpi"]["omzet"]["waarde"] > 0
+    # De twee deelverzamelingen samen zijn niet groter dan het BJÖRN
+    # AXÉN-totaal zonder categoriefilter (geen dubbeltelling, niets verzonnen).
+    axen_totaal = client.get("/api/etos/dashboard?merk=BJ%C3%96RN%20AX%C3%89N").json()
+    assert wash["kpi"]["omzet"]["waarde"] + styling["kpi"]["omzet"]["waarde"] \
+        <= axen_totaal["kpi"]["omzet"]["waarde"] + 0.01
+
+
+def test_categorie_filter_gegenereerd(client):
+    """dashboard() filtert correct op categorie — gegenereerd, onafhankelijk
+    van het echte bestand. Voegt een Class-kolom toe aan de gewone demo-export
+    (mét UPC ID, zoals de meeste Etos-bestanden) om te bevestigen dat Class en
+    UPC ID prima naast elkaar bestaan; de UPC-ID-loze variant zit al in
+    test_real_etos_class_zonder_upc_id_kolom."""
+    klassen = {"120789202": "SHAMPOO", "120727773": "NAGELVERZORGING",
+              "120742623": "GEZICHTSMASKERS"}
+
+    def voeg_class_toe(ws):
+        ws.insert_cols(4)                       # na UPC Name/UPC ID/Brand
+        ws.cell(row=21, column=4, value="Class")
+        for row in ws.iter_rows(min_row=22):
+            upc = row[1].value                  # UPC ID (kolom 2, 0-indexed 1)
+            if upc and str(upc) in klassen:
+                row[3].value = f"{klassen[str(upc)]} - 1"
+
+    r = upload(client, "Data_Grid_klasse.xlsx", _herbouw(_demo(), voeg_class_toe))
+    assert r["status"] == "ingelezen" and r["rows"] == 9
+
+    dash = client.get("/api/etos/dashboard").json()
+    assert "categorie" in dash["dimensies"]
+    assert sorted(dash["filters"]["categorie"]) == \
+        ["GEZICHTSMASKERS", "NAGELVERZORGING", "SHAMPOO"]
+
+    # filters.merk toont bewust ALLE merken (uit all_rows, ongefilterd) zodat
+    # de chips klikbaar blijven; de CIJFERS moeten wél alleen SHAMPOO tonen.
+    alleen_shampoo = client.get("/api/etos/dashboard?categorie=SHAMPOO").json()
+    assert [b["merk"] for b in alleen_shampoo["kpi"]["omzet"]["breakdown"]] == ["BJÖRN AXÉN"]
+
+
+def test_upc_in_name_zonder_herkenbaar_patroon_fails(client):
+    """Zonder aparte UPC ID-kolom én zonder herkenbaar '- EAN (...)'-patroon
+    in UPC Name is er geen betrouwbare identifier — fail-closed, net als een
+    winkelnaam die niet op 'NAAM - nummer' past."""
+    def hernoem(ws):
+        for cell in ws[21]:                    # subkoprij
+            if cell.value == "UPC ID":
+                cell.value = "Class"            # UPC ID weg, Class erbij
+        # Eén productnaam zonder herkenbaar EAN-suffix.
+        for row in ws.iter_rows(min_row=22):
+            if row[0].value:
+                row[0].value = "ARTIKEL ZONDER EAN"
+                break
+    r = upload(client, "Data_Grid_geen_upcid.xlsx", _herbouw(_demo(), hernoem))
+    assert r["status"] == "error" and "EAN" in r["detail"]
 
 
 @vereist(REAL_ETOS)

@@ -71,6 +71,11 @@ STORE_RE = re.compile(r"^(.*?)\s*-\s*(\d+)$")
 # niet mee als losse kolommen — alleen het label van de primaire periode
 # verandert.
 SALES_UNITS_LABELS = {("Sales € TY", "Units TY"), ("Sales € Focus", "Units Focus")}
+# Zonder een aparte "UPC ID"-kolom zit het EAN nog wel in UPC Name:
+# "BJORN AXEN COOL BLONDE SH 250 - 120789317 (Sz: )" — hetzelfde patroon dat
+# hierboven al de weergavenaam vormt, alleen zonder losse numerieke kolom
+# ernaast. Getoetst tegen 9.780 datarijen van een echte export: 0 mismatches.
+UPC_IN_NAME_RE = re.compile(r"-\s*(\d{6,14})\s*\([^)]*\)\s*$")
 
 
 def _norm(v) -> str:
@@ -111,7 +116,11 @@ def _rows(content: bytes) -> list[list]:
 def _find_subheader(rows) -> int | None:
     for i, row in enumerate(rows[:40]):
         vals = {_norm(c) for c in row}
-        if {"UPC Name", "UPC ID", "Brand"} <= vals:
+        # "UPC ID" is NIET meer vereist: een export met de Class-kolom laat
+        # 'm weg (blijkbaar verdringt een extra dimensie in de widget die
+        # kolom). Het EAN is dan nog wel uit UPC Name te halen — zie
+        # UPC_IN_NAME_RE hieronder.
+        if {"UPC Name", "Brand"} <= vals:
             return i
     return None
 
@@ -172,16 +181,19 @@ def parse_workbook(content: bytes) -> dict:
     m_range = WEEKS_RANGE_RE.search(blok) or YTD_RANGE_RE.search(blok)
     scope_endings = set(ENDING_RE.findall(blok))
 
-    # Weekkolommen + de drie ankers uit de subkop.
+    # Weekkolommen + de twee harde ankers uit de subkop.
     try:
         col_naam = subhdr.index("UPC Name")
-        col_upc = subhdr.index("UPC ID")
         col_merk = subhdr.index("Brand")
     except ValueError as e:
         raise ValueError(f"subkop mist een verplichte kolom: {e}")
-    # Store/City zijn optioneel: dezelfde widget bestaat met en zonder.
+    # UPC ID/Store/City/Class zijn optioneel: dezelfde widget bestaat in
+    # meerdere samenstellingen. Zonder UPC ID komt het EAN uit UPC Name
+    # (UPC_IN_NAME_RE hieronder, bij het uitlezen van de datarijen).
+    col_upc = subhdr.index("UPC ID") if "UPC ID" in subhdr else None
     col_winkel = subhdr.index("Store") if "Store" in subhdr else None
     col_stad = subhdr.index("City") if "City" in subhdr else None
+    col_klasse = subhdr.index("Class") if "Class" in subhdr else None
     weekcols: list[tuple[str, int]] = []      # (canonieke periode, sales-kolom)
     gezien: list[str] = []
     for j, cel in enumerate(weekhdr):
@@ -246,19 +258,42 @@ def parse_workbook(content: bytes) -> dict:
     # Zelfde melding als de Kruidvat-parser al gaf.
     lege_cellen = 0
     for r in rows[sub_i + 1:]:
-        upc_raw = r[col_upc] if col_upc < len(r) else ""
         merk_raw = _norm(r[col_merk] if col_merk < len(r) else "")
-        # Disclaimer- en lege regels onder de tabel hebben geen UPC+merk. De
-        # numerieke toets blijft staan: hij bepaalt of dit überhaupt een
-        # datarij is. De WAARDE komt daarna uit als_identifier(), want
-        # str(int(...)) maakte van UPC "012345678905" stil "12345678905".
-        if _num(upc_raw) is None or not merk_raw:
-            continue
-        upc = als_identifier(upc_raw)
-        if upc is None:
-            continue
+        naam_raw = _norm(r[col_naam] if col_naam < len(r) else "")
+        if col_upc is not None:
+            upc_raw = r[col_upc] if col_upc < len(r) else ""
+            # Disclaimer- en lege regels onder de tabel hebben geen UPC+merk.
+            # De numerieke toets blijft staan: hij bepaalt of dit überhaupt
+            # een datarij is. De WAARDE komt daarna uit als_identifier(),
+            # want str(int(...)) maakte van UPC "012345678905" stil
+            # "12345678905".
+            if _num(upc_raw) is None or not merk_raw:
+                continue
+            upc = als_identifier(upc_raw)
+            if upc is None:
+                continue
+        else:
+            # Geen aparte UPC ID-kolom: het EAN zit als suffix in UPC Name.
+            if not merk_raw:
+                continue
+            m_upc = UPC_IN_NAME_RE.search(naam_raw)
+            if not m_upc:
+                if not naam_raw:
+                    continue           # lege/disclaimerregel, geen datarij
+                raise ValueError(
+                    f"UPC Name {naam_raw!r} eindigt niet op '- <EAN> (...)'; "
+                    "zonder UPC ID-kolom is het EAN dan niet te bepalen")
+            upc = m_upc.group(1)
         merk = BRAND_SUFFIX_RE.sub("", merk_raw).strip().upper()
-        naam = _norm(r[col_naam] if col_naam < len(r) else "") or None
+        naam = naam_raw or None
+        klasse = None
+        if col_klasse is not None:
+            klasse_raw = _norm(r[col_klasse] if col_klasse < len(r) else "")
+            # Leeg mag: een niet-ingedeeld product is geen structurele fout
+            # (in tegenstelling tot een onherkenbare winkelnaam hieronder) —
+            # de omzet zelf klopt nog steeds en moet niet verloren gaan
+            # omdat Etos een product niet heeft geclassificeerd.
+            klasse = BRAND_SUFFIX_RE.sub("", klasse_raw).strip().upper() or None
         winkel_id = winkel_naam = None
         if col_winkel is not None:
             rauw = _norm(r[col_winkel] if col_winkel < len(r) else "")
@@ -285,6 +320,7 @@ def parse_workbook(content: bytes) -> dict:
                 "periode": periode, "land": "NL", "banner": None,
                 "winkel_id": winkel_id, "winkel_naam": winkel_naam,
                 "merk": merk, "artikel_ean": upc, "artikel_naam": naam,
+                "categorie": klasse,
                 "volume": int(round(units or 0)), "omzet": float(sales or 0.0),
             })
 
