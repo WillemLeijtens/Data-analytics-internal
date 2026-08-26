@@ -141,7 +141,10 @@ def test_rotatie_deelt_door_de_eigen_scope(client):
     """TWEEZERMAN ligt alleen in NL (900 winkels); DEPEND in NL én BE
     (900 + 400). Vóór de fix kreeg elk artikel de retailer-brede som 1300
     als noemer — rotatie ~30% te laag en valse delist-adviezen."""
-    weken = {f"2026{w:02d}": (450, 900.0) for w in range(1, 11)}
+    # T/m week 11: de rotatie rekent over de laatste kalendermaand, en die
+    # moet minstens twee geleverde weken hebben voor er een oordeel valt.
+    # Week 10 en 11 vallen allebei in maart 2026.
+    weken = {f"2026{w:02d}": (450, 900.0) for w in range(1, 12)}
     upload(client, "DWH__Sales_TweezermanDepend_KVNL.xlsx", _dwh([
         _art("31210001", "4049469072773", "TWEEZERMAN", weken),
         _art("51210001", "4049469072810", "DEPEND", weken),

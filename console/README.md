@@ -595,11 +595,37 @@ Eigen schuifje, en filterbaar op merk en jaar.
 
 ### Rotatie
 
-Gedeeld door de periodes **sinds de eerste verkoop** van dat artikel en door
-de winkels die dát artikel voerden — niet door het hele jaar en het hele
-filiaalnet van het merk, want dan wordt een artikel dat in week 20 is
-geïntroduceerd een delist-kandidaat. Onder vier actieve periodes volgt geen
-oordeel maar "Te kort geleden geïntroduceerd".
+Stuks in de **huidige maand**, gedeeld door de **geleverde weken** van die
+maand en door de winkels van dát artikel. Drie keuzes, elk met een reden:
+
+* **Huidige maand, niet het jaar.** Een artikel dat in het voorjaar goed
+  liep en sinds de zomer stilstaat, houdt over het jaar een net gemiddelde
+  en valt nergens op. Over de laatste maand valt hij meteen door de mand.
+  Welke maand dat is staat in de kolomkop; een ISO-week hoort bij de maand
+  van zijn donderdag (`periods.kalendermaand`).
+* **Geleverde weken, niet kalenderweken.** Is er van augustus pas twee weken
+  binnen, dan wordt door twee gedeeld en niet door 4,33 — anders halveert de
+  rotatie van elk artikel zodra een maand begint. Een maandfeed levert één
+  periode voor 52/12 weken. Een artikel dat halverwege de maand startte telt
+  vanaf zijn eerste week.
+* **De winkels van dát artikel.** Twee scenario's, en per regel staat welke
+  gebruikt is (`winkels_bron`): een aantal per artikel (Instellingen →
+  winkelaantallen per artikel), anders het merkaantal — dan gaan alle
+  artikelen van dat merk van hetzelfde winkelbestand uit. Levert de feed
+  winkelniveau, dan worden de winkels met omzet geteld in plaats van
+  ingesteld. Zonder die vermelding is een winkelaantal uit het scherm niet
+  terug te vinden in Instellingen, omdat je op de verkeerde plek kijkt.
+
+Twee remmen op valse delists: onder vier actieve periodes volgt geen oordeel
+maar "Te kort geleden geïntroduceerd", en met minder dan twee geleverde weken
+in de maand "Nog te weinig weken deze maand" — het cijfer is dan wel te zien.
+Nul stuks in de maand heet "Geen verkoop deze maand" en telt gewoon als
+delist-kandidaat.
+
+Een wijziging in Instellingen werkt direct door: `retailer_settings` en
+`artikel_winkelaantallen` zijn kleine tabellen en gaan op inhoud mee in de
+dataversie van de analysecache (`main._data_versie`), dus de analyse wordt
+opnieuw gerekend zodra er iets verandert.
 
 ### Contractdocumenten
 

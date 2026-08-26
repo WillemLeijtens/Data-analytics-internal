@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { ShellCtx } from "../App";
-import { AandachtMarkering, ArtikelSignalen, BrandDot, EmptyProfileCard, LevelStrip, LoadState, useApi } from "../components/shared";
+import { AandachtMarkering, ArtikelSignalen, BrandDot, EmptyProfileCard, LevelStrip, LoadState, Uitleg, useApi } from "../components/shared";
 
 export default function Assortiment({ ctx }: { ctx: ShellCtx }) {
   const { data, error, reload } = useApi(`/${ctx.retailer}/assortiment`);
@@ -19,7 +19,27 @@ export default function Assortiment({ ctx }: { ctx: ShellCtx }) {
     );
 
   const s = data.stats;
-  const pWord = data.periode_type === "maand" ? "maand" : "week";
+  const maand = data.maand;
+  // Waar het winkelaantal vandaan komt. Zonder dit is een getal in deze
+  // tabel niet terug te vinden in Instellingen — je kijkt dan op de
+  // verkeerde plek (artikellijst versus merkveld) en het lijkt een fout.
+  const BRON: Record<string, string> = {
+    feiten: "geteld uit de data", artikel: "per artikel ingesteld",
+    merk: "merkaantal", retailer: "retailertotaal",
+  };
+  const uitlegRotatie =
+    "Stuks verkocht in de huidige maand ÷ geleverde weken in die maand ÷ "
+    + "winkels van dat artikel."
+    + (maand ? `\n\nNu: ${maand.label}, ${maand.weken} `
+      + `${maand.weken === 1 ? "week" : "weken"} geleverd.` : "")
+    + "\n\nDe weken komen uit de data, niet uit de kalender. Een artikel "
+    + "dat halverwege de maand startte telt vanaf zijn eerste week.\n\n"
+    + "Het winkelaantal kent twee scenario's; per regel staat welke geldt:"
+    + "\n• per artikel ingesteld — de winkels van dít artikel."
+    + "\n• merkaantal — geen eigen aantal ingevuld, dus geldt het aantal "
+    + "van het merk voor alle artikelen van dat merk."
+    + "\n• geteld uit de data — de retailer levert winkelniveau."
+    + "\n\nAanpassen in Instellingen werkt meteen door."
   return (
     <>
       <h1>Assortimentsanalyse — {ctx.card?.naam}</h1>
@@ -33,7 +53,13 @@ export default function Assortiment({ ctx }: { ctx: ShellCtx }) {
           <div className="kpi-value" style={{ color: s.delist ? "var(--neg)" : undefined }}>{s.delist}</div></div>
       </div>
       <table className="data">
-        <thead><tr><th>Artikel</th><th>Merk</th><th>Rotatie</th><th>Target</th><th>Score</th><th>Advies</th></tr></thead>
+        <thead><tr><th>Artikel</th><th>Merk</th>
+          <th>Rotatie (huidige maand) <Uitleg tekst={uitlegRotatie} />
+            {maand && <div className="sub" style={{ fontSize: 10.5, fontWeight: 400 }}>
+              {maand.label} · {maand.weken} {maand.weken === 1 ? "week" : "weken"}
+            </div>}
+          </th>
+          <th>Target</th><th>Score</th><th>Advies</th></tr></thead>
         <tbody>
           {data.artikelen.map((a: any) => (
             <tr key={a.ean}>
@@ -43,14 +69,15 @@ export default function Assortiment({ ctx }: { ctx: ShellCtx }) {
               <td><BrandDot merk={a.merk} />{a.merk}</td>
               <td>
                 {a.rotatie ?? "—"} st/winkel/week
-                {/* Waar de rotatie op rust: het aantal periodes sinds de
-                    eerste verkoop en de winkels die dit artikel voerden. */}
-                {a.actieve_periodes != null && (
-                  <div className="sub" style={{ fontSize: 10.5 }}>
-                    {a.actieve_periodes} {pWord}{a.actieve_periodes === 1 ? "" : "en"}
-                    {a.winkels ? ` · ${a.winkels} winkels` : ""}
-                  </div>
-                )}
+                {/* Waar de rotatie op rust: de weken van deze maand die voor
+                    dit artikel meetelden, en de winkels waar door gedeeld is
+                    — met de herkomst van dat winkelaantal erbij. */}
+                <div className="sub" style={{ fontSize: 10.5 }}>
+                  {a.maand_volume ?? 0} st in {a.maand_weken ?? 0}{" "}
+                  {a.maand_weken === 1 ? "week" : "weken"}
+                  {a.winkels ? ` · ${a.winkels} winkels` : ""}
+                  {a.winkels && a.winkels_bron ? ` (${BRON[a.winkels_bron] ?? a.winkels_bron})` : ""}
+                </div>
               </td>
               <td>{a.target ?? "—"}</td>
               <td>{a.score != null

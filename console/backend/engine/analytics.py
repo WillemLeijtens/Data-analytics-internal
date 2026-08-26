@@ -17,8 +17,8 @@ from . import dekking as dekking_mod
 from . import fallback
 from . import promoties as promo_mod
 from . import winkelniveau
-from .periods import (is_afgesloten, period_number, period_type_of,
-                      period_year, sort_key, vorige_periode)
+from .periods import (is_afgesloten, kalendermaand, maand_label, period_number,
+                      period_type_of, period_year, sort_key, vorige_periode)
 from .profile import active_profile, capabilities
 
 LABEL_TEST = "PROFIEL IN TEST"
@@ -272,6 +272,11 @@ MIN_BASISPERIODES = 3
 # Een artikel dat net in het schap ligt heeft nog geen rotatie die iets zegt;
 # onder dit aantal periodes met verkoop geven we geen delist-oordeel.
 MIN_ACTIEVE_PERIODES = 4
+
+# De rotatie rekent over de huidige maand. Onder dit aantal weken data in die
+# maand geven we geen delist-oordeel: één week is voor een langzame loper geen
+# bewijs, maar het cijfer zelf is wel al te zien.
+MIN_WEKEN_MAAND = 2
 
 
 def signaal_drempels(conn, retailer_id: str) -> tuple[int, int]:
@@ -1541,11 +1546,6 @@ def assortment(conn, retailer_id: str) -> dict:
     if not from_facts and fallback.LABEL_SCHATTING not in labels:
         labels.append(fallback.LABEL_SCHATTING)
     periods = {r["periode"] for r in rows}
-    # De rotatietarget staat in stuks per winkel per WEEK; bij een maandfeed
-    # moeten de periodes naar weken omgerekend worden, anders lijkt de
-    # rotatie ruim vier keer zo hoog.
-    weeks = (len(periods) * 52 / 12) if caps["periode"] == "maand" else len(periods)
-    weeks = weeks or 1
     targets = {r["merk"]: r["stuks_per_winkel_per_week"] for r in conn.execute(
         "SELECT merk, stuks_per_winkel_per_week FROM rotatie_targets WHERE retailer_id=?",
         (retailer_id,))}
@@ -1566,26 +1566,57 @@ def assortment(conn, retailer_id: str) -> dict:
     geordend = sorted(periods, key=sort_key)
     alle_gaten = dekking_mod.gaten(rows, caps)
 
+    # De rotatie kijkt naar de HUIDIGE MAAND, niet naar het hele jaar. Een
+    # artikel dat in het voorjaar goed liep en sinds juni stilstaat, houdt
+    # over het jaar gemiddeld een nette rotatie en valt dan nergens op; over
+    # de laatste maand valt hij meteen door de mand. Het aantal weken komt
+    # uit de DATA en niet uit de kalender: is er van augustus pas twee weken
+    # geleverd, dan wordt door twee gedeeld en niet door 4,33.
+    maand = kalendermaand(geordend[-1])
+    maand_periodes = [p for p in geordend if kalendermaand(p) == maand]
+    # De rotatietarget staat in stuks per winkel per WEEK. Een maandfeed
+    # levert een hele maand in een periode; die staat voor 52/12 weken,
+    # anders zou de rotatie ruim vier keer zo hoog lijken.
+    weken_per_periode = 52 / 12 if caps["periode"] == "maand" else 1
+
     out = []
     for ean, a in per_art.items():
-        # Delen door het hele jaar terwijl een artikel pas in week 20 is
-        # geïntroduceerd, maakt van een gezonde loper een delist-kandidaat.
-        # Tel daarom vanaf de eerste periode mét verkoop.
         eerste = min(a["periodes"], key=sort_key) if a["periodes"] else None
         actief = len([p for p in geordend if sort_key(p) >= sort_key(eerste)]) if eerste else 0
-        actieve_weken = (actief * 52 / 12) if caps["periode"] == "maand" else actief
+        # Delen door de hele maand terwijl een artikel er pas halverwege in
+        # kwam, maakt van een gezonde loper een delist-kandidaat. Tel daarom
+        # alleen de periodes van deze maand vanaf de eerste verkoop.
+        venster = [p for p in maand_periodes
+                   if eerste is None or sort_key(p) >= sort_key(eerste)]
+        in_venster = set(venster)
+        maand_volume = sum(r["volume"] for r in a["rijen"] if r["periode"] in in_venster)
+        maand_weken = len(venster) * weken_per_periode
         # En door de winkels van de EIGEN scope: uit de feiten als de feed
         # winkelniveau levert, anders het handmatige aantal van de eigen
         # merk/land/formule-combinatie. Het retailer-brede totaal is pas de
         # terugval als er voor deze scope niets is ingesteld — dat totaal
         # telt ook landen mee waar dit artikel niet ligt, en drukte op de
         # echte Kruidvat-data elke rotatie met ~30-45% (valse delists).
-        art_stores, _ = store_count(
+        art_stores, art_uit_feiten = store_count(
             conn, retailer_id, caps, a["rijen"], None,
             winkelniveau.voor_artikel(settings, artikel_winkels, ean))
         noemer_winkels = art_stores or n_stores
-        rotatie = (a["volume"] / actieve_weken / noemer_winkels
-                   if actieve_weken and noemer_winkels else None)
+        eigen = winkelniveau.eigen_aantal(settings, artikel_winkels, ean)
+        # Welke van de twee scenario's dit artikel gebruikt, hoort zichtbaar
+        # te zijn: anders is een winkelaantal in het scherm niet terug te
+        # vinden in Instellingen omdat je op de verkeerde plek kijkt.
+        if art_uit_feiten:
+            bron = "feiten"
+        elif not noemer_winkels:
+            bron = None
+        elif eigen is not None:
+            bron = "artikel"
+        elif art_stores:
+            bron = "merk"
+        else:
+            bron = "retailer"
+        rotatie = (maand_volume / maand_weken / noemer_winkels
+                   if maand_weken and noemer_winkels else None)
         target = targets.get(a["merk"])
         score = round(rotatie / target * 100) if rotatie is not None and target else None
         if actief and actief < MIN_ACTIEVE_PERIODES:
@@ -1600,8 +1631,18 @@ def assortment(conn, retailer_id: str) -> dict:
         elif rotatie is None:
             advies = "Geen winkelaantal ingesteld"
             score = None
+        elif maand_weken < MIN_WEKEN_MAAND:
+            # Eén week is voor een langzame loper geen bewijs: een artikel dat
+            # om de week één stuk per winkel verkoopt, staat dan de halve
+            # maand onterecht op nul. De rotatie is wél te zien.
+            advies = "Nog te weinig weken deze maand"
+            score = None
         elif score is None:
             advies = "Geen rotatie-target ingesteld"
+        elif not maand_volume:
+            # Duidelijker dan "Mogelijke delist": het artikel verkocht dit
+            # jaar wél, maar deze maand geen enkel stuk.
+            advies = "Geen verkoop deze maand"
         elif score >= 115:
             advies = "Ruim op target"
         elif score >= 100:
@@ -1614,6 +1655,8 @@ def assortment(conn, retailer_id: str) -> dict:
                     "rotatie": round(rotatie, 2) if rotatie is not None else None,
                     "target": target, "score": score, "advies": advies,
                     "actieve_periodes": actief, "winkels": noemer_winkels,
+                    "winkels_bron": bron, "maand_volume": maand_volume,
+                    "maand_weken": round(maand_weken, 2),
                     "dekking": dekking_mod.per_artikel(alle_gaten, a["rijen"], caps)})
     out.sort(key=lambda x: (x["score"] is None, x["score"] if x["score"] is not None else 0))
     op_target = sum(1 for a in out if a["score"] is not None and a["score"] >= 100)
@@ -1622,4 +1665,6 @@ def assortment(conn, retailer_id: str) -> dict:
     return {"available": True, "artikelen": out, "labels": labels,
             "resolution": res.as_dict(), "periode_type": caps["periode"],
             "dekking": alle_gaten,
+            "maand": {"label": maand_label(maand), "periodes": maand_periodes,
+                      "weken": round(len(maand_periodes) * weken_per_periode, 2)},
             "stats": {"op_target": op_target, "onder_target": onder, "delist": delist}}

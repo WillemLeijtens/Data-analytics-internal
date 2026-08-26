@@ -257,6 +257,9 @@ input[type="text"], input[type="number"], input[type="url"] {
   position: fixed; z-index: 60; max-width: 260px; width: max-content;
   background: var(--t-fg); color: var(--t-bg); border-radius: 8px;
   padding: 9px 12px; font: 400 12px "Montserrat", sans-serif; line-height: 1.4;
+  /* Uitleg met meer dan een zin mag alinea's hebben; eenregelige teksten
+     merken hier niets van. */
+  white-space: pre-line;
   letter-spacing: normal; text-transform: none; text-align: left;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); pointer-events: none;
 }
