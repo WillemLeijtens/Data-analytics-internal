@@ -627,6 +627,41 @@ Een wijziging in Instellingen werkt direct door: `retailer_settings` en
 dataversie van de analysecache (`main._data_versie`), dus de analyse wordt
 opnieuw gerekend zodra er iets verandert.
 
+### Winkeltargets
+
+Per merk-land(-formule) is in Instellingen → Doelstellingen een **target per
+winkel per periode** in te stellen (`retailer_settings.target_per_winkel`, €).
+Dat target komt op twee plekken terug:
+
+* **Kaart "Omzet per winkel"** — achter elke merkregel, groen boven en rood
+  onder de norm. Daarboven staat een schuifje **"Tel op"** (standaard aan):
+  één regel met de som van de merkregels tegen de som van de merktargets.
+  Eén filiaal voert die merken naast elkaar, dus de norm voor dat filiaal is
+  de som van de merknormen — pas daartegen is te zien of het target gehaald
+  wordt.
+* **Grafiek "Omzet per winkel over tijd"** — als streepjeslijn over het
+  bovenste paneel, met het bedrag in de tooltip van elke periode (groen/rood).
+  De lijn verschijnt alleen als er **één reeks** in beeld is: op Totaal, op
+  Categorie, of wanneer er op één merk gefilterd is. Acht streepjeslijnen naast
+  acht merklijnen zijn niet meer aan elkaar te koppelen. Ligt de lat boven de
+  hoogste gemeten waarde, dan rekt de schaal mee — "niet gehaald" is juist wat
+  je dan wilt zien.
+
+Twee dingen staan er bewust bij:
+
+* **De optelling volgt de filters.** Filter je op één merk, dan is de lat het
+  target van dát merk; de som van beide merken zou een norm opleggen voor
+  omzet die niet eens in beeld is.
+* **Merken zonder ingesteld target worden gemeld**, niet stil overgeslagen.
+  Een som over de helft van het assortiment ziet eruit als een harde lat en is
+  het niet — die haal je moeiteloos, en dat zegt niets.
+
+Het grote getal op de kaart blijft de omzet van álle merken gedeeld door het
+hele winkelbestand. Dat ligt iets **onder** de optelsom zodra een merk in
+minder winkels ligt dan het grootste merk: die omzet wordt dan over meer
+winkels uitgesmeerd. Allebei kloppen, dus ze staan naast elkaar en niet in
+plaats van elkaar.
+
 ### Contractdocumenten
 
 Contracten worden per retailer als PDF geüpload (Instellingen → Contract).

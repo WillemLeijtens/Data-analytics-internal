@@ -711,6 +711,13 @@ type TijdlijnReeks = {
   winkels: (number | null)[];
   per_winkel: (number | null)[];
   bron: string[];
+  /** Het ingestelde target in € per winkel per periode (Instellingen). Bij de
+   *  TOTAAL-reeks de som van de merken in beeld; de merken die eronder vallen
+   *  staan in `target_merken`, die zónder ingesteld target in
+   *  `target_zonder`. */
+  target?: number | null;
+  target_merken?: { merk: string; target: number }[];
+  target_zonder?: string[];
 };
 
 /** Twee panelen op één doorlopende tijdas: boven de omzet per winkel, eronder
@@ -726,7 +733,19 @@ export function TijdlijnPanelen({ periodes, reeksen, isMaand }:
   if (!periodes.length) return <p className="sub">Nog geen data.</p>;
 
   const x = (i: number) => PAD + (i / Math.max(1, periodes.length - 1)) * (W - PAD - 14);
-  const maxTop = Math.max(1, ...reeksen.flatMap((r) => r.per_winkel.filter((v): v is number => v != null)));
+  // Doellijnen alleen bij ÉÉN reeks in beeld: op de TOTAAL- en
+  // Categorie-stand, of als er op één merk gefilterd is. Bij acht merken
+  // naast elkaar zouden acht streepjeslijnen het paneel dichtleggen, en dan
+  // is niet meer te zien welke bij welke lijn hoort.
+  const doelen = reeksen.length === 1
+    ? reeksen.filter((r): r is TijdlijnReeks & { target: number } => r.target != null)
+    : [];
+  // Het target hoort binnen de schaal te vallen: ligt de lat boven de hoogste
+  // gemeten waarde, dan is "target niet gehaald" juist wat je wilt zien. Met
+  // wat lucht erboven, anders plakt de lijn tegen de bovenrand en valt hij
+  // samen met de paneelkop.
+  const maxTop = Math.max(1, ...doelen.map((r) => r.target * 1.08),
+    ...reeksen.flatMap((r) => r.per_winkel.filter((v): v is number => v != null)));
   const winkelWaarden = reeksen.flatMap((r) => r.winkels.filter((v): v is number => v != null));
   const maxBot = Math.max(1, ...winkelWaarden);
   // Ondergrens van het winkelpaneel niet op nul: een daling van 530 naar 470
@@ -808,6 +827,17 @@ export function TijdlijnPanelen({ periodes, reeksen, isMaand }:
           );
         })}
 
+        {doelen.map((r) => (
+          <g key={`doel-${r.merk}`}>
+            <line x1={PAD} x2={W - 14} y1={yTop(r.target)} y2={yTop(r.target)}
+              stroke={merkKleur(r.merk)} strokeWidth={1.2} strokeDasharray="6 4"
+              opacity={0.75} />
+            <text x={W - 14} y={yTop(r.target) - 5} textAnchor="end" fontSize="10"
+              fill={merkKleur(r.merk)} opacity={0.9}>
+              TARGET {fmtEur(r.target)}
+            </text>
+          </g>
+        ))}
         {hover != null && (
           <line x1={x(hover)} x2={x(hover)} y1={14} y2={HB + GAP + HO - 12}
             stroke="var(--t-fg)" strokeWidth={0.8} opacity={0.35} />
@@ -838,6 +868,23 @@ export function TijdlijnPanelen({ periodes, reeksen, isMaand }:
               {r.merk}: {r.per_winkel[hover] != null ? fmtEur(r.per_winkel[hover] as number) : "—"}
               {" "}· {r.winkels[hover] ?? "—"} winkels
               {r.bron[hover] === "aangenomen" && " (aangenomen)"}
+              {/* Gehaald of niet, in dezelfde week waar je naar wijst — dat
+                  is de vraag waarvoor het target in de grafiek staat. */}
+              {r.target != null && r.per_winkel[hover] != null && (
+                <span className={(r.per_winkel[hover] as number) >= r.target
+                  ? "sig-green" : "sig-red"}>
+                  {" "}/ target {fmtEur(r.target)}
+                </span>
+              )}
+            </div>
+          ))}
+          {/* Waar de opgetelde lat vandaan komt: anders staat er een getal in
+              de grafiek dat nergens in Instellingen zo te vinden is. */}
+          {doelen.map((r) => (r.target_merken?.length ?? 0) > 1 && (
+            <div key={`uit-${r.merk}`} className="sub" style={{ fontSize: 10.5, marginTop: 4 }}>
+              Target = {r.target_merken!.map((m) => `${m.merk} ${fmtEur(m.target)}`).join(" + ")}
+              {(r.target_zonder?.length ?? 0) > 0
+                && ` (zonder target: ${r.target_zonder!.join(", ")})`}
             </div>
           ))}
         </div>
