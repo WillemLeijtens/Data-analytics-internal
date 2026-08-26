@@ -94,6 +94,10 @@ export function bereken(proj: any, producten: any[], kosten: any[],
                 bijdrage: bijdrageEenmalig, marge: eenMarge, pct: eenPct,
                 drempel: drempels.eenmalig, voldoet: voldoet(eenPct, drempels.eenmalig) },
     terugkerend: { weekOmzet, weekMarge, omzet: terugOmzet, kosten: kostenLooptijd,
+                   // De productmarge over de looptijd, net als bij eenmalig:
+                   // de opbouw op het scherm hoort marge − kosten te tonen,
+                   // niet omzet − kosten (dat laatste is de marge niet).
+                   productmarge: weken && !eenShot ? weekMarge * weken : null,
                    bijdrage: bijdrageLooptijd, marge: terugMarge,
                    pct: terugPct, drempel: drempels.terugkerend,
                    voldoet: voldoet(terugPct, drempels.terugkerend) },
@@ -577,7 +581,10 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
             )}
             {fmtEur(b.eenmalig.marge)}<PctTag v={b.eenmalig.pct} />
           </div>
-          <div className="kpi-sub">omzet {fmtEur(b.eenmalig.omzet)}</div>
+          {/* Overal dezelfde opbouw: eerst waar de marge OP gemaakt is
+              (omzet), dan hoe de marge is opgebouwd. Nooit omzet en marge
+              in één optelling door elkaar. */}
+          <div className="kpi-sub">op {fmtEur(b.eenmalig.omzet)} omzet</div>
           <div className="kpi-sub">productmarge {fmtEur(b.eenmalig.productmarge)} − kosten {fmtEur(b.eenmalig.kosten)}{b.eenmalig.bijdrage > 0 && <> + bijdrage {fmtEur(b.eenmalig.bijdrage)}</>}</div>
         </div>
         {!eenShot && <div className="card">
@@ -595,19 +602,27 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
           </div>
           <div className="kpi-sub">
             {b.weken
-              ? <>over {wk(b.weken)} wk · omzet {fmtEur(b.terugkerend.omzet!)} − kosten {fmtEur(b.terugkerend.kosten)}{b.terugkerend.bijdrage > 0 && <> + bijdrage {fmtEur(b.terugkerend.bijdrage)}</>}</>
+              ? <>op {fmtEur(b.terugkerend.omzet!)} omzet over {wk(b.weken)} wk</>
               : "vul start- en einddatum in voor het looptijdtotaal"}
           </div>
-          <div className="kpi-sub">per week: {fmtEur(b.terugkerend.weekOmzet)} omzet · {fmtEur(b.terugkerend.weekMarge)} marge</div>
+          {b.weken && (
+            <div className="kpi-sub">
+              productmarge {fmtEur(b.terugkerend.productmarge!)} − kosten {fmtEur(b.terugkerend.kosten)}
+              {b.terugkerend.bijdrage > 0 && <> + bijdrage {fmtEur(b.terugkerend.bijdrage)}</>}
+            </div>
+          )}
+          <div className="kpi-sub">per week: {fmtEur(b.terugkerend.weekOmzet)} omzet, {fmtEur(b.terugkerend.weekMarge)} marge</div>
         </div>}
-        <div className="card">
-          <div className="kpi-label">Totaal project
-            <Uitleg tekst={eenShot
-              ? "Bij een one-shot is dit hetzelfde als de levering: er is geen doorverkoop die er nog bij komt. Alle kostenregels drukken op deze marge."
-              : "Vulling plus doorverkoop bij elkaar. De doorverkoop geldt als herbevoorrading (nieuwe omzet, want het schap wordt bijgevuld). Wordt er aan het einde níét herbevoorraad, dan komt een deel van de doorverkoop uit de al gefactureerde vulling en is dit totaal een bovengrens."} /></div>
+        {/* Bij een one-shot is dit exact dezelfde kaart als hierboven —
+            zelfde bedrag, zelfde percentage — want er komt geen doorverkoop
+            bij. Twee identieke tegels naast elkaar laten twijfelen of er een
+            verschil is dat je over het hoofd ziet. */}
+        {!eenShot && <div className="card">
+          <div className="kpi-label">Netto marge totaal — vulling + doorverkoop
+            <Uitleg tekst="Vulling plus doorverkoop bij elkaar. De doorverkoop geldt als herbevoorrading (nieuwe omzet, want het schap wordt bijgevuld). Wordt er aan het einde níét herbevoorraad, dan komt een deel van de doorverkoop uit de al gefactureerde vulling en is dit totaal een bovengrens." /></div>
           <div className="kpi-value">{fmtEur(b.totaal.marge)}
             <PctTag v={b.totaal.omzet ? (b.totaal.marge / b.totaal.omzet) * 100 : null} /></div>
-          <div className="kpi-sub">netto marge · omzet {fmtEur(b.totaal.omzet)}</div>
+          <div className="kpi-sub">op {fmtEur(b.totaal.omzet)} omzet</div>
           {b.kostenBuitenBeeld > 0 && (
             // Looptijdkosten zonder looptijd tellen nergens mee; dat stil
             // laten gebeuren laat het project completer lijken dan het is.
@@ -616,7 +631,7 @@ export default function Projecten({ ctx }: { ctx: ShellCtx }) {
               vul start- en einddatum in om ze mee te rekenen
             </div>
           )}
-        </div>
+        </div>}
       </div>
 
       <div style={{ display: "flex", gap: 14, alignItems: "center", marginTop: 18, flexWrap: "wrap" }}>

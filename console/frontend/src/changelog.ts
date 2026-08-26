@@ -5,6 +5,14 @@
 export type ChangelogEntry = { datum: string; titel: string; tekst: string };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { datum: "2026-08-26", titel: "Projectcalculator: geen dubbele tegel, en marge én omzet uit elkaar",
+    tekst: "Bij een one-shot toonde de tegel \"Totaal project\" exact hetzelfde "
+      + "bedrag en percentage als de tegel ernaast — er komt immers geen "
+      + "doorverkoop bij. Die tegel is nu weg bij een one-shot. Daarnaast stond "
+      + "in de opbouw onder de terugkerende tegel \"omzet − kosten\", maar dat "
+      + "is de marge niet: die is productmarge − kosten (+ bijdrage). Alle "
+      + "regels volgen nu één schrijfwijze: omzet staat als \"op € X omzet\", "
+      + "en de marge-opbouw altijd als productmarge − kosten." },
   { datum: "2026-08-25", titel: "Menu weer leesbaar, Conclusie bovenaan",
     tekst: "Elk ingesprongen menu-item kreeg per ongeluk de grijstint van "
       + "gedempte tekst — 2,78:1 in het lichte thema, ver onder de norm — "

@@ -19,6 +19,18 @@ const KOSTEN = [
 ];
 
 describe("projectmarge", () => {
+  it("de opbouw van de marge klopt: productmarge − kosten, niet omzet − kosten", () => {
+    // Het scherm toonde bij de terugkerende tegel "omzet − kosten", maar dat
+    // is de marge niet: die is productmarge − kosten (+ bijdrage). Met deze
+    // cijfers scheelt dat een factor: omzet 600 − 300 = 300, terwijl de
+    // marge 360 − 300 = 60 is.
+    const b = bereken(PROJECT, [PRODUCT], KOSTEN);
+    expect(b.terugkerend.productmarge).toBeCloseTo(b.terugkerend.weekMarge * b.weken!, 5);
+    expect(b.terugkerend.marge).toBeCloseTo(
+      b.terugkerend.productmarge! - b.terugkerend.kosten + b.terugkerend.bijdrage, 5);
+    expect(b.terugkerend.productmarge).not.toBeCloseTo(b.terugkerend.omzet!, 5);
+  });
+
   it("rekent de brutomarge per product", () => {
     // (5 - 2) / 5 = 60%, hetzelfde voor de vulling als voor de doorverkoop.
     const b = bereken({}, [PRODUCT], []);
@@ -83,6 +95,14 @@ describe("one-shot", () => {
     // De vulling rekent gewoon door.
     expect(b.eenmalig.omzet).toBe(3000);
     expect(b.totaal.omzet).toBe(3000);
+  });
+
+  it("bij een one-shot is het totaal exact de vulling", () => {
+    // Daarom toont het scherm de totaaltegel niet bij een one-shot: twee
+    // identieke tegels naast elkaar laten twijfelen of je een verschil mist.
+    const b = bereken(oneShot, [PRODUCT], KOSTEN);
+    expect(b.totaal.marge).toBeCloseTo(b.eenmalig.marge, 5);
+    expect(b.totaal.omzet).toBeCloseTo(b.eenmalig.omzet, 5);
   });
 
   it("zet looptijdkosten op de eenmalige marge", () => {
