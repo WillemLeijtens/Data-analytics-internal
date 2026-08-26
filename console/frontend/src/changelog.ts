@@ -5,6 +5,16 @@
 export type ChangelogEntry = { datum: string; titel: string; tekst: string };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { datum: "2026-08-26", titel: "Winkeltargets zichtbaar: opgeteld en in de grafiek",
+    tekst: "De targets uit Instellingen → Doelstellingen stonden alleen per merk "
+      + "achter een regel. Nu ligt het target ook als streepjeslijn over "
+      + "\"Omzet per winkel over tijd\" — op Totaal opgeteld over de merken die "
+      + "de filters overlaten, want één filiaal voert die merken naast elkaar. "
+      + "Per week zie je in de tooltip of de lat gehaald is. Op de kaart "
+      + "\"Omzet per winkel\" staat een schuifje \"Tel op\" (standaard aan) dat de "
+      + "getoonde omzetten en targets bij elkaar optelt. Merken zonder "
+      + "ingesteld target worden erbij gemeld: een som over de helft van het "
+      + "assortiment is geen norm om aan af te meten." },
   { datum: "2026-08-26", titel: "Rotatie rekent over de huidige maand",
     tekst: "De rotatie in de assortimentsanalyse middelde over het hele jaar. "
       + "Een artikel dat in het voorjaar goed liep en sinds de zomer stilstaat, "

@@ -8,15 +8,22 @@ export type Verdeling = {
   winkels?: number | null; target?: number | null;
 };
 
-function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro, deltaPct, vorigePeriode, pWord }: {
+export function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro, deltaPct, vorigePeriode, pWord, optellen }: {
   label: string; tag: string; tagAccent?: boolean; value: string; sub?: string;
   breakdown?: Verdeling[]; isEuro?: boolean;
   /** Vergelijking met de kalenderperiode direct ervoor — géén cijfer bij een
    *  gat vóór de laatste periode, dan zou het als "vorige week" uitlezen
    *  terwijl het een oudere periode is (zie engine/analytics.dashboard). */
   deltaPct?: number | null; vorigePeriode?: string | null; pWord?: string;
+  /** Zet een "Tel op"-schuifje boven de uitsplitsing: één regel met de som
+   *  van wat eronder staat, tegen de som van de targets. Eén winkel voert de
+   *  merken naast elkaar, dus de norm voor die winkel is de som van de
+   *  merknormen — en dan pas is te zien of het target gehaald wordt. */
+  optellen?: { target: number | null; zonder: string[] };
 }) {
+  const [telOp, setTelOp] = useState(true);
   const max = Math.max(1, ...(breakdown ?? []).map((b) => b.waarde));
+  const som = (breakdown ?? []).reduce((a, b) => a + (b.waarde ?? 0), 0);
   return (
     <div className="card">
       <div className="kpi-label">{label}
@@ -30,6 +37,56 @@ function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro, deltaPc
       </div>
       <div className="kpi-value">{value}</div>
       {sub && <div className="kpi-sub">{sub}</div>}
+      {optellen && (breakdown?.length ?? 0) > 0 && (
+        <>
+          <label className="kpi-sub" style={{
+            display: "flex", gap: 6, alignItems: "center", cursor: "pointer",
+            marginTop: 10,
+          }}>
+            <input type="checkbox" className="checkbox" role="switch" checked={telOp}
+              onChange={(e) => setTelOp(e.target.checked)} />
+            Tel op
+            <Uitleg tekst={"Telt de omzet per winkel van de merken hieronder bij elkaar op, "
+              + "en de targets net zo. Eén winkel voert die merken naast elkaar, dus de "
+              + "norm voor die winkel is de som van de merknormen.\n\n"
+              + "Het grote getal blijft de omzet van álle merken gedeeld door het hele "
+              + "winkelbestand. Dat is iets lager dan de optelsom zodra een merk in "
+              + "minder winkels ligt dan het grootste merk: die omzet wordt dan over "
+              + "meer winkels uitgesmeerd.\n\n"
+              + "De optelling volgt de filters bovenaan het scherm."} />
+          </label>
+          {telOp && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+                <span><b>Opgeteld</b></span>
+                <span>
+                  {fmtEur(som)}
+                  {optellen.target != null && (
+                    <span className={som >= optellen.target ? "sig-green" : "sig-red"}
+                      title={`Opgeteld target ${fmtEur(optellen.target)} per winkel`}>
+                      {" "}/ {fmtEur(optellen.target)}
+                    </span>
+                  )}
+                </span>
+              </div>
+              {/* Bewust geen balkje: de balkjes hieronder zijn een aandeel in
+                  het grootste merk, en een volle balk bij de som zou als
+                  "target gehaald" lezen terwijl hij niets meet. */}
+              <hr className="hairline" style={{ margin: "6px 0 0" }} />
+              {/* Een som over de helft van het assortiment is geen norm om
+                  aan af te meten; dat hoort erbij te staan. */}
+              {optellen.zonder.length > 0 && (
+                <div className="kpi-sub" style={{ fontSize: 10.5, marginTop: 4 }}>
+                  {optellen.target == null
+                    ? "Nog geen target ingesteld voor "
+                    : "Zonder target: "}
+                  {optellen.zonder.join(", ")} — in te stellen bij Instellingen.
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
       {breakdown?.map((b) => (
         <div key={b.label} style={{ marginTop: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
@@ -204,6 +261,9 @@ export function TijdlijnBlok({ t, pWord, retailer, merk, land, banner, categorie
         tijdas, zelfde kleur per merk. Loopt de bovenste lijn op terwijl de onderste
         zakt, dan komt de stijging van een kleiner winkelbestand en niet van betere verkoop.
         {t.venster > 1 && ` Het winkelaantal is een voortschrijdend gemiddelde over ${t.venster} ${pWord.toLowerCase()}en, omdat een losse ${pWord.toLowerCase()} bij langzame merken te veel ruis geeft.`}
+        {" "}Staat er een target in Instellingen, dan ligt die als streepjeslijn
+        over het bovenste paneel — op Totaal opgeteld over de merken die de
+        filters overlaten, want één winkel voert die merken naast elkaar.
       </p>
       <div className="seg" style={{ margin: "10px 0 14px" }}>
         <button className={stand === "merk" ? "on" : ""} onClick={() => setStand("merk")}>Per merk</button>
@@ -228,6 +288,18 @@ export function TijdlijnBlok({ t, pWord, retailer, merk, land, banner, categorie
         )}
       </div>
 
+      {/* Een lat die maar de helft van het assortiment dekt, ziet er hard uit
+          en is het niet. Dat hoort onder de grafiek te staan, niet alleen in
+          de tooltip. */}
+      {reeksen.length === 1 && (reeksen[0]?.target_zonder?.length ?? 0) > 0 && (
+        <p className="sub" style={{ marginTop: 10 }}>
+          {reeksen[0].target == null
+            ? "Nog geen target ingesteld"
+            : "Niet in het opgetelde target"}
+          {" voor "}{reeksen[0].target_zonder!.join(", ")} — in te stellen bij
+          Instellingen → Doelstellingen.
+        </p>
+      )}
       {aangenomen && (
         <p className="sub" style={{ marginTop: 10 }}>
           Gestippeld deel: daar is nog geen gemeten winkelaantal, dus er wordt met het
@@ -510,6 +582,13 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           tagAccent={k.omzet_per_winkel.schatting}
           value={fmtEur(k.omzet_per_winkel.waarde)} isEuro
           breakdown={verdeling(k.omzet_per_winkel)}
+          // Alleen op de merkuitsplitsing: targets zijn per merk afgesproken.
+          // Over land of formule optellen zou een norm verzinnen die niemand
+          // heeft afgesproken (zie engine/analytics.dashboard).
+          optellen={effDim === "merk"
+            ? { target: k.omzet_per_winkel.target_totaal ?? null,
+                zonder: k.omzet_per_winkel.target_zonder ?? [] }
+            : undefined}
           deltaPct={k.omzet_per_winkel.delta_pct} vorigePeriode={k.omzet_per_winkel.vorige_periode} pWord={pWord}
           sub={k.omzet_per_winkel.winkels
             // Bij een SCHATTING komt het aantal uit Instellingen; "met omzet"

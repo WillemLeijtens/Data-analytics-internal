@@ -444,6 +444,15 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
                 "filters": filters, "resolution": res.as_dict(),
                 "labels": labels, "capabilities": caps}
     settings = manual_store_settings(conn, retailer_id)
+    # Ingesteld target per merk (EUR per winkel per periode) uit Instellingen.
+    # Targets zijn per merk/land/formule vastgelegd; per merk telt het hoogste
+    # ingestelde getal, net als bij het winkelaantal. Over land of formule
+    # optellen zou een target verzinnen dat niemand heeft afgesproken.
+    targets_per_merk: dict = {}
+    for _s in settings:
+        _t = _s.get("target_per_winkel")
+        if _t:
+            targets_per_merk[_s["merk"]] = max(targets_per_merk.get(_s["merk"], 0), _t)
     # Gedateerde winkelaantallen: hiermee wordt elke periode gedeeld door het
     # winkelbestand zoals dat TÓEN gold, in plaats van door dat van vandaag.
     historie = [dict(r) for r in conn.execute(
@@ -498,15 +507,6 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
         per_groep: dict[str, list] = defaultdict(list)
         for r in rows:
             per_groep[r[dim] or "ONBEKEND"].append(r)
-        # Ingestelde target per merk (€ per winkel per periode) uit
-        # Instellingen — vóór deze koppeling werd dat veld nergens gebruikt.
-        # Targets zijn per merk vastgelegd, dus alleen op die dimensie
-        # zinvol; over land of formule zou optellen een target verzinnen.
-        targets_per_merk: dict = {}
-        for s in settings:
-            t = s.get("target_per_winkel")
-            if t:
-                targets_per_merk[s["merk"]] = max(targets_per_merk.get(s["merk"], 0), t)
         out = []
         for sleutel, brows in per_groep.items():
             n, uit_feiten = store_count(conn, retailer_id, caps, brows, periode, settings)
@@ -815,8 +815,28 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
     per_merk_reeks = []
     for m in sorted({r["merk"] for r in rows}, key=lambda x: (x is None, x or "")):
         rs = [r for r in rows if r["merk"] == m]
-        per_merk_reeks.append({"merk": m or "ONBEKEND", **reeks(rs)})
+        per_merk_reeks.append({"merk": m or "ONBEKEND", "target": targets_per_merk.get(m),
+                               **reeks(rs)})
     totaal_reeks = reeks(rows)
+
+    # Het opgetelde target voor de TOTAAL-stand. Eén winkel voert de merken
+    # naast elkaar, dus de norm voor die winkel is de som van de merknormen —
+    # en de totaallijn is de omzet van álle merken door hetzelfde
+    # winkelbestand. Alleen de merken in de HUIDIGE filterkeuze tellen mee:
+    # filter je op één merk, dan hoort daar ook alleen dat target bij.
+    #
+    # Merken zonder ingesteld target komen er apart bij te staan. Ze stil
+    # overslaan zou een te lage lat opleveren die er hard uitziet: de
+    # totaallijn zou een target halen dat de helft van het assortiment niet
+    # eens meetelt.
+    merken_in_beeld = sorted({r["merk"] for r in rows}, key=lambda x: (x is None, x or ""))
+    zonder_target = [m or "ONBEKEND" for m in merken_in_beeld if not targets_per_merk.get(m)]
+    target_som = sum(targets_per_merk[m] for m in merken_in_beeld if targets_per_merk.get(m))
+    totaal_reeks["target"] = round(target_som, 2) if target_som else None
+    totaal_reeks["target_merken"] = [
+        {"merk": m or "ONBEKEND", "target": targets_per_merk[m]}
+        for m in merken_in_beeld if targets_per_merk.get(m)]
+    totaal_reeks["target_zonder"] = zonder_target
 
     def decomponeer(serie: dict, nu_i: int, toen_i: int) -> dict | None:
         """omzet_t/omzet_0 = (winkels_t/winkels_0) x (perwinkel_t/perwinkel_0).
@@ -883,6 +903,12 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
                                               if per_store is not None else None,
                                  "vorige_periode": vorige if vorige_rows else None,
                                  "schatting": not from_facts,
+                                 # Het opgetelde target van de merken in beeld,
+                                 # met de merken die er geen hebben erbij: een
+                                 # som over de helft van het assortiment is
+                                 # geen norm om aan af te meten.
+                                 "target_totaal": round(target_som, 2) or None,
+                                 "target_zonder": zonder_target,
                                  "breakdown": store_breakdown(latest),
                                  "breakdowns": {d: store_breakdown(latest, d)
                                                 for d in dimensies}},
