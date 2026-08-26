@@ -633,12 +633,17 @@ Per merk-land(-formule) is in Instellingen → Doelstellingen een **target per
 winkel per periode** in te stellen (`retailer_settings.target_per_winkel`, €).
 Dat target komt op twee plekken terug:
 
-* **Kaart "Omzet per winkel"** — achter elke merkregel, groen boven en rood
-  onder de norm. Daarboven staat een schuifje **"Tel op"** (standaard aan):
-  één regel met de som van de merkregels tegen de som van de merktargets.
-  Eén filiaal voert die merken naast elkaar, dus de norm voor dat filiaal is
-  de som van de merknormen — pas daartegen is te zien of het target gehaald
-  wordt.
+* **Kaart "Omzet per winkel"** — achter elke regel van de uitsplitsing, groen
+  boven en rood onder de norm. Dat geldt op élke uitsplitsing: zet je hem op
+  "Per land", dan telt de landregel de omzet van de merken in dat land al bij
+  elkaar op, dus staat de bijbehorende lat daar net zo bij (BE € 120 + € 70 =
+  € 190). De opbouw van zo'n regel staat in de hover. Op de merkuitsplitsing
+  staat er een schuifje **"Tel op"** boven (standaard aan): één regel met de
+  som van de merkregels tegen de som van de merktargets. Eén filiaal voert die
+  merken naast elkaar, dus de norm voor dat filiaal is de som van de
+  merknormen — pas daartegen is te zien of het target gehaald wordt. Over
+  landen heen wordt niet opgeteld: die per-winkel-getallen gaan over
+  verschillende winkelbestanden.
 * **Grafiek "Omzet per winkel over tijd"** — als streepjeslijn over het
   bovenste paneel, met het bedrag in de tooltip van elke periode (groen/rood).
   De lijn verschijnt alleen als er **één reeks** in beeld is: op Totaal, op
@@ -646,6 +651,17 @@ Dat target komt op twee plekken terug:
   acht merklijnen zijn niet meer aan elkaar te koppelen. Ligt de lat boven de
   hoogste gemeten waarde, dan rekt de schaal mee — "niet gehaald" is juist wat
   je dan wilt zien.
+
+**Twee rekenregels**, elk met een reden:
+
+* **Binnen één merk het naar winkels gewogen gemiddelde** van de targets van
+  de scopes in beeld. Ligt TWEEZERMAN in 1205 NL-winkels met een target van
+  € 50 en in 187 BE-winkels met € 120, dan is de lat op de merkregel € 59,40 —
+  want die regel deelt de omzet van beide landen door alle 1392 winkels. Het
+  hoogste getal nemen zou 87% van het winkelbestand langs de Belgische lat
+  leggen; optellen zou hetzelfde filiaal twee keer een norm geven. Zonder
+  bekende winkelaantallen valt het terug op het hoogste getal.
+* **Over de merken heen optellen**, om de reden hierboven.
 
 Twee dingen staan er bewust bij:
 

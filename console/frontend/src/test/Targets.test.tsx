@@ -79,13 +79,14 @@ import { KpiCard } from "../screens/Dashboard";
 // is een ander getal zodra een merk in minder winkels ligt. Allebei kloppen —
 // daarom staan ze naast elkaar en niet in plaats van elkaar.
 
-const kaart = (optellen: any) => render(
+const merkRij = (label: string, waarde: number, winkels: number, target: number | null) =>
+  ({ label, waarde, winkels, target, target_merken: target ? [{ merk: label, target }] : [] });
+
+const kaart = (optellen: any, targets: (number | null)[] = [85, 85]) => render(
   <KpiCard label="Omzet per winkel" tag="SCHATTING" value="€ 94" isEuro
-    breakdown={[
-      { label: "ALESSANDRO", waarde: 49, winkels: 464, target: 85 },
-      { label: "DEPEND", waarde: 48, winkels: 495, target: 85 },
-    ]}
-    optellen={optellen} />);
+    breakdown={[merkRij("ALESSANDRO", 49, 464, targets[0]),
+                merkRij("DEPEND", 48, 495, targets[1])]}
+    optellen={optellen} zonderTarget={optellen.zonder} />);
 
 describe("Tel op", () => {
   it("staat standaard aan en telt omzetten en targets bij elkaar op", () => {
@@ -113,13 +114,21 @@ describe("Tel op", () => {
     expect(screen.getByText(/ALESSANDRO/)).toBeInTheDocument();
   });
 
+  it("de melding over ontbrekende targets blijft staan als het schuifje uit is", () => {
+    // Ze hoort bij de uitsplitsing, niet bij de optelling: ook per land of
+    // formule moet blijken dat de lat niet het hele assortiment dekt.
+    kaart({ target: 85, zonder: ["DEPEND"] }, [85, null]);
+    fireEvent.click(screen.getByRole("switch"));
+    expect(screen.getByText(/Zonder target: DEPEND/)).toBeInTheDocument();
+  });
+
   it("meldt merken zonder ingesteld target", () => {
-    kaart({ target: 85, zonder: ["DEPEND"] });
+    kaart({ target: 85, zonder: ["DEPEND"] }, [85, null]);
     expect(screen.getByText(/Zonder target: DEPEND/)).toBeInTheDocument();
   });
 
   it("zonder targets blijft de optelsom staan, zonder lat", () => {
-    kaart({ target: null, zonder: ["ALESSANDRO", "DEPEND"] });
+    kaart({ target: null, zonder: ["ALESSANDRO", "DEPEND"] }, [null, null]);
     expect(screen.getByText("€ 97")).toBeInTheDocument();
     expect(screen.getByText(/Nog geen target ingesteld voor ALESSANDRO, DEPEND/))
       .toBeInTheDocument();

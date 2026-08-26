@@ -5,6 +5,16 @@
 export type ChangelogEntry = { datum: string; titel: string; tekst: string };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { datum: "2026-08-26", titel: "Targets ook op de land- en formule-uitsplitsing",
+    tekst: "Zet je de KPI-kaarten op \"Per land\" of \"Per formule\", dan staat "
+      + "het target nu ook achter die regels — opgeteld uit de merken die daar "
+      + "liggen, met de targets van dát land uit Instellingen (BE € 120 + € 70 "
+      + "= € 190). Hover over het bedrag voor de opbouw. Op de merkregel wordt "
+      + "een target dat per land verschilt voortaan naar winkelaantal gewogen: "
+      + "1205 NL-winkels à € 50 en 187 BE-winkels à € 120 geeft € 59,40, want "
+      + "die regel deelt de omzet van beide landen door alle 1392 winkels. "
+      + "Daarvoor gold het hoogste getal, waarmee 87% van het winkelbestand "
+      + "langs de Belgische lat lag." },
   { datum: "2026-08-26", titel: "Winkeltargets zichtbaar: opgeteld en in de grafiek",
     tekst: "De targets uit Instellingen → Doelstellingen stonden alleen per merk "
       + "achter een regel. Nu ligt het target ook als streepjeslijn over "

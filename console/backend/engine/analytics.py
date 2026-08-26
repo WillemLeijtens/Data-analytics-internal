@@ -444,15 +444,73 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
                 "filters": filters, "resolution": res.as_dict(),
                 "labels": labels, "capabilities": caps}
     settings = manual_store_settings(conn, retailer_id)
-    # Ingesteld target per merk (EUR per winkel per periode) uit Instellingen.
-    # Targets zijn per merk/land/formule vastgelegd; per merk telt het hoogste
-    # ingestelde getal, net als bij het winkelaantal. Over land of formule
-    # optellen zou een target verzinnen dat niemand heeft afgesproken.
-    targets_per_merk: dict = {}
-    for _s in settings:
-        _t = _s.get("target_per_winkel")
-        if _t:
-            targets_per_merk[_s["merk"]] = max(targets_per_merk.get(_s["merk"], 0), _t)
+    _scope_winkels: dict = {}
+
+    def scope_winkels(sleutel: tuple, rs) -> int | None:
+        """Het winkelaantal van één merk x land x formule, gecachet."""
+        if sleutel not in _scope_winkels:
+            _scope_winkels[sleutel] = store_count(
+                conn, retailer_id, caps, rs, None, settings)[0]
+        return _scope_winkels[sleutel]
+
+    def scope_target(s_, merk, land, banner) -> bool:
+        """Geldt deze instelling voor deze merk-land-formule-combinatie?"""
+        if s_["merk"] != merk:
+            return False
+        if s_["land"] and land and s_["land"] != land:
+            return False
+        if caps.get("banner") and s_["banner"] and banner and s_["banner"] != banner:
+            return False
+        return True
+
+    def targets_voor(rs) -> dict:
+        """Het target per winkel voor een groep rijen: (som, per merk, zonder).
+
+        Targets staan in Instellingen per merk x land x formule (EUR per
+        winkel per periode). De SCOPE VAN DE RIJEN bepaalt welke instelling
+        telt — bij een uitsplitsing per land horen de targets van dát land
+        erbij, niet die van een land dat hier niet in beeld is. Er valt dus
+        niets te verzinnen: de instelling wordt gewoon uitgelezen.
+
+        Twee rekenregels, elk met een reden:
+
+        * **Binnen één merk het naar winkels GEWOGEN gemiddelde** over de
+          scopes in beeld. Ligt TWEEZERMAN in 1205 NL-winkels met een target
+          van € 50 en in 187 BE-winkels met € 120, dan is de lat voor de
+          merkregel € 59 — want die regel deelt de omzet van beide landen door
+          alle 1392 winkels. Het hoogste getal nemen zou 87% van het
+          winkelbestand langs de Belgische lat leggen; optellen zou hetzelfde
+          filiaal twee keer een norm geven. Zijn de winkelaantallen onbekend,
+          dan valt het terug op het hoogste getal.
+        * **Over de merken heen OPTELLEN.** Eén filiaal voert die merken naast
+          elkaar, dus de norm voor dat filiaal is de som van de merknormen.
+
+        Merken zonder ingesteld target komen apart terug; ze stil overslaan
+        zou een te lage lat opleveren die er hard uitziet."""
+        per_scope: dict = defaultdict(list)
+        for r in rs:
+            per_scope[(r["merk"], r["land"], r["banner"])].append(r)
+        gewogen: dict = defaultdict(lambda: {"som": 0.0, "winkels": 0, "max": 0.0})
+        for sleutel, srows in per_scope.items():
+            merk, land, banner = sleutel
+            t = max((s_["target_per_winkel"] for s_ in settings
+                     if s_.get("target_per_winkel") and scope_target(s_, merk, land, banner)),
+                    default=None)
+            if not t:
+                continue
+            n = scope_winkels(sleutel, srows) or 0
+            g = gewogen[merk]
+            g["som"] += t * n
+            g["winkels"] += n
+            g["max"] = max(g["max"], t)
+        per_merk = {m: round(g["som"] / g["winkels"], 2) if g["winkels"] else g["max"]
+                    for m, g in gewogen.items()}
+        merken = sorted({r["merk"] for r in rs}, key=lambda x: (x is None, x or ""))
+        som = sum(per_merk[m] for m in merken if per_merk.get(m))
+        return {"target": round(som, 2) or None,
+                "target_merken": [{"merk": m or "ONBEKEND", "target": per_merk[m]}
+                                  for m in merken if per_merk.get(m)],
+                "target_zonder": [m or "ONBEKEND" for m in merken if not per_merk.get(m)]}
     # Gedateerde winkelaantallen: hiermee wordt elke periode gedeeld door het
     # winkelbestand zoals dat TÓEN gold, in plaats van door dat van vandaag.
     historie = [dict(r) for r in conn.execute(
@@ -511,9 +569,11 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
         for sleutel, brows in per_groep.items():
             n, uit_feiten = store_count(conn, retailer_id, caps, brows, periode, settings)
             rev = sum(r["omzet"] for r in brows if r["periode"] == periode)
+            # Ook op land en formule: die uitsplitsing telt de omzet van de
+            # merken in dat land al bij elkaar op, dus hoort de lat waar dat
+            # tegen afgezet wordt daar net zo bij.
             item = {"label": sleutel, "winkels": n, "schatting": not uit_feiten,
-                    "waarde": (rev / n) if n else None,
-                    "target": targets_per_merk.get(sleutel) if dim == "merk" else None}
+                    "waarde": (rev / n) if n else None, **targets_voor(brows)}
             if dim == "merk":
                 item["merk"] = sleutel
             out.append(item)
@@ -815,8 +875,7 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
     per_merk_reeks = []
     for m in sorted({r["merk"] for r in rows}, key=lambda x: (x is None, x or "")):
         rs = [r for r in rows if r["merk"] == m]
-        per_merk_reeks.append({"merk": m or "ONBEKEND", "target": targets_per_merk.get(m),
-                               **reeks(rs)})
+        per_merk_reeks.append({"merk": m or "ONBEKEND", **targets_voor(rs), **reeks(rs)})
     totaal_reeks = reeks(rows)
 
     # Het opgetelde target voor de TOTAAL-stand. Eén winkel voert de merken
@@ -829,14 +888,8 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
     # overslaan zou een te lage lat opleveren die er hard uitziet: de
     # totaallijn zou een target halen dat de helft van het assortiment niet
     # eens meetelt.
-    merken_in_beeld = sorted({r["merk"] for r in rows}, key=lambda x: (x is None, x or ""))
-    zonder_target = [m or "ONBEKEND" for m in merken_in_beeld if not targets_per_merk.get(m)]
-    target_som = sum(targets_per_merk[m] for m in merken_in_beeld if targets_per_merk.get(m))
-    totaal_reeks["target"] = round(target_som, 2) if target_som else None
-    totaal_reeks["target_merken"] = [
-        {"merk": m or "ONBEKEND", "target": targets_per_merk[m]}
-        for m in merken_in_beeld if targets_per_merk.get(m)]
-    totaal_reeks["target_zonder"] = zonder_target
+    totaal_target = targets_voor(rows)
+    totaal_reeks.update(totaal_target)
 
     def decomponeer(serie: dict, nu_i: int, toen_i: int) -> dict | None:
         """omzet_t/omzet_0 = (winkels_t/winkels_0) x (perwinkel_t/perwinkel_0).
@@ -907,8 +960,8 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
                                  # met de merken die er geen hebben erbij: een
                                  # som over de helft van het assortiment is
                                  # geen norm om aan af te meten.
-                                 "target_totaal": round(target_som, 2) or None,
-                                 "target_zonder": zonder_target,
+                                 "target_totaal": totaal_target["target"],
+                                 "target_zonder": totaal_target["target_zonder"],
                                  "breakdown": store_breakdown(latest),
                                  "breakdowns": {d: store_breakdown(latest, d)
                                                 for d in dimensies}},

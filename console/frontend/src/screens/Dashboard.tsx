@@ -6,9 +6,14 @@ import { BrandDot, DatagatMelding, DeltaTag, EmptyProfileCard, LevelStrip, LoadS
 export type Verdeling = {
   label: string; merk?: string; waarde: number;
   winkels?: number | null; target?: number | null;
+  /** Waaruit het target van deze regel is opgebouwd. Bij een merkregel één
+   *  merk; bij een land- of formuleregel de merken die daar liggen, want die
+   *  omzetten zijn in die regel al bij elkaar opgeteld. */
+  target_merken?: { merk: string; target: number }[];
+  target_zonder?: string[];
 };
 
-export function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro, deltaPct, vorigePeriode, pWord, optellen }: {
+export function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro, deltaPct, vorigePeriode, pWord, optellen, zonderTarget }: {
   label: string; tag: string; tagAccent?: boolean; value: string; sub?: string;
   breakdown?: Verdeling[]; isEuro?: boolean;
   /** Vergelijking met de kalenderperiode direct ervoor — géén cijfer bij een
@@ -20,6 +25,10 @@ export function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro, 
    *  merken naast elkaar, dus de norm voor die winkel is de som van de
    *  merknormen — en dan pas is te zien of het target gehaald wordt. */
   optellen?: { target: number | null; zonder: string[] };
+  /** Merken zonder ingesteld target. Staat los van het schuifje: ook op de
+   *  land- en formule-uitsplitsing hoort te blijken dat de lat niet het hele
+   *  assortiment dekt. */
+  zonderTarget?: string[];
 }) {
   const [telOp, setTelOp] = useState(true);
   const max = Math.max(1, ...(breakdown ?? []).map((b) => b.waarde));
@@ -73,16 +82,6 @@ export function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro, 
                   het grootste merk, en een volle balk bij de som zou als
                   "target gehaald" lezen terwijl hij niets meet. */}
               <hr className="hairline" style={{ margin: "6px 0 0" }} />
-              {/* Een som over de helft van het assortiment is geen norm om
-                  aan af te meten; dat hoort erbij te staan. */}
-              {optellen.zonder.length > 0 && (
-                <div className="kpi-sub" style={{ fontSize: 10.5, marginTop: 4 }}>
-                  {optellen.target == null
-                    ? "Nog geen target ingesteld voor "
-                    : "Zonder target: "}
-                  {optellen.zonder.join(", ")} — in te stellen bij Instellingen.
-                </div>
-              )}
             </div>
           )}
         </>
@@ -95,8 +94,11 @@ export function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro, 
               {isEuro ? fmtEur(b.waarde) : fmtNum(b.waarde)}
               {b.target != null && (
                 // Het ingestelde target uit Instellingen, met kleur boven/onder.
+                // Op een land- of formuleregel is dat de som van de merken die
+                // daar liggen; die opbouw staat in de title, anders is het
+                // getal nergens in Instellingen zo terug te vinden.
                 <span className={b.waarde >= b.target ? "sig-green" : "sig-red"}
-                  title={`Target ${fmtEur(b.target)} per winkel`}>
+                  title={targetUitleg(b)}>
                   {" "}/ {fmtEur(b.target)}
                 </span>
               )}
@@ -107,8 +109,31 @@ export function KpiCard({ label, tag, tagAccent, value, sub, breakdown, isEuro, 
           </div>
         </div>
       ))}
+      {/* Een lat die maar de helft van het assortiment dekt, ziet er hard uit
+          en is het niet. Geldt op elke uitsplitsing, dus los van het
+          schuifje. */}
+      {(zonderTarget?.length ?? 0) > 0 && (
+        <div className="kpi-sub" style={{ fontSize: 10.5, marginTop: 8 }}>
+          {optellen?.target == null && !breakdown?.some((b) => b.target != null)
+            ? "Nog geen target ingesteld voor "
+            : "Zonder target: "}
+          {zonderTarget!.join(", ")} — in te stellen bij Instellingen.
+        </div>
+      )}
     </div>
   );
+}
+
+/** Waar het target van een regel uit is opgebouwd, voor de hover. */
+function targetUitleg(b: Verdeling): string {
+  const delen = b.target_merken ?? [];
+  const basis = `Target ${fmtEur(b.target!)} per winkel`;
+  const opbouw = delen.length > 1
+    ? `${basis}: ${delen.map((m) => `${m.merk} ${fmtEur(m.target)}`).join(" + ")}`
+    : basis;
+  return (b.target_zonder?.length ?? 0) > 0
+    ? `${opbouw}\nZonder target: ${b.target_zonder!.join(", ")}`
+    : opbouw;
 }
 
 
@@ -589,6 +614,7 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
             ? { target: k.omzet_per_winkel.target_totaal ?? null,
                 zonder: k.omzet_per_winkel.target_zonder ?? [] }
             : undefined}
+          zonderTarget={k.omzet_per_winkel.target_zonder ?? []}
           deltaPct={k.omzet_per_winkel.delta_pct} vorigePeriode={k.omzet_per_winkel.vorige_periode} pWord={pWord}
           sub={k.omzet_per_winkel.winkels
             // Bij een SCHATTING komt het aantal uit Instellingen; "met omzet"
