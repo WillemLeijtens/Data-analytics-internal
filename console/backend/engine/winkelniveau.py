@@ -54,6 +54,24 @@ def effectief(rij: dict, artikelen: list[dict]) -> int | None:
     return max(aantallen) if aantallen else None
 
 
+def eigen_aantal(settings: list[dict], artikelen: dict[tuple, list[dict]],
+                 ean: str) -> int | None:
+    """Het winkelaantal dat voor DIT artikel is ingesteld, of None.
+
+    Alleen om te kunnen melden waar het getal vandaan komt. Staat er geen
+    eigen aantal, dan rekent de analyse met het merkgetal — en dan is het
+    winkelaantal in het scherm niet in de artikellijst terug te vinden, wat
+    eruitziet als een fout terwijl het klopt.
+    """
+    for s in settings:
+        if s.get("niveau") != "artikel":
+            continue
+        for a in artikelen.get(sleutel(s["merk"], s["land"], s["banner"]), []):
+            if a["artikel_ean"] == ean and a.get("aantal_winkels"):
+                return a["aantal_winkels"]
+    return None
+
+
 def per_scope(artikel_rijen: list[dict]) -> dict[tuple, list[dict]]:
     """Artikelinstellingen gegroepeerd op (merk, land, banner)."""
     uit: dict[tuple, list[dict]] = {}

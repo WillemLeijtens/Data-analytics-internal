@@ -93,6 +93,34 @@ def sort_key(period: str) -> tuple[int, int]:
     return (period_year(period), period_number(period))
 
 
+MAANDNAMEN = ["", "januari", "februari", "maart", "april", "mei", "juni",
+              "juli", "augustus", "september", "oktober", "november", "december"]
+
+
+@lru_cache(maxsize=None)
+def kalendermaand(period: str) -> tuple[int, int]:
+    """(jaar, maand) waar deze periode bij hoort.
+
+    Een maandperiode wijst zichzelf aan. Een ISO-week ligt vaak in twee
+    maanden; die telt hier bij de maand van zijn DONDERDAG. Dat is dezelfde
+    regel als de ISO-jaartelling gebruikt en het is de maand waarin de
+    meeste dagen van die week vallen — een week met vier dagen in juli en
+    drie in augustus hoort bij juli.
+    """
+    jaar, nummer = period_year(period), period_number(period)
+    if period_type_of(period) == "maand":
+        return (jaar, nummer)
+    try:
+        donderdag = dt.date.fromisocalendar(jaar, nummer, 4)
+    except ValueError:               # week 53 in een 52-weekjaar
+        donderdag = dt.date.fromisocalendar(jaar, 52, 4)
+    return (donderdag.year, donderdag.month)
+
+
+def maand_label(maand: tuple[int, int]) -> str:
+    return f"{MAANDNAMEN[maand[1]]} {maand[0]}"
+
+
 def _vandaag_nl() -> dt.date:
     # De retailers en gebruikers leven in Nederland; de serverklok staat op
     # UTC. Zonder tijdzone zou een week rond maandagnacht een paar uur te

@@ -5,6 +5,17 @@
 export type ChangelogEntry = { datum: string; titel: string; tekst: string };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { datum: "2026-08-26", titel: "Rotatie rekent over de huidige maand",
+    tekst: "De rotatie in de assortimentsanalyse middelde over het hele jaar. "
+      + "Een artikel dat in het voorjaar goed liep en sinds de zomer stilstaat, "
+      + "hield daardoor een net gemiddelde en viel nergens op. De kolom heet nu "
+      + "\"Rotatie (huidige maand)\" en rekent met de weken die van die maand "
+      + "geleverd zijn — twee geleverde weken betekent delen door twee, niet "
+      + "door 4,33. Onder elke rotatie staat waar hij op rust: hoeveel stuks in "
+      + "hoeveel weken, door hoeveel winkels, en of dat winkelaantal per artikel "
+      + "is ingesteld, het merkaantal is, of uit de data geteld. Nul verkoop in "
+      + "de maand heet voortaan \"Geen verkoop deze maand\"; bij minder dan twee "
+      + "geleverde weken wordt het oordeel uitgesteld." },
   { datum: "2026-08-26", titel: "Projectcalculator: geen dubbele tegel, en marge én omzet uit elkaar",
     tekst: "Bij een one-shot toonde de tegel \"Totaal project\" exact hetzelfde "
       + "bedrag en percentage als de tegel ernaast — er komt immers geen "
