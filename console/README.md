@@ -627,6 +627,43 @@ Een wijziging in Instellingen werkt direct door: `retailer_settings` en
 dataversie van de analysecache (`main._data_versie`), dus de analyse wordt
 opnieuw gerekend zodra er iets verandert.
 
+### Distributie per artikel
+
+Het aantal winkels dat een artikel in een periode **daadwerkelijk verkocht**
+heeft. Drie kolommen in de artikelanalyse, en alleen bij retailers die
+winkelniveau leveren (`caps["winkel"]`, vandaag Etos) — zonder winkel-ID valt
+er niets te tellen en blijven de kolommen wég in plaats van leeg.
+
+* **Distributie** — sparkline van het verloop per periode, dit jaar tegen
+  vorig jaar, met het laatste aantal eronder.
+* **Distributie YTD vs LYTD** — het gemiddelde aantal verkopende winkels per
+  periode, op hetzelfde **vergelijkbare venster** als de omzetdelta (de
+  doorsnede van de periodes die beide jaren geleverd zijn voor dat merk). Een
+  feed die vorig jaar later begon is geen distributiesprong.
+* **Distributie 2 mnd** — de laatste twee kalendermaanden tegen de twee
+  daarvoor. Dichter op de actualiteit dan de jaarvergelijking en lang genoeg
+  om weekruis te dempen. Een lopende maand mag meedoen omdat dit een
+  **gemiddelde per periode** is en geen som: een halve maand drukt het cijfer
+  dus niet.
+
+Twee dingen die de definitie scherp houden:
+
+* **Verkocht, niet op het schap.** Een winkel die het artikel wel voert maar
+  die week niets verkocht telt niet mee; dat onderscheid staat niet in
+  sellout-data, en schapaanwezigheid afleiden zou een getal opleveren dat
+  nergens op rust. Bij langzame lopers ligt de echte schapdistributie dus
+  hoger. De vergelijking door de tijd blijft wel zuiver — beide kanten meten
+  hetzelfde. Dat staat ook in de uitleg bij de kolom.
+* **De noemer is het aantal geleverde periodes**, niet het aantal
+  kalenderweken. Een periode waarin het merk wél geleverd is maar dit artikel
+  niets verkocht telt als 0: dat ís distributieverlies en hoort mee te wegen.
+
+In de conclusie komt dit terug als bevinding: de portefeuillebrede
+jaarvergelijking, en de artikelen die over twee maanden minstens 15% van hun
+winkels verloren (`conclusie.DISTRIBUTIE_DREMPEL`). Artikelen met minder dan
+vijf winkels in de vergelijkingsperiode blijven buiten die melding — van 2 naar
+0,7 winkels is -65%, maar het is geen distributieverhaal.
+
 ### Winkeltargets
 
 Per merk-land(-formule) is in Instellingen → Doelstellingen een **target per
