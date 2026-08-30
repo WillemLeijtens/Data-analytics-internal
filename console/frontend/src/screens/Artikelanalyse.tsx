@@ -41,6 +41,35 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
   const fmt = (v: number) => (isEuro ? fmtEur(v) : fmtNum(v));
   const toSeries = (spark: any, key: string) =>
     Object.fromEntries(Object.entries(spark).map(([p, v]: any) => [p, v[key]]));
+  // Distributie = het aantal winkels dat het artikel die periode verkocht
+  // heeft. Alleen te tellen als de feed winkelniveau levert; anders blijven
+  // de kolommen wég in plaats van leeg (vandaag: wel Etos, niet Kruidvat/ICI).
+  const dist = !!data.distributie_beschikbaar;
+  const pw = pWord.toLowerCase();
+  const uitlegDistributie =
+    `Het aantal winkels dat dit artikel die ${pw} daadwerkelijk verkocht heeft, `
+    + "geteld uit de data.\n\n"
+    + `Doorgetrokken lijn dit jaar, stippellijn ${data.jaar - 1}.\n\n`
+    + "Let op: een winkel die het artikel wél op het schap heeft maar die "
+    + `${pw} niets verkocht telt niet mee. De echte schapdistributie ligt bij `
+    + "langzame lopers dus hoger. De vergelijking door de tijd blijft wel "
+    + "zuiver — beide kanten meten hetzelfde.";
+  const uitlegYtd =
+    `Gemiddeld aantal verkopende winkels per ${pw} dit jaar tegen `
+    + `${data.jaar - 1}, alleen over de ${pw}en die beide jaren geleverd zijn `
+    + "voor dit merk. Een feed die vorig jaar later begon is geen "
+    + "distributiesprong.";
+  const uitlegTweeMaanden =
+    `Gemiddeld aantal verkopende winkels per ${pw} over de laatste twee `
+    + "maanden, tegen de twee maanden daarvoor. Dichter op de actualiteit dan "
+    + "de jaarvergelijking, en lang genoeg om weekruis te dempen. Een lopende "
+    + "maand mag meedoen: dit is een gemiddelde per "
+    + `${pw}, geen som, dus een halve maand drukt het cijfer niet.`;
+  // Een winkelaantal is een gemiddelde over periodes en dus zelden rond. De
+  // decimaal blijft staan: het percentage ernaast moet met deze twee getallen
+  // na te rekenen zijn, en 140 tegen 163 geeft -14,1% in plaats van -14,5%.
+  const winkels = (v: number | null | undefined) =>
+    v == null ? "—" : String(Math.round(v * 10) / 10).replace(".", ",");
 
   return (
     <>
@@ -72,11 +101,20 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
           <button className={metric === "omzet" ? "on" : ""} onClick={() => setMetric("omzet")}>Omzet</button>
         </div>
       </div>
-      <table className="data">
+      {/* Met de distributiekolommen erbij past de tabel niet meer op elk
+          scherm. Liever horizontaal schuiven dan de artikelnaam over zes
+          regels breken. */}
+      <div style={{ overflowX: "auto" }}>
+      <table className="data" style={{ minWidth: dist ? 1180 : undefined }}>
         <thead><tr>
-          <th>Artikel</th><th>Merk</th>
+          <th style={{ minWidth: 210 }}>Artikel</th><th>Merk</th>
           <th>On counter<Uitleg tekst={`De eerste ${pWord.toLowerCase()} waarin voor dit artikel omzet gemeten is, over alle geladen jaren. Een ${pWord.toLowerCase()} waarin het artikel wél gemeten is maar niets verkocht telt niet mee. Staat er "≤" bij, dan valt die eerste meting samen met de start van de aanlevering van dit merk: het artikel lag er mogelijk al eerder, maar zo ver terug is er geen data.`} /></th>
           <th>YTD vs LYTD</th><th></th>
+          {dist && <>
+            <th>Distributie<Uitleg tekst={uitlegDistributie} /></th>
+            <th>Distributie<br />YTD vs LYTD<Uitleg tekst={uitlegYtd} /></th>
+            <th>Distributie<br />2 mnd<Uitleg tekst={uitlegTweeMaanden} /></th>
+          </>}
           <th>Laatste {pWord.toLowerCase()}</th><th>Totaal YTD</th>
         </tr></thead>
         <tbody>
@@ -115,12 +153,41 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
                 : "Geen vergelijkbare periodes met vorig jaar."}>
                 <DeltaTag pct={a.ytd_delta_pct} />
               </td>
-              <td>{fmt(a.laatste_periode[metric])}</td>
-              <td>{fmt(a.totaal_ytd[metric])}</td>
+              {dist && <>
+                <td>
+                  {a.distributie ? <>
+                    <Sparkline ytd={a.distributie.reeks.ytd} lytd={a.distributie.reeks.lytd}
+                      isEuro={false} periodWord={pWord} jaar={data.jaar} />
+                    <div className="sub" style={{ fontSize: 10.5 }}>
+                      {winkels(a.distributie.laatste)} winkels
+                    </div>
+                  </> : "—"}
+                </td>
+                {/* De twee bedragen in de title: een percentage zonder de
+                    getallen eronder is niet na te rekenen. */}
+                <td title={a.distributie?.ytd?.vorig
+                  ? `${winkels(a.distributie.ytd.nu)} tegen `
+                    + `${winkels(a.distributie.ytd.vorig)} winkels, gemiddeld over `
+                    + `${a.distributie.ytd.periodes} ${pw}en die beide jaren geleverd zijn`
+                  : "Geen vergelijkbare periodes met vorig jaar."}>
+                  <DeltaTag pct={a.distributie?.ytd?.delta_pct ?? null} />
+                </td>
+                <td title={a.distributie?.twee_maanden?.vorig
+                  ? `${winkels(a.distributie.twee_maanden.nu)} winkels in `
+                    + `${a.distributie.twee_maanden.label} tegen `
+                    + `${winkels(a.distributie.twee_maanden.vorig)} in `
+                    + `${a.distributie.twee_maanden.vorig_label}`
+                  : "Nog geen twee eerdere maanden om mee te vergelijken."}>
+                  <DeltaTag pct={a.distributie?.twee_maanden?.delta_pct ?? null} />
+                </td>
+              </>}
+              <td style={{ whiteSpace: "nowrap" }}>{fmt(a.laatste_periode[metric])}</td>
+              <td style={{ whiteSpace: "nowrap" }}>{fmt(a.totaal_ytd[metric])}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      </div>
 
       {chosen && (
         <div className="card" style={{ marginTop: 20 }}>

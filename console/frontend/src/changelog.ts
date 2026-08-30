@@ -5,6 +5,17 @@
 export type ChangelogEntry = { datum: string; titel: string; tekst: string };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { datum: "2026-08-30", titel: "Distributie per artikel",
+    tekst: "Drie nieuwe kolommen in de artikelanalyse, bij retailers die "
+      + "winkelniveau leveren (nu Etos): het aantal winkels dat een artikel "
+      + "die week daadwerkelijk verkocht, als sparkline; het gemiddelde over "
+      + "dit jaar tegen vorig jaar; en de laatste twee maanden tegen de twee "
+      + "daarvoor. Beide vergelijkingen in procenten, groen of rood. Het "
+      + "aantal verkopende winkels zakt meteen als een artikel uit schappen "
+      + "loopt, terwijl de omzet dat pas maanden later laat zien. De "
+      + "conclusie meldt voortaan de artikelen die zo winkels verliezen. "
+      + "Let op: een winkel die het artikel wél voert maar die week niets "
+      + "verkocht telt niet mee — dat verschil staat niet in de data." },
   { datum: "2026-08-26", titel: "Targets ook op de land- en formule-uitsplitsing",
     tekst: "Zet je de KPI-kaarten op \"Per land\" of \"Per formule\", dan staat "
       + "het target nu ook achter die regels — opgeteld uit de merken die daar "

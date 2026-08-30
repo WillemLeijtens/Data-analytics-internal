@@ -17,8 +17,9 @@ from . import dekking as dekking_mod
 from . import fallback
 from . import promoties as promo_mod
 from . import winkelniveau
-from .periods import (is_afgesloten, kalendermaand, maand_label, period_number,
-                      period_type_of, period_year, sort_key, vorige_periode)
+from .periods import (is_afgesloten, kalendermaand, maand_label, maandbereik,
+                      period_number, period_type_of, period_year, sort_key,
+                      vorige_periode)
 from .profile import active_profile, capabilities
 
 LABEL_TEST = "PROFIEL IN TEST"
@@ -1134,9 +1135,10 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
         merk_periodes[r["merk"]].add(r["periode"])
     n_terug = RECENT_PERIODES if caps["periode"] == "week" else 3
     merk_recent, merk_lytd, merk_dit_jaar, merk_venster = {}, {}, {}, {}
-    merk_eerste = {}
+    merk_eerste, merk_as = {}, {}
     for m, ps in merk_periodes.items():
         eigen_as = sorted(ps, key=sort_key)
+        merk_as[m] = eigen_as
         # De vroegste periode die dit merk überhaupt levert — de ondergrens
         # van wat over "sinds wanneer ligt dit artikel er" te zeggen valt.
         merk_eerste[m] = eigen_as[0]
@@ -1165,8 +1167,14 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
             # 40 startte hoort dit jaar niet als NIEUW te tellen alleen omdat
             # het venster t/m de huidige week nog geen 2025-omzet raakt.
             "lytd_jaar": {"volume": 0, "omzet": 0.0},
-            "recent_omzet": 0.0, "rijen": []})
+            "recent_omzet": 0.0, "rijen": [],
+            # Distributie: de winkels die dit artikel die periode verkocht
+            # hebben. Een set, want dezelfde winkel kan meer dan een regel
+            # per periode hebben (bijv. twee formules).
+            "winkels": defaultdict(set)})
         a["rijen"].append(r)
+        if r["winkel_id"] and r["omzet"]:
+            a["winkels"][r["periode"]].add(r["winkel_id"])
         y, p = period_year(r["periode"]), period_number(r["periode"])
         bucket = a["ytd"] if y == y_now else a["lytd"] if y == y_now - 1 else None
         if bucket is not None and p <= upto:
@@ -1189,6 +1197,80 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
     # Gaten in de aanlevering: een land of formule die eerder stopt, later
     # begint of een gat heeft, vertekent elk artikel dat daar verkocht wordt.
     alle_gaten = dekking_mod.gaten(rows, caps)
+
+    def _verandering(nu, vorig) -> float | None:
+        return round((nu - vorig) / vorig * 100, 1) if nu is not None and vorig else None
+
+    def distributie_van(a) -> dict | None:
+        """Het aantal winkels dat dit artikel per periode verkocht heeft.
+
+        "Distributie" is hier een TELLING uit de feiten: winkels met omzet.
+        Een winkel die het artikel wel op het schap heeft maar die week niets
+        verkocht telt niet mee — dat onderscheid staat niet in sellout-data,
+        en schapaanwezigheid afleiden zou een getal opleveren dat nergens op
+        rust. Bij langzame lopers ligt de echte schapdistributie dus HOGER
+        dan wat hier staat. De vergelijking door de tijd blijft wel zuiver:
+        beide kanten meten hetzelfde.
+
+        Alleen voor retailers die winkelniveau leveren (vandaag Etos). Zonder
+        winkel-ID in de feed valt er niets te tellen; dan blijft de kolom weg
+        in plaats van dat er een schatting verschijnt.
+
+        De noemer is het aantal GELEVERDE periodes van het merk in het
+        venster, niet het aantal kalenderweken. Een periode waarin het merk
+        wel geleverd is maar dit artikel niets verkocht telt als 0 — dat is
+        distributieverlies en hoort mee te wegen.
+        """
+        as_ = merk_as.get(a["merk"]) or []
+        if not as_:
+            return None
+        telling = {p: len(a["winkels"].get(p, ())) for p in as_}
+
+        def gemiddelde(ps: list) -> float | None:
+            return round(sum(telling[p] for p in ps) / len(ps), 1) if ps else None
+
+        # Sparkline op periodeNUMMER, net als de omzetsparkline ernaast:
+        # week 12 van beide jaren staat dan onder elkaar.
+        reeks: dict = {"ytd": {}, "lytd": {}}
+        for p, n in telling.items():
+            jaar = period_year(p)
+            if jaar == y_now:
+                reeks["ytd"][period_number(p)] = n
+            elif jaar == y_now - 1:
+                reeks["lytd"][period_number(p)] = n
+
+        # YTD vs LYTD op het VERGELIJKBARE venster van het merk — dezelfde
+        # doorsnede als de omzetdelta hierboven. Een feed die vorig jaar pas
+        # in week 20 begon zou anders een distributiesprong laten zien die
+        # alleen over de aanlevering gaat en niet over het schap.
+        sel = merk_venster.get(a["merk"]) or set()
+        ytd_nu = gemiddelde([p for p in as_
+                             if period_year(p) == y_now and period_number(p) in sel])
+        ytd_vorig = gemiddelde([p for p in as_
+                                if period_year(p) == y_now - 1 and period_number(p) in sel])
+
+        # Twee maanden tegen de twee daarvoor: dichter op de actualiteit dan
+        # YTD, en lang genoeg om weekruis te dempen. Een lopende maand mag
+        # meedoen omdat dit een GEMIDDELDE per periode is en geen som — een
+        # halve maand drukt het cijfer dus niet.
+        maanden = list(dict.fromkeys(kalendermaand(p) for p in as_))
+        recent_m, vorige_m = maanden[-2:], maanden[-4:-2]
+        recent_ps = [p for p in as_ if kalendermaand(p) in recent_m]
+        vorige_ps = [p for p in as_ if kalendermaand(p) in vorige_m]
+        tm_nu, tm_vorig = gemiddelde(recent_ps), gemiddelde(vorige_ps)
+
+        return {
+            "reeks": reeks,
+            "laatste": telling.get(as_[-1]),
+            "ytd": {"nu": ytd_nu, "vorig": ytd_vorig,
+                    "delta_pct": _verandering(ytd_nu, ytd_vorig),
+                    "periodes": len(sel)},
+            "twee_maanden": {
+                "nu": tm_nu, "vorig": tm_vorig,
+                "delta_pct": _verandering(tm_nu, tm_vorig),
+                "label": maandbereik(recent_m), "vorig_label": maandbereik(vorige_m),
+                "periodes": len(recent_ps), "vorige_periodes": len(vorige_ps)},
+        }
 
     out = []
     for a in per_art.values():
@@ -1243,10 +1325,14 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
             "status": status, "status_reden": reden,
             "dekking": dekking_mod.per_artikel(alle_gaten, a["rijen"], caps),
             "omzet_per_winkel_per_week": per_winkel_week,
+            "distributie": distributie_van(a) if caps.get("winkel") else None,
             "ytd_delta_pct": delta, "ytd_vergelijkbaar": vergelijkbaar})
     out.sort(key=lambda x: -x["totaal_ytd"]["omzet"])
     return {"available": True, "artikelen": out, "laatste_periode": latest,
             "filters": filters, "dekking": alle_gaten,
+            # Zonder winkel-ID in de feed valt distributie niet te tellen; de
+            # kolommen blijven dan weg in plaats van leeg.
+            "distributie_beschikbaar": bool(caps.get("winkel")),
             # Het jaar hoort bij de data, niet bij de kalender van vandaag:
             # de grafieklegenda gebruikt dit in plaats van vaste jaartallen.
             "jaar": y_now,

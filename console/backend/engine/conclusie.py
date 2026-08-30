@@ -165,6 +165,84 @@ def _assortiment_bevindingen(uit: list, a: dict, art: dict):
                      f"artikelanalyse.", aantal=tel[status])
 
 
+# Onder deze daling over twee maanden wordt een artikel gemeld. Distributie
+# schommelt van week tot week (een winkel die net niets verkocht telt niet
+# mee), dus een paar procent zegt niets; 15% over twee maanden is een echte
+# terugloop in het aantal verkopende winkels.
+DISTRIBUTIE_DREMPEL = 15.0
+
+# En alleen artikelen die er iets toe doen: van 2 naar 0,7 winkels is -65%,
+# maar het is geen distributieverhaal. Onder dit aantal winkels in de
+# vergelijkingsperiode blijft een artikel buiten de melding.
+DISTRIBUTIE_MINIMUM = 5
+
+
+def _winkels(v) -> str:
+    """Een winkelaantal is een gemiddelde over periodes en dus zelden rond.
+
+    De decimaal blijft staan zodra het getal niet rond is: het percentage in
+    dezelfde zin moet met deze twee getallen na te rekenen zijn, en "0
+    winkels" naast "-66,7%" leest bovendien als een fout.
+    """
+    if v is None:
+        return "onbekend"
+    return f"{round(v, 1):g}".replace(".", ",")
+
+
+def _distributie_bevindingen(uit: list, art: dict):
+    """Distributie: het aantal winkels dat een artikel daadwerkelijk verkocht.
+
+    Alleen voor retailers die winkelniveau leveren. Twee vragen: loopt de
+    distributie over het jaar op of terug, en welke artikelen verliezen nu
+    winkels? Dat tweede is het actiepunt — een artikel dat uit schappen
+    verdwijnt ziet er in de omzet pas maanden later uit als een probleem.
+    """
+    if not art.get("available") or not art.get("distributie_beschikbaar"):
+        return
+    rijen = [r for r in (art.get("artikelen") or []) if r.get("distributie")]
+    if not rijen:
+        return
+
+    # Portefeuillebreed: het gemiddelde over de artikelen die BEIDE jaren
+    # hebben. Artikelen zonder vorig jaar zouden het gemiddelde anders naar
+    # beneden trekken zonder dat er iets verloren is.
+    beide = [r["distributie"]["ytd"] for r in rijen
+             if r["distributie"]["ytd"]["nu"] is not None
+             and r["distributie"]["ytd"]["vorig"]]
+    if beide:
+        nu = sum(y["nu"] for y in beide) / len(beide)
+        vorig = sum(y["vorig"] for y in beide) / len(beide)
+        pct = (nu - vorig) / vorig * 100
+        _bev(uit, "assortiment", "rood" if pct <= -10 else "oranje" if pct < 0 else "info",
+             f"Distributie {_pct(pct)} tegen vorig jaar",
+             f"Gemiddeld verkocht een artikel dit jaar in {_winkels(nu)} winkels per "
+             f"periode, tegen {_winkels(vorig)} vorig jaar — gemeten over {len(beide)} "
+             f"artikelen die beide jaren geleverd zijn.",
+             nu=round(nu, 1), vorig=round(vorig, 1), delta_pct=round(pct, 1),
+             artikelen=len(beide))
+
+    dalers = sorted(
+        (r for r in rijen
+         if (r["distributie"]["twee_maanden"]["delta_pct"] or 0) <= -DISTRIBUTIE_DREMPEL
+         and (r["distributie"]["twee_maanden"]["vorig"] or 0) >= DISTRIBUTIE_MINIMUM),
+        key=lambda r: r["distributie"]["twee_maanden"]["delta_pct"])
+    if dalers:
+        n = len(rijen)
+        tm = dalers[0]["distributie"]["twee_maanden"]
+        _bev(uit, "assortiment", "rood" if len(dalers) / n >= 0.25 else "oranje",
+             f"{len(dalers)} artikelen verliezen winkels",
+             f"{len(dalers)} van de {n} artikelen verkocht in {tm['label']} in minstens "
+             f"{DISTRIBUTIE_DREMPEL:.0f}% minder winkels dan in {tm['vorig_label']}.",
+             aantal=len(dalers), van=n)
+        for r in dalers[:3]:
+            t = r["distributie"]["twee_maanden"]
+            _bev(uit, "assortiment", "info", f"Distributieverlies: {r.get('naam')}",
+                 f"{r.get('naam')} ({r.get('merk')}) verkocht in {t['label']} gemiddeld in "
+                 f"{_winkels(t['nu'])} winkels, tegen {_winkels(t['vorig'])} in "
+                 f"{t['vorig_label']} ({_pct(t['delta_pct'])}).",
+                 nu=t["nu"], vorig=t["vorig"], delta_pct=t["delta_pct"])
+
+
 def _winkel_bevindingen(uit: list, d: dict, pwoord: str):
     w = d.get("winkelanalyse") or {}
     if w.get("beschikbaar"):
@@ -286,8 +364,9 @@ def bevindingen(conn, retailer_id: str) -> dict:
     pwoord = "maand" if d.get("periode_type") == "maand" else "week"
     uit: list = []
     _omzet_bevindingen(uit, d, pwoord)
-    _assortiment_bevindingen(uit, analytics.assortment(conn, retailer_id),
-                             analytics.articles(conn, retailer_id))
+    art = analytics.articles(conn, retailer_id)
+    _assortiment_bevindingen(uit, analytics.assortment(conn, retailer_id), art)
+    _distributie_bevindingen(uit, art)
     _winkel_bevindingen(uit, d, pwoord)
     _promotie_bevindingen(uit, analytics.promotions(conn, retailer_id), pwoord)
 

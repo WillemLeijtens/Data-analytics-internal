@@ -121,6 +121,23 @@ def maand_label(maand: tuple[int, int]) -> str:
     return f"{MAANDNAMEN[maand[1]]} {maand[0]}"
 
 
+def maandbereik(maanden: list[tuple[int, int]]) -> str | None:
+    """Een leesbaar label voor een reeks maanden: "juli-augustus 2026".
+
+    Het jaartal maar een keer zolang het bereik binnen een jaar valt; over de
+    jaarwissel heen staat het er twee keer ("december 2025-januari 2026"),
+    anders leest het als een bereik binnen het laatste jaar.
+    """
+    if not maanden:
+        return None
+    eerste, laatste = maanden[0], maanden[-1]
+    if eerste == laatste:
+        return maand_label(eerste)
+    if eerste[0] == laatste[0]:
+        return f"{MAANDNAMEN[eerste[1]]}-{MAANDNAMEN[laatste[1]]} {laatste[0]}"
+    return f"{maand_label(eerste)}-{maand_label(laatste)}"
+
+
 def _vandaag_nl() -> dt.date:
     # De retailers en gebruikers leven in Nederland; de serverklok staat op
     # UTC. Zonder tijdzone zou een week rond maandagnacht een paar uur te
