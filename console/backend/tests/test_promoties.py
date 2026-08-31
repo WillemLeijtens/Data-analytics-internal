@@ -426,3 +426,120 @@ def test_actiesuggesties_staan_chronologisch(client):
     merken = [m for _, m in volgorde]
     assert len(set(merken)) > 1
     assert merken != sorted(merken)
+
+
+# ------------------------------------------------ bevestigen per regel
+
+def _bevestig(client, retailer, merk, land, banner, periode, aan=True):
+    return client.put(f"/api/{retailer}/promoties", json={"wijzigingen": [
+        {"merk": merk, "land": land, "banner": banner,
+         "periode": periode, "bevestigd": aan}]})
+
+
+def _bevestigd(client, retailer="kruidvat"):
+    return {(s["merk"], s["periode"])
+            for s in client.get(f"/api/{retailer}/promoties").json()["suggesties"]
+            if s["bevestigd"]}
+
+
+def test_een_wijziging_raakt_alleen_zijn_eigen_regel(client):
+    """De kern van de fix. Het scherm stuurde de HELE lijst terug, afgeleid
+    uit zijn eigen vinkjes; een scherm dat achterliep wiste daarmee
+    bevestigingen die de gebruiker niet had aangeraakt.
+
+    Nu kan een verzoek alleen de regel raken die erin staat — ook als de
+    afzender van de rest niets weet.
+    """
+    import seed
+    weken = {f"2026{w:02d}": (100, 1000.0) for w in range(1, 13)}
+    weken["202604"] = (300, 1500.0)
+    weken["202610"] = (300, 1500.0)
+    upload(client, "kv.xlsx", seed.make_dwh_xlsx([
+        {"sku": "31210001", "gtin": "4049469072773", "desc": "Slant",
+         "brand": "TWEEZERMAN", "weeks": weken}]))
+    s = client.get("/api/kruidvat/promoties").json()["suggesties"]
+    a, b = s[0], s[1]
+
+    _bevestig(client, "kruidvat", a["merk"], a["land"], a["banner"], a["periode"])
+    _bevestig(client, "kruidvat", b["merk"], b["land"], b["banner"], b["periode"])
+    assert _bevestigd(client) == {(a["merk"], a["periode"]), (b["merk"], b["periode"])}
+
+    # Nu een verzoek dat alleen over A gaat: B blijft staan.
+    r = _bevestig(client, "kruidvat", a["merk"], a["land"], a["banner"],
+                  a["periode"], aan=False)
+    assert r.status_code == 200
+    assert _bevestigd(client) == {(b["merk"], b["periode"])}
+
+
+def test_elke_suggestie_heeft_een_eigen_sleutel(client):
+    """Het scherm bouwde de sleutel zelf uit merk|land|banner|periode met een
+    lege string voor een ontbrekende formule. Dat is niet injectief, en dan
+    delen twee rijen hetzelfde vinkje."""
+    import seed
+    upload(client, "kv.xlsx", seed.make_dwh_xlsx([
+        {"sku": "31210001", "gtin": "4049469072773", "desc": "Slant",
+         "brand": "TWEEZERMAN", "weeks": {f"2026{w:02d}": (100, 1000.0)
+                                          for w in range(1, 13)}}]))
+    s = client.get("/api/kruidvat/promoties").json()["suggesties"]
+    sleutels = [x["sleutel"] for x in s]
+    assert all(sleutels)
+    assert len(set(sleutels)) == len(sleutels)
+
+
+def test_beide_vormen_tegelijk_wordt_geweigerd(client):
+    """Twee betekenissen in één verzoek: dan is niet te zeggen wat er hoort
+    te gebeuren, en stil de ene kiezen is precies hoe je data kwijtraakt."""
+    import seed
+    upload(client, "kv.xlsx", seed.make_dwh_xlsx([
+        {"sku": "31210001", "gtin": "4049469072773", "desc": "Slant",
+         "brand": "TWEEZERMAN", "weeks": {"202601": (10, 100.0)}}]))
+    r = client.put("/api/kruidvat/promoties", json={"bevestigd": [], "wijzigingen": []})
+    assert r.status_code == 422
+    r = client.put("/api/kruidvat/promoties", json={})
+    assert r.status_code == 422
+
+
+def test_een_wijziging_voor_een_onbekende_periode_wordt_geweigerd(client):
+    import seed
+    upload(client, "kv.xlsx", seed.make_dwh_xlsx([
+        {"sku": "31210001", "gtin": "4049469072773", "desc": "Slant",
+         "brand": "TWEEZERMAN", "weeks": {"202601": (10, 100.0)}}]))
+    r = _bevestig(client, "kruidvat", "TWEEZERMAN", "NL", "KV", "2099-W01")
+    assert r.status_code == 422
+    assert "2099-W01" in r.json()["detail"]
+
+
+def test_twee_keer_hetzelfde_bevestigen_verandert_niets(client):
+    """De knop kan dubbel afgaan; dan hoort er niet ineens een dubbele rij te
+    staan die de uplift twee keer meetelt."""
+    import seed
+    weken = {f"2026{w:02d}": (100, 1000.0) for w in range(1, 13)}
+    weken["202610"] = (300, 1500.0)
+    upload(client, "kv.xlsx", seed.make_dwh_xlsx([
+        {"sku": "31210001", "gtin": "4049469072773", "desc": "Slant",
+         "brand": "TWEEZERMAN", "weeks": weken}]))
+    s = client.get("/api/kruidvat/promoties").json()["suggesties"][0]
+    for _ in range(3):
+        r = _bevestig(client, "kruidvat", s["merk"], s["land"], s["banner"], s["periode"])
+    assert r.json()["aantal"] == 1
+    import db
+    with db.get_conn() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM promo_confirmations WHERE retailer_id='kruidvat'"
+        ).fetchone()[0] == 1
+
+
+def test_de_volledige_vervanging_blijft_werken(client):
+    """Voor "alles wissen" en voor scripts die de stand in één keer zetten."""
+    import seed
+    weken = {f"2026{w:02d}": (100, 1000.0) for w in range(1, 13)}
+    weken["202610"] = (300, 1500.0)
+    upload(client, "kv.xlsx", seed.make_dwh_xlsx([
+        {"sku": "31210001", "gtin": "4049469072773", "desc": "Slant",
+         "brand": "TWEEZERMAN", "weeks": weken}]))
+    s = client.get("/api/kruidvat/promoties").json()["suggesties"][0]
+    _bevestig(client, "kruidvat", s["merk"], s["land"], s["banner"], s["periode"])
+    assert _bevestigd(client)
+    r = client.put("/api/kruidvat/promoties", json={"bevestigd": []})
+    assert r.status_code == 200 and r.json()["aantal"] == 0
+    assert not _bevestigd(client)

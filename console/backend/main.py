@@ -297,14 +297,36 @@ def promoties(retailer_id: str):
 
 
 class PromoConfirmations(BaseModel):
-    bevestigd: list[dict]  # [{merk, land, banner, periode}]
+    """Twee vormen, met opzet allebei ondersteund.
+
+    `wijzigingen` zet ÉÉN regel aan of uit: [{merk, land, banner, periode,
+    bevestigd}]. Dat is wat het scherm gebruikt. Een klik raakt dan alleen
+    zijn eigen regel, ongeacht wat het scherm verder denkt te weten — met de
+    volledige-vervangingsvorm hieronder kon een scherm dat net herladen was
+    de vinkjes van nog niet opgeslagen kliks overschrijven, en die stand
+    daarna als waarheid terugsturen.
+
+    `bevestigd` vervangt de HELE lijst: [{merk, land, banner, periode}].
+    Blijft bestaan voor "alles wissen" en voor scripts die de stand in één
+    keer zetten.
+    """
+
+    bevestigd: list[dict] | None = None
+    wijzigingen: list[dict] | None = None
+
+
+def _promo_rij(retailer_id: str, c: dict) -> tuple:
+    return (retailer_id, c["merk"], c["land"], c.get("banner"), c["periode"])
 
 
 @app.put("/api/{retailer_id}/promoties")
 def save_promoties(retailer_id: str, body: PromoConfirmations):
+    if (body.bevestigd is None) == (body.wijzigingen is None):
+        raise HTTPException(422, "geef of 'wijzigingen' of 'bevestigd', niet allebei")
     try:
-        rows = [(retailer_id, c["merk"], c["land"], c.get("banner"), c["periode"])
-                for c in body.bevestigd]
+        rows = [_promo_rij(retailer_id, c)
+                for c in (body.wijzigingen if body.wijzigingen is not None
+                          else body.bevestigd)]
     except (KeyError, TypeError) as e:
         raise HTTPException(422, f"onvolledige bevestiging: {e}")
     with db.get_conn() as conn:
@@ -319,11 +341,27 @@ def save_promoties(retailer_id: str, body: PromoConfirmations):
         if spook:
             raise HTTPException(
                 422, f"periode(s) niet in de data van deze retailer: {', '.join(spook)}")
-        conn.execute("DELETE FROM promo_confirmations WHERE retailer_id=?", (retailer_id,))
-        conn.executemany(
-            "INSERT OR IGNORE INTO promo_confirmations (retailer_id, merk, land, banner, periode) "
-            "VALUES (?,?,?,?,?)", rows)
-        return {"ok": True, "aantal": len(rows)}
+        if body.wijzigingen is not None:
+            for c, rij in zip(body.wijzigingen, rows):
+                # NULL vergelijkt in SQL niet met =, en merk/land/formule zijn
+                # alle drie leeg te laten (een feed zonder formule levert
+                # NULL). IS werkt wél op NULL.
+                conn.execute(
+                    "DELETE FROM promo_confirmations WHERE retailer_id=? AND merk IS ? "
+                    "AND land IS ? AND banner IS ? AND periode IS ?", rij)
+                if c.get("bevestigd"):
+                    conn.execute(
+                        "INSERT OR IGNORE INTO promo_confirmations "
+                        "(retailer_id, merk, land, banner, periode) VALUES (?,?,?,?,?)", rij)
+        else:
+            conn.execute("DELETE FROM promo_confirmations WHERE retailer_id=?", (retailer_id,))
+            conn.executemany(
+                "INSERT OR IGNORE INTO promo_confirmations "
+                "(retailer_id, merk, land, banner, periode) VALUES (?,?,?,?,?)", rows)
+        aantal = conn.execute(
+            "SELECT COUNT(*) FROM promo_confirmations WHERE retailer_id=?",
+            (retailer_id,)).fetchone()[0]
+        return {"ok": True, "aantal": aantal}
 
 
 @app.get("/api/{retailer_id}/assortiment")

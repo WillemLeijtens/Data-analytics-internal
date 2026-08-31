@@ -17,6 +17,11 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
   const [saved, setSaved] = useState<string | null>(null);
   // Ketent de automatische saves, zodat ze elkaar nooit inhalen.
   const wachtrij = useRef(Promise.resolve());
+  // Hoeveel kliks er nog niet opgeslagen zijn. Zolang dat er meer dan nul
+  // zijn, mag een herlaad de vinkjes NIET overschrijven: de server kent die
+  // kliks nog niet, en zijn stand overnemen liet vinkjes vanzelf omklappen —
+  // waarna de volgende klik die verkeerde stand als waarheid terugstuurde.
+  const openstaand = useRef(0);
   // Welke suggestieregel is uitgeklapt naar zijn artikelen.
   const [open, setOpen] = useState<string | null>(null);
   const [uitlegOpen, setUitlegOpen] = useState(false);
@@ -25,13 +30,22 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
   const load = () => apiGet(`/${ctx.retailer}/promoties`).then((d) => {
     setData(d);
     setError(null);
+    // Alleen de vinkjes overnemen als er niets meer onderweg is. Anders
+    // wint een oudere serverstand van een klik die nog moet worden
+    // opgeslagen. De laatste save in de keten doet altijd nog een herlaad,
+    // dus de stand komt hoe dan ook goed.
+    if (openstaand.current > 0) return;
     const init: Record<string, boolean> = {};
     for (const s of d.suggesties ?? []) init[key(s)] = s.bevestigd;
     setChecked(init);
   }).catch((e) => setError(String(e?.message ?? e)));
   useEffect(() => { setData(null); load(); }, [ctx.retailer]);
 
-  const key = (s: any) => `${s.merk}|${s.land}|${s.banner ?? ""}|${s.periode}`;
+  // De sleutel komt van de server (analytics.promo_sleutel). Hier hem zelf
+  // in elkaar zetten ging mis zodra een veld leeg kon zijn: een ontbrekende
+  // formule en een lege formule leverden dezelfde sleutel, en dan delen twee
+  // rijen één vinkje.
+  const key = (s: any) => s.sleutel as string;
 
   if (!data) return <LoadState error={error} reload={load} />;
   if (!data.available) return <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />;
@@ -39,23 +53,30 @@ export default function Promoties({ ctx }: { ctx: ShellCtx }) {
   const pw = data.periode_type === "maand" ? "Maand" : "Week";
   const nConfirmed = Object.values(checked).filter(Boolean).length;
 
-  /** Een vinkje slaat zichzelf op. De PUT is een volledige vervanging (dus
-   *  idempotent); de keten garandeert dat snel achter elkaar klikken nooit
-   *  een oudere staat als laatste op de server laat landen. Na elke
-   *  geslaagde PUT een verse load: bevestigen verandert de uplift, de
-   *  basisregel en de markers op het dashboard. Mislukt hij, dan herstelt
-   *  diezelfde load de vinkjes naar wat de server echt heeft — geen stil
-   *  verlies. */
+  /** Een vinkje slaat zichzelf op — en alléén zichzelf.
+   *
+   *  Het scherm stuurde eerst de HELE lijst bevestigingen terug, afgeleid uit
+   *  zijn eigen vinkjes. Daardoor kon één klik regels raken die de gebruiker
+   *  niet had aangeraakt: na elke save volgt een verse load, die zette de
+   *  vinkjes terug naar de serverstand van dát moment (zonder de kliks die
+   *  nog in de wachtrij stonden), en de klik daarna stuurde die achterhaalde
+   *  stand als waarheid terug. Vinkjes gingen zo vanzelf aan en uit.
+   *
+   *  Nu gaat er per klik één wijziging naar de server. Ook met een scherm dat
+   *  achterloopt kan een klik geen andere regel meer omzetten. De keten
+   *  houdt de volgorde aan, en de load erna houdt de uplift, de basisregel en
+   *  de markers op het dashboard actueel. Mislukt een save, dan telt hij af
+   *  en herstelt de laatste load de vinkjes naar wat de server echt heeft. */
   const zetVinkje = (s: any, aan: boolean) => {
-    const nieuw = { ...checked, [key(s)]: aan };
-    setChecked(nieuw);
-    const bevestigd = (data.suggesties as any[])
-      .filter((x) => nieuw[key(x)])
-      .map((x) => ({ merk: x.merk, land: x.land, banner: x.banner, periode: x.periode }));
+    setChecked((vorig) => ({ ...vorig, [key(s)]: aan }));
+    const wijziging = { merk: s.merk, land: s.land, banner: s.banner,
+                        periode: s.periode, bevestigd: aan };
+    openstaand.current += 1;
     wachtrij.current = wachtrij.current
-      .then(() => apiSend(`/${ctx.retailer}/promoties`, "PUT", { bevestigd }))
-      .then(() => { setSaved(`${bevestigd.length} ${pw.toLowerCase()}(en) bevestigd`); })
+      .then(() => apiSend(`/${ctx.retailer}/promoties`, "PUT", { wijzigingen: [wijziging] }))
+      .then((r: any) => { setSaved(`${r?.aantal ?? "?"} ${pw.toLowerCase()}(en) bevestigd`); })
       .catch((e: any) => { setSaved(`Opslaan mislukt: ${e?.message ?? e}`); })
+      .then(() => { openstaand.current -= 1; })
       .then(load);
   };
 

@@ -10,6 +10,7 @@ reporting (the imports flag makes both possible).
 from __future__ import annotations
 
 import datetime as dt
+import json
 from collections import defaultdict
 from statistics import median
 
@@ -1382,6 +1383,18 @@ def promo_markers(conn, retailer_id: str, rows, caps: dict) -> list[dict]:
 
 # ---------------------------------------------------------------- promotions
 
+def promo_sleutel(merk, land, banner, periode) -> str:
+    """De identiteit van een actiesuggestie, in één string.
+
+    Het scherm gebruikte hiervoor `merk|land|banner|periode` met een lege
+    string voor een ontbrekende formule. Dat is niet injectief: een lege
+    formule en een ontbrekende formule vallen samen, en dan delen twee rijen
+    hetzelfde vinkje. Als JSON blijft null iets anders dan "" en kan een
+    scheidingsteken in een merknaam niets kapotmaken.
+    """
+    return json.dumps([merk, land, banner, periode], ensure_ascii=False)
+
+
 def _promo_scope_key(caps):
     return (lambda r: (r["merk"], r["land"], r["banner"])) if caps.get("banner") \
         else (lambda r: (r["merk"], r["land"], None))
@@ -1556,6 +1569,7 @@ def promotions(conn, retailer_id: str) -> dict:
                         stabiel_en_gedaald=stabiel_en_gedaald,
                         n_referentie=ref[2] if ref else None)
                     suggestions.append({
+                        "sleutel": promo_sleutel(merk, land, banner, periode),
                         "merk": merk, "land": land, "banner": banner, "periode": periode,
                         # Eén decimaal: bij hele procenten toonde een daling van
                         # 4,6% "-5%" terwijl de drempel 5% is — het getal sprak
@@ -1592,6 +1606,7 @@ def promotions(conn, retailer_id: str) -> dict:
             # Dezelfde velden als de prijsindex-tak, met lege waarden: één
             # vorm voor de consument, ook al kan deze feed niets afleiden.
             suggestions.append({
+                "sleutel": promo_sleutel(merk, land, banner, periode),
                 "merk": merk, "land": land, "banner": banner, "periode": periode,
                 "suggestie": None, "bevestigd": (merk, land, banner, periode) in confirmed,
                 "drop_pct": None, "z": None, "volume_respons_pct": None,

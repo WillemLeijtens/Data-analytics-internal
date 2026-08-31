@@ -5,6 +5,14 @@
 export type ChangelogEntry = { datum: string; titel: string; tekst: string };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { datum: "2026-08-30", titel: "Fix: vinkjes bij promoties gingen vanzelf aan en uit",
+    tekst: "Een vinkje aanzetten kon een ander vinkje omzetten dat je niet had "
+      + "aangeraakt — en dat verdween dan ook echt uit de database. Oorzaak: "
+      + "elke klik stuurde de HELE lijst bevestigingen terug, en de herlaad na "
+      + "een opslag zette de vinkjes intussen terug naar de serverstand van dat "
+      + "moment, zonder de kliks die nog onderweg waren. Nu gaat er per klik "
+      + "één wijziging naar de server, en een herlaad overschrijft je vinkjes "
+      + "niet zolang er nog iets moet worden opgeslagen." },
   { datum: "2026-08-30", titel: "Actiesuggesties chronologisch",
     tekst: "De tabel Actiesuggesties stond op merk gesorteerd en pas daarbinnen "
       + "op week, waardoor dezelfde week verspreid door de lijst opdook. Nu "

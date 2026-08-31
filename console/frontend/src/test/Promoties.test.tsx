@@ -13,6 +13,7 @@ const ctx = {
 } as any;
 
 const SUGGESTIE = {
+  sleutel: JSON.stringify(["TWEEZERMAN", "NL", "KV", "2026-W05"]),
   merk: "TWEEZERMAN", land: "NL", banner: "KV", periode: "2026-W05",
   suggestie: "afgeprijsd, -20,0%", bevestigd: false,
   drop_pct: 20, z: 6.1, volume_respons_pct: 80, bereik: "assortiment",
@@ -53,18 +54,21 @@ describe("Promoties — automatisch opslaan", () => {
     expect(screen.getByText(/direct opgeslagen/)).toBeInTheDocument();
   });
 
-  it("een vinkje stuurt direct de PUT met de volledige scope", async () => {
+  it("een vinkje stuurt direct één wijziging met de volledige scope", async () => {
+    // Per klik één regel, niet de hele lijst opnieuw: zo kan een klik geen
+    // regel raken die de gebruiker niet heeft aangeraakt.
     const puts = mockFetch();
     render(<Promoties ctx={ctx} />);
     await screen.findByText(/TWEEZERMAN/);
     fireEvent.click(screen.getByRole("checkbox",
       { name: "Markeer TWEEZERMAN 2026-W05 als promotie" }));
     await waitFor(() => expect(puts).toHaveLength(1));
-    expect(puts[0]).toEqual({ bevestigd: [
-      { merk: "TWEEZERMAN", land: "NL", banner: "KV", periode: "2026-W05" }] });
+    expect(puts[0]).toEqual({ wijzigingen: [
+      { merk: "TWEEZERMAN", land: "NL", banner: "KV", periode: "2026-W05",
+        bevestigd: true }] });
   });
 
-  it("uitvinken stuurt de lege lijst — de PUT is een volledige vervanging", async () => {
+  it("uitvinken stuurt dezelfde regel met bevestigd=false", async () => {
     const puts = mockFetch();
     render(<Promoties ctx={ctx} />);
     await screen.findByText(/TWEEZERMAN/);
@@ -72,10 +76,11 @@ describe("Promoties — automatisch opslaan", () => {
       { name: "Markeer TWEEZERMAN 2026-W05 als promotie" });
     fireEvent.click(box);
     fireEvent.click(box);
-    // Twee PUTs, in volgorde: eerst mét, dan zonder. De keten garandeert dat
-    // de laatste klik ook de laatste serverstaat is.
+    // Twee PUTs, in volgorde: eerst aan, dan uit. De keten garandeert dat de
+    // laatste klik ook de laatste serverstaat is.
     await waitFor(() => expect(puts).toHaveLength(2));
-    expect(puts[0].bevestigd).toHaveLength(1);
-    expect(puts[1].bevestigd).toHaveLength(0);
+    expect(puts[0].wijzigingen[0].bevestigd).toBe(true);
+    expect(puts[1].wijzigingen[0].bevestigd).toBe(false);
+    expect(puts[1].wijzigingen[0].periode).toBe("2026-W05");
   });
 });
