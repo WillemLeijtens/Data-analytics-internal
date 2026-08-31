@@ -1574,12 +1574,20 @@ def promotions(conn, retailer_id: str) -> dict:
                         "kwaliteit": kw,
                         "zekerheid": score, "zekerheid_delen": delen,
                         "referentieperiodes": ref[2] if ref else 0})
-        suggestions.sort(key=lambda s: (s["merk"] or "", sort_key(s["periode"])))
+        # Chronologisch, en pas daarbinnen op merk. Deze tabel is een
+        # werklijst: je loopt hem periode voor periode na om te bevestigen wat
+        # er echt een actie was. Op merk groeperen zet dezelfde week zes keer
+        # verspreid over de lijst, en dan is niet te zien of twee merken in
+        # dezelfde week actie voerden.
+        suggestions.sort(key=lambda s: (sort_key(s["periode"]), s["merk"] or ""))
     else:
         # Zonder volume bestaat er geen stukprijs en dus geen automatische
         # suggestie — maar handmatig actieperiodes markeren moet blijven
         # werken, dus elke periode per scope staat in de tabel.
-        for scope, periode in sorted(per_scope_period, key=lambda k: (k[0], sort_key(k[1]))):
+        # Zelfde volgorde als de prijsindex-tak hierboven: chronologisch,
+        # daarbinnen op merk. Twee tabellen die er hetzelfde uitzien horen
+        # ook hetzelfde gesorteerd te zijn.
+        for scope, periode in sorted(per_scope_period, key=lambda k: (sort_key(k[1]), k[0])):
             merk, land, banner = scope
             # Dezelfde velden als de prijsindex-tak, met lege waarden: één
             # vorm voor de consument, ook al kan deze feed niets afleiden.

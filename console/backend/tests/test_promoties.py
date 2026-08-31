@@ -396,3 +396,33 @@ def test_index_zakt_niet_als_duur_artikel_ontbreekt_eind_tot_eind(client):
     ])
     d = client.get("/api/kruidvat/promoties").json()
     assert [s for s in d["suggesties"] if s["periode"] == "2026-W05"] == []
+
+
+def test_actiesuggesties_staan_chronologisch(client):
+    """Deze tabel is een werklijst: je loopt hem periode voor periode na.
+
+    Op merk groeperen zette dezelfde week verspreid door de lijst, en dan is
+    niet te zien dat twee merken in dezelfde week actie voerden. Binnen een
+    periode blijft de volgorde op merk, zodat hij stabiel is.
+    """
+    import seed
+    weken = {f"2026{w:02d}": (100, 1000.0) for w in range(1, 13)}
+    # Twee merken, allebei een prijsdaling in dezelfde TWEE weken. Met maar
+    # een actieweek zou de merkvolgorde toevallig ook alfabetisch zijn en
+    # bewijst de test niets.
+    weken["202604"] = (300, 1500.0)
+    weken["202610"] = (300, 1500.0)
+    upload(client, "kv.xlsx", seed.make_dwh_xlsx([
+        {"sku": "31210001", "gtin": "4049469072773", "desc": "Slant",
+         "brand": "TWEEZERMAN", "weeks": weken},
+        {"sku": "51210001", "gtin": "4049469072810", "desc": "Nagellak",
+         "brand": "DEPEND", "weeks": weken}]))
+    s = client.get("/api/kruidvat/promoties").json()["suggesties"]
+    assert len(s) > 1
+    volgorde = [(x["periode"], x["merk"]) for x in s]
+    assert volgorde == sorted(volgorde)
+    # En niet op merk gegroepeerd: het eerste merk komt meer dan eens terug
+    # nadat het andere merk ertussen heeft gestaan.
+    merken = [m for _, m in volgorde]
+    assert len(set(merken)) > 1
+    assert merken != sorted(merken)

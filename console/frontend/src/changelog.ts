@@ -5,6 +5,11 @@
 export type ChangelogEntry = { datum: string; titel: string; tekst: string };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { datum: "2026-08-30", titel: "Actiesuggesties chronologisch",
+    tekst: "De tabel Actiesuggesties stond op merk gesorteerd en pas daarbinnen "
+      + "op week, waardoor dezelfde week verspreid door de lijst opdook. Nu "
+      + "staat hij chronologisch, met de merken van dezelfde week bij elkaar — "
+      + "zodat te zien is wanneer twee merken in dezelfde week actie voerden." },
   { datum: "2026-08-30", titel: "Distributie per artikel",
     tekst: "Drie nieuwe kolommen in de artikelanalyse, bij retailers die "
       + "winkelniveau leveren (nu Etos): het aantal winkels dat een artikel "
