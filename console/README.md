@@ -627,6 +627,32 @@ Een wijziging in Instellingen werkt direct door: `retailer_settings` en
 dataversie van de analysecache (`main._data_versie`), dus de analyse wordt
 opnieuw gerekend zodra er iets verandert.
 
+### Bevestigen van acties
+
+Een vinkje in de tabel Actiesuggesties slaat zichzelf op. Twee dingen daarin
+zijn met opzet zo:
+
+* **Per klik gaat er één wijziging naar de server** (`{"wijzigingen":
+  [{merk, land, banner, periode, bevestigd}]}`), niet de hele lijst. Het
+  scherm stuurde eerst de complete stand terug, afgeleid uit zijn eigen
+  vinkjes. Na elke opslag volgt een verse herlaad (bevestigen verandert de
+  uplift, de basisregel en de markers op het dashboard), en die herlaad zette
+  de vinkjes terug naar de serverstand van dát moment — zonder de kliks die
+  nog in de wachtrij stonden. Het vinkje van zo'n klik klapte dan om, en de
+  klik daarna stuurde die achterhaalde stand terug als waarheid. Zo
+  verdwenen bevestigingen die niemand had aangeraakt. Met één wijziging per
+  klik kan dat niet meer, ook niet met een scherm dat achterloopt. De
+  volledige-vervangingsvorm (`{"bevestigd": [...]}`) blijft bestaan voor
+  "alles wissen" en voor scripts.
+* **Zolang er kliks onderweg zijn, neemt een herlaad de vinkjes niet over.**
+  De laatste opslag in de keten doet altijd nog een herlaad, dus de stand
+  komt hoe dan ook goed — maar tussentijds wint de gebruiker.
+
+De identiteit van een suggestie komt van de server (`analytics.promo_sleutel`,
+JSON over merk/land/formule/periode). Het scherm bouwde die sleutel eerst zelf
+als `merk|land|banner|periode` met een lege string voor een ontbrekende
+formule; dat is niet injectief, en dan delen twee rijen hetzelfde vinkje.
+
 ### Distributie per artikel
 
 Het aantal winkels dat een artikel in een periode **daadwerkelijk verkocht**

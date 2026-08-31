@@ -10,6 +10,7 @@ reporting (the imports flag makes both possible).
 from __future__ import annotations
 
 import datetime as dt
+import json
 from collections import defaultdict
 from statistics import median
 
@@ -1382,6 +1383,18 @@ def promo_markers(conn, retailer_id: str, rows, caps: dict) -> list[dict]:
 
 # ---------------------------------------------------------------- promotions
 
+def promo_sleutel(merk, land, banner, periode) -> str:
+    """De identiteit van een actiesuggestie, in één string.
+
+    Het scherm gebruikte hiervoor `merk|land|banner|periode` met een lege
+    string voor een ontbrekende formule. Dat is niet injectief: een lege
+    formule en een ontbrekende formule vallen samen, en dan delen twee rijen
+    hetzelfde vinkje. Als JSON blijft null iets anders dan "" en kan een
+    scheidingsteken in een merknaam niets kapotmaken.
+    """
+    return json.dumps([merk, land, banner, periode], ensure_ascii=False)
+
+
 def _promo_scope_key(caps):
     return (lambda r: (r["merk"], r["land"], r["banner"])) if caps.get("banner") \
         else (lambda r: (r["merk"], r["land"], None))
@@ -1556,6 +1569,7 @@ def promotions(conn, retailer_id: str) -> dict:
                         stabiel_en_gedaald=stabiel_en_gedaald,
                         n_referentie=ref[2] if ref else None)
                     suggestions.append({
+                        "sleutel": promo_sleutel(merk, land, banner, periode),
                         "merk": merk, "land": land, "banner": banner, "periode": periode,
                         # Eén decimaal: bij hele procenten toonde een daling van
                         # 4,6% "-5%" terwijl de drempel 5% is — het getal sprak
@@ -1574,16 +1588,25 @@ def promotions(conn, retailer_id: str) -> dict:
                         "kwaliteit": kw,
                         "zekerheid": score, "zekerheid_delen": delen,
                         "referentieperiodes": ref[2] if ref else 0})
-        suggestions.sort(key=lambda s: (s["merk"] or "", sort_key(s["periode"])))
+        # Chronologisch, en pas daarbinnen op merk. Deze tabel is een
+        # werklijst: je loopt hem periode voor periode na om te bevestigen wat
+        # er echt een actie was. Op merk groeperen zet dezelfde week zes keer
+        # verspreid over de lijst, en dan is niet te zien of twee merken in
+        # dezelfde week actie voerden.
+        suggestions.sort(key=lambda s: (sort_key(s["periode"]), s["merk"] or ""))
     else:
         # Zonder volume bestaat er geen stukprijs en dus geen automatische
         # suggestie — maar handmatig actieperiodes markeren moet blijven
         # werken, dus elke periode per scope staat in de tabel.
-        for scope, periode in sorted(per_scope_period, key=lambda k: (k[0], sort_key(k[1]))):
+        # Zelfde volgorde als de prijsindex-tak hierboven: chronologisch,
+        # daarbinnen op merk. Twee tabellen die er hetzelfde uitzien horen
+        # ook hetzelfde gesorteerd te zijn.
+        for scope, periode in sorted(per_scope_period, key=lambda k: (sort_key(k[1]), k[0])):
             merk, land, banner = scope
             # Dezelfde velden als de prijsindex-tak, met lege waarden: één
             # vorm voor de consument, ook al kan deze feed niets afleiden.
             suggestions.append({
+                "sleutel": promo_sleutel(merk, land, banner, periode),
                 "merk": merk, "land": land, "banner": banner, "periode": periode,
                 "suggestie": None, "bevestigd": (merk, land, banner, periode) in confirmed,
                 "drop_pct": None, "z": None, "volume_respons_pct": None,
