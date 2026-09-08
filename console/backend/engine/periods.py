@@ -63,7 +63,21 @@ def parse_period(value, fmt: str) -> str:
         if not m or not 1 <= int(m.group(2)) <= 12:
             raise PeriodError(f"periode {s!r} past niet op formaat yyyy-mm")
         return f"{m.group(1)}-{int(m.group(2)):02d}"
+    if fmt == "mmm-yy":
+        # "Aug-26" (Douglas iCube): Engelse maandafkorting en een jaar van
+        # twee cijfers. De eeuw is 2000: er is geen doorverkoopdata van vóór
+        # 2000 en een tweecijferig jaar boven de 99 bestaat niet.
+        if isinstance(value, (dt.date, dt.datetime)):
+            return f"{value.year}-{value.month:02d}"
+        m = re.fullmatch(r"([A-Za-z]{3})[-\s]?(\d{2})", s)
+        if not m or m.group(1).lower() not in _MAAND_EN:
+            raise PeriodError(f"periode {s!r} past niet op formaat mmm-yy")
+        return f"{2000 + int(m.group(2))}-{_MAAND_EN[m.group(1).lower()]:02d}"
     raise PeriodError(f"onbekend periodeformaat {fmt!r}")
+
+
+_MAAND_EN = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
 
 
 # Gememoiseerd: de analyses roepen deze functies honderdduizenden keren per

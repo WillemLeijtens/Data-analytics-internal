@@ -1,9 +1,9 @@
 {
-  "retailer_id": "douglas",
+  "retailer_id": "demo",
   "version": 1,
   "status": "concept",
   "detection": {
-    "filename_glob": "Douglas_Abverkauf_KW*.xlsx",
+    "filename_glob": "Demo_Abverkauf_KW*.xlsx",
     "sheet": "Sheet1",
     "header_row": 1,
     "required_headers": [

@@ -712,10 +712,10 @@ def import_status(retailer_id: str | None = None):
             if retailer_id and r["id"] != retailer_id:
                 continue
             prof = active_profile(conn, r["id"])
-            caps = capabilities(prof.definition) if prof else None
+            caps = analytics.retailer_caps(conn, r["id"])[0] if prof else None
             statuses = ("ingelezen", "test") if prof and prof.status == "test" else ("ingelezen",)
             rows = conn.execute(
-                "SELECT f.merk, f.land, f.banner, f.periode, im.created_at AS ts "
+                "SELECT f.merk, f.land, f.banner, f.niveau, f.periode, im.created_at AS ts "
                 "FROM sellout_facts f JOIN imports im ON im.id=f.import_id "
                 f"AND im.status IN ({','.join('?' * len(statuses))}) WHERE f.retailer_id=?",
                 (*statuses, r["id"])).fetchall()
@@ -723,18 +723,24 @@ def import_status(retailer_id: str | None = None):
             # merk maar liet een willekeurige periode zien met het totaal
             # aantal rijen over alle periodes erbij — dat las als "actueel"
             # terwijl het over de hele historie ging.
+            # Ook per niveau: bij een gesplitste feed zijn het artikel- en
+            # het winkelrapport twee leveringen, en een achterlopend
+            # winkelrapport hoort hier als eigen regel te staan.
             grouped: dict[tuple, list] = {}
             for row in rows:
                 key = (row["merk"], row["land"],
-                       row["banner"] if caps and caps["banner"] else None)
+                       row["banner"] if caps and caps["banner"] else None,
+                       row["niveau"])
                 grouped.setdefault(key, []).append(row)
             feeds = []
-            for (merk, land, banner), feed_rows in sorted(
+            for (merk, land, banner, niveau), feed_rows in sorted(
                     grouped.items(), key=lambda kv: tuple(x or "" for x in kv[0])):
                 latest = max((row["periode"] for row in feed_rows), key=sort_key)
                 latest_rows = [row for row in feed_rows if row["periode"] == latest]
                 scope = "per winkel" if caps and caps["winkel"] and not caps["banner"] else \
                     "/".join(x for x in (land, banner) if x) or "—"
+                if niveau:
+                    scope = f"{scope} · {niveau}rapport"
                 # Versheid per feed, niet alleen per retailer: één merk dat
                 # weken achterloopt hoort hier rood te staan, ook als de rest
                 # actueel is. Zelfde drempels als signals.data_signal.
@@ -817,7 +823,10 @@ def get_settings(retailer_id: str):
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
         prof = active_profile(conn, retailer_id)
-        caps = capabilities(prof.definition) if prof else None
+        # Aan de feiten getoetst: met de ruwe profielvlag zou het scherm het
+        # handmatige winkelaantal blokkeren ("uit feed") terwijl het
+        # dashboard zonder winkelbestand juist op dat aantal rekent.
+        caps = analytics.retailer_caps(conn, retailer_id)[0] if prof else None
         return {
             "capabilities": caps,
             # Welke merk/land/banner-combinaties er daadwerkelijk in de feed

@@ -77,16 +77,20 @@ def data_signal(conn, retailer_id: str) -> tuple[str, str]:
     # (TWEEZERMAN op de echte Kruidvat-bestanden). MAX(periode) per merk kan
     # lexicografisch: het periodeformaat ('2026-W07', '2026-07') heeft vaste
     # breedte en loopt gelijk met sort_key.
+    # Ook per niveau: bij een gesplitste feed (Douglas) is het artikel- en
+    # het winkelrapport elk een eigen levering, en een achterlopend
+    # winkelrapport hoort het signaal net zo te kleuren als een merk.
     rows = conn.execute(
-        "SELECT f.merk, MAX(f.periode) AS periode, MAX(f.periode_type) AS periode_type "
-        "FROM sellout_facts f "
+        "SELECT f.merk, f.niveau, MAX(f.periode) AS periode, "
+        "MAX(f.periode_type) AS periode_type FROM sellout_facts f "
         f"JOIN imports im ON im.id=f.import_id AND im.status IN ({','.join('?' * len(statuses))}) "
-        "WHERE f.retailer_id=? GROUP BY f.merk", (*statuses, retailer_id)).fetchall()
+        "WHERE f.retailer_id=? GROUP BY f.merk, f.niveau", (*statuses, retailer_id)).fetchall()
     if not rows:
         return "grey", "Nog geen data"
     ptype = rows[0]["periode_type"]
     unit = "week" if ptype == "week" else "maand"
-    per_feed = [(r["merk"], r["periode"], periods_behind(r["periode"], ptype))
+    per_feed = [(f"{r['merk'] or 'feed'} ({r['niveau']}rapport)" if r["niveau"] else r["merk"],
+                 r["periode"], periods_behind(r["periode"], ptype))
                 for r in rows]
     merk, _periode, behind = max(per_feed, key=lambda f: f[2])
     nieuwste = max(p for _, p, _b in per_feed)
@@ -126,12 +130,22 @@ def distributie_signal(conn, retailer_id: str) -> tuple[str, str]:
     prof = active_profile(conn, retailer_id)
     if not prof:
         return "grey", "n.v.t."
-    caps = capabilities(prof.definition)
+    # Aan de feiten getoetst, niet de ruwe profielvlag: die zegt wat het
+    # formaat kán. Zonder winkel-ID's in de data zou de winkelanalyse hier
+    # stil leeg blijven en het signaal altijd groen staan.
+    caps, _ = analytics.retailer_caps(conn, retailer_id)
 
     if caps.get("winkel"):
-        rows = analytics.load_facts(conn, retailer_id)
+        # De winkelverdeling (bij een gesplitste feed het winkelrapport), en
+        # zonder de online-formules: een lege webshopmaand is geen gestopte
+        # winkel — dezelfde uitzondering als op het dashboard.
+        online = set(prof.definition.get("online_banners") or [])
+        rows = [r for r in analytics.load_facts(conn, retailer_id, niveau="winkel")
+                if r["banner"] not in online]
         if not rows:
             return "grey", "Nog geen data"
+        if not any(r["winkel_id"] for r in rows):
+            return "grey", "Nog geen winkelbestand"
         jaar = max(period_year(r["periode"]) for r in rows)
         w = analytics.winkelanalyse(rows, caps, jaar)
         gestopt = len(w.get("gestopt", []))
@@ -200,7 +214,9 @@ def overview(conn) -> dict:
     cards = []
     for r in retailers:
         prof = active_profile(conn, r["id"])
-        caps = capabilities(prof.definition) if prof else None
+        # Aan de feiten getoetst: de kaart zegt anders "winkels uit de
+        # aanlevering" terwijl het dashboard met een schatting rekent.
+        caps = analytics.retailer_caps(conn, r["id"])[0] if prof else None
         cards.append({
             "id": r["id"], "naam": r["naam"], "aangesloten": bool(r["aangesloten"]),
             "profiel": {"versie": prof.version, "status": prof.status} if prof else None,

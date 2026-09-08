@@ -603,7 +603,11 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           tagAccent={data.laatste_periode_compleet === false}
           value={fmtNum(k.volume.waarde)} breakdown={verdeling(k.volume)}
           deltaPct={k.volume.delta_pct} vorigePeriode={k.volume.vorige_periode} pWord={pWord} />}
-        <KpiCard label="Omzet per winkel" tag={k.omzet_per_winkel.schatting ? "SCHATTING" : "WINKEL"}
+        <KpiCard
+          // Formules die geen winkel zijn (de webshop) tellen wel in de
+          // omzet, niet in "per winkel" — dat hoort in het label te staan.
+          label={k.omzet_per_winkel.exclusief?.length ? "Omzet per fysieke winkel" : "Omzet per winkel"}
+          tag={k.omzet_per_winkel.schatting ? "SCHATTING" : "WINKEL"}
           tagAccent={k.omzet_per_winkel.schatting}
           value={fmtEur(k.omzet_per_winkel.waarde)} isEuro
           breakdown={verdeling(k.omzet_per_winkel)}
@@ -619,9 +623,12 @@ export default function Dashboard({ ctx }: { ctx: ShellCtx }) {
           sub={k.omzet_per_winkel.winkels
             // Bij een SCHATTING komt het aantal uit Instellingen; "met omzet"
             // zou dan een telling suggereren die er niet is.
-            ? k.omzet_per_winkel.schatting
+            ? (k.omzet_per_winkel.schatting
               ? `${k.omzet_per_winkel.winkels} winkels (handmatig ingesteld)`
-              : `${k.omzet_per_winkel.winkels} winkels met omzet in ${y.jaar}`
+              : `${k.omzet_per_winkel.winkels} winkels met omzet in ${y.jaar}`)
+              + (k.omzet_per_winkel.exclusief?.length
+                ? ` · ${k.omzet_per_winkel.exclusief.join(", ")} niet meegeteld`
+                : "")
             : "Geen winkelaantal ingesteld"} />
       </div>
 

@@ -263,6 +263,9 @@ def _builtin_content_match(content: bytes, profile: Profile,
     if builtin == "etos_datagrid":
         from . import etos_datagrid
         return etos_datagrid.content_matches(content)
+    if builtin == "douglas_icube":
+        from . import douglas_icube
+        return douglas_icube.content_matches(content)
     if builtin != "kruidvat_dwh":
         return False
     try:
@@ -415,6 +418,14 @@ def parse_file(filename: str, content: bytes, profile: Profile) -> dict:
         from . import etos_datagrid
         try:
             return etos_datagrid.parse_workbook(content)
+        except ValueError as e:
+            raise ParseError(str(e))
+        except Exception as e:  # noqa: BLE001 - onleesbaar bestand is geen crash
+            raise ParseError(f"bestand kon niet worden gelezen: {e}") from e
+    if builtin == "douglas_icube":
+        from . import douglas_icube
+        try:
+            return douglas_icube.parse_workbook(content)
         except ValueError as e:
             raise ParseError(str(e))
         except Exception as e:  # noqa: BLE001 - onleesbaar bestand is geen crash

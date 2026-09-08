@@ -43,9 +43,9 @@ def make_xlsx(headers, rows, sheet="Sheet1", meta_rows=0) -> bytes:
 DG_HEADERS = ["Kalenderwoche", "Artikelnummer", "Marke", "Absatz", "Umsatz"]
 
 
-def douglas_definition(break_period=False) -> dict:
+def demo_definition(break_period=False) -> dict:
     return {
-        "detection": {"filename_glob": "Douglas_Abverkauf_KW*.xlsx", "sheet": "Sheet1",
+        "detection": {"filename_glob": "Demo_Abverkauf_KW*.xlsx", "sheet": "Sheet1",
                       "header_row": 1, "required_headers": DG_HEADERS[:3],
                       "filetype": "xlsx", "csv_delimiter": None, "decimal": ","},
         "period": {"type": "week",
@@ -65,6 +65,12 @@ def ship_profile(retailer_id: str, definition: dict, status: str = "live"):
     import db
     from engine.profile import save_profile
     with db.get_conn() as conn:
+        # De fictieve oefenretailer "demo" bestaat alleen in de tests; de
+        # productiedatabase kent hem niet (Douglas is inmiddels een echte
+        # retailer met een eigen ingebouwde parser).
+        if retailer_id == "demo":
+            conn.execute("INSERT OR IGNORE INTO retailers (id, naam, aangesloten) "
+                         "VALUES ('demo','Demo',0)")
         p = save_profile(conn, retailer_id, definition, status)
         if status == "live":
             conn.execute("UPDATE retailers SET aangesloten=1 WHERE id=?", (retailer_id,))
@@ -124,34 +130,34 @@ def test_full_parser_flow(client):
     # 1. Unknown file -> PROFIEL NODIG; the sniffed columns are the input
     #    for building the parser in the project.
     f2026 = make_xlsx(DG_HEADERS, dg_rows(2026, [30, 31, 32]))
-    result = upload(client, "Douglas_Abverkauf_KW32.xlsx", f2026)
+    result = upload(client, "Demo_Abverkauf_KW32.xlsx", f2026)
     assert result["status"] == "profiel_nodig"
     assert result["sniff"]["columns"] == DG_HEADERS
 
     # 2. The project ships a profile (v1 live).
-    ship_profile("douglas", douglas_definition())
+    ship_profile("demo", demo_definition())
     profs = [p for p in client.get("/api/parser/profielen").json()
-             if p["retailer_id"] == "douglas"]
+             if p["retailer_id"] == "demo"]
     assert [(p["version"], p["status"]) for p in profs] == [(1, "live")]
 
     # Een onvolledig profiel meeleveren blijft geweigerd worden.
-    bad = douglas_definition()
+    bad = demo_definition()
     bad["period"] = {"type": "week", "source_column": "", "format": "yyyy-Www"}
     with pytest.raises(ValueError):
-        ship_profile("douglas", bad)
+        ship_profile("demo", bad)
 
     # 3. Same file again -> recognised and loaded (replaces the old row)
-    result = upload(client, "Douglas_Abverkauf_KW32.xlsx", f2026)
+    result = upload(client, "Demo_Abverkauf_KW32.xlsx", f2026)
     assert result["status"] == "ingelezen" and result["rows"] == 6
     imports = client.get("/api/imports").json()
     assert [i["status"] for i in imports] == ["ingelezen"]
 
     # 4. History: previous year through the same pipeline, cheaper week 31
     f2025 = make_xlsx(DG_HEADERS, dg_rows(2025, [30, 31, 32], factor=0.9))
-    result = upload(client, "Douglas_Abverkauf_KW31.xlsx", f2025)
+    result = upload(client, "Demo_Abverkauf_KW31.xlsx", f2025)
     assert result["status"] == "ingelezen" and result["rows"] == 6
 
-    dash = client.get("/api/douglas/dashboard").json()
+    dash = client.get("/api/demo/dashboard").json()
     assert dash["available"] and not dash["empty"]
     assert dash["laatste_periode"] == "2026-W32"
     assert dash["trend"]["jaren"] == [2025, 2026]
@@ -164,17 +170,17 @@ def test_full_parser_flow(client):
     assert "SCHATTING" in dash["labels"]
 
     # Article-level analyses stay off with a visible reason (no artikel_ean)
-    art = client.get("/api/douglas/artikelen").json()
+    art = client.get("/api/demo/artikelen").json()
     assert not art["available"] and "OP MERKNIVEAU" in art["labels"]
 
     # Promotions run on merk+land scope without banner
-    promo = client.get("/api/douglas/promoties").json()
+    promo = client.get("/api/demo/promoties").json()
     assert promo["available"]
     assert promo["resolution"]["level_used"]["scope"] == "merk+land"
 
-    # Overview now shows douglas as connected with a live profile
+    # Overview now shows demo as connected with a live profile
     ov = client.get("/api/overview").json()
-    dg = next(c for c in ov["retailers"] if c["id"] == "douglas")
+    dg = next(c for c in ov["retailers"] if c["id"] == "demo")
     assert dg["aangesloten"] and dg["profiel"]["status"] == "live"
 
 
@@ -182,14 +188,14 @@ def test_databases_survive_restart(client, tmp_path, monkeypatch):
     """Profiles and facts live in the mounted database file, not in the
     container: a fresh app process on the same file sees everything."""
     f = make_xlsx(DG_HEADERS, dg_rows(2026, [32]))
-    ship_profile("douglas", douglas_definition())
-    upload(client, "Douglas_Abverkauf_KW32.xlsx", f)
+    ship_profile("demo", demo_definition())
+    upload(client, "Demo_Abverkauf_KW32.xlsx", f)
 
     # Simulate a restart: re-import main against the SAME database file.
     for name in ("db", "seed", "main"):
         sys.modules.pop(name, None)
     main2 = importlib.import_module("main")
     c2 = TestClient(main2.app)
-    profs = [p for p in c2.get("/api/parser/profielen").json() if p["retailer_id"] == "douglas"]
+    profs = [p for p in c2.get("/api/parser/profielen").json() if p["retailer_id"] == "demo"]
     assert profs[0]["status"] == "live"
-    assert c2.get("/api/douglas/dashboard").json()["available"]
+    assert c2.get("/api/demo/dashboard").json()["available"]

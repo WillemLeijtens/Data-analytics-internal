@@ -69,10 +69,26 @@ def test_geen_nieuwe_winkels_zonder_vorig_jaar():
 
 
 def test_nieuwe_winkel_wel_gemeld_met_historie():
-    rows = [feit("2025-01", "1", "DEPEND", 100.0), feit("2026-01", "1", "DEPEND", 110.0),
-            feit("2026-01", "2", "DEPEND", 40.0)]      # winkel 2 is echt nieuw
+    # Drie maanden vorig jaar: genoeg om "vorig jaar niets" een waarneming
+    # over de winkel te laten zijn in plaats van over de data.
+    rows = [feit(f"2025-{m:02d}", "1", "DEPEND", 100.0) for m in (1, 2, 3)]
+    rows += [feit("2026-01", "1", "DEPEND", 110.0),
+             feit("2026-01", "2", "DEPEND", 40.0)]      # winkel 2 is echt nieuw
     w = analytics.winkelanalyse(rows, CAPS_WINKEL, 2026)
     assert [a["winkel_id"] for a in w["toegevoegd"]] == ["2"]
+    assert w["historie_ontbreekt"] == []
+
+
+def test_geen_nieuwe_winkels_bij_een_dunne_historie():
+    """Douglas levert per bestand één maand plus dezelfde maand vorig jaar.
+    Met alleen augustus 2025 geladen betekent "vorig jaar niets" alleen
+    "in augustus vorig jaar niets" — daar is een winkel niet nieuw op."""
+    rows = [feit("2025-08", "1", "DEPEND", 100.0), feit("2026-08", "1", "DEPEND", 110.0),
+            feit("2026-08", "2", "DEPEND", 40.0)]
+    w = analytics.winkelanalyse(rows, CAPS_WINKEL, 2026)
+    assert w["toegevoegd"] == []
+    assert w["vorig_jaar_maanden"] == 1
+    # De stille-winkels-kant werkt gewoon: dat gaat over dit jaar.
     assert w["historie_ontbreekt"] == []
 
 

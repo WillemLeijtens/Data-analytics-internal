@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from test_parser_flow import (DG_HEADERS, dg_rows, douglas_definition,  # noqa: E402
+from test_parser_flow import (DG_HEADERS, dg_rows, demo_definition,  # noqa: E402
                               make_xlsx, ship_profile, upload)
 from engine.signals import periods_behind  # noqa: E402
 
@@ -33,9 +33,9 @@ def client(tmp_path, monkeypatch):
     return TestClient(main.app)
 
 
-def publish_douglas(client, break_period=False):
+def publish_demo(client, break_period=False):
     f = make_xlsx(DG_HEADERS, dg_rows(2026, [32]))
-    ship_profile("douglas", douglas_definition(break_period))
+    ship_profile("demo", demo_definition(break_period))
     return f
 
 
@@ -43,8 +43,8 @@ def publish_douglas(client, break_period=False):
 
 def test_batch_keeps_good_files_when_one_crashes(client, monkeypatch):
     """A crash on file 2 must not roll back file 1 (each file = own txn)."""
-    f = publish_douglas(client)
-    upload(client, "Douglas_Abverkauf_KW32.xlsx", f)  # baseline loaded
+    f = publish_demo(client)
+    upload(client, "Demo_Abverkauf_KW32.xlsx", f)  # baseline loaded
 
     from engine import importer as imp
     real = imp.parser_mod.detect
@@ -58,14 +58,14 @@ def test_batch_keeps_good_files_when_one_crashes(client, monkeypatch):
     f30 = make_xlsx(DG_HEADERS, dg_rows(2026, [30]))
     f31 = make_xlsx(DG_HEADERS, dg_rows(2026, [31]))
     r = client.post("/api/import", files=[
-        ("files", ("Douglas_Abverkauf_KW30.xlsx", f30)),
-        ("files", ("Douglas_Abverkauf_KW31.xlsx", f31)),
+        ("files", ("Demo_Abverkauf_KW30.xlsx", f30)),
+        ("files", ("Demo_Abverkauf_KW31.xlsx", f31)),
     ]).json()["results"]
     assert [x["status"] for x in r] == ["ingelezen", "error"]
 
     # File 1's rows must actually BE there, crash on file 2 notwithstanding.
     # (JSON turns the year/period dict keys into strings.)
-    dash = client.get("/api/douglas/dashboard").json()
+    dash = client.get("/api/demo/dashboard").json()
     periodes = set(dash["trend"]["series"]["omzet"]["2026"].keys())
     assert {"30", "32"} <= periodes and "31" not in periodes
 
@@ -73,29 +73,29 @@ def test_batch_keeps_good_files_when_one_crashes(client, monkeypatch):
 # ------------------------------------------------------- failed re-import
 
 def test_failed_reimport_keeps_existing_facts(client):
-    f = publish_douglas(client)
-    assert upload(client, "Douglas_Abverkauf_KW32.xlsx", f)["status"] == "ingelezen"
+    f = publish_demo(client)
+    assert upload(client, "Demo_Abverkauf_KW32.xlsx", f)["status"] == "ingelezen"
 
     # A newer LIVE profile with a period column the file doesn't have:
     # re-uploading now fails to parse — the loaded facts must survive.
-    publish_douglas(client, break_period=True)
-    result = upload(client, "Douglas_Abverkauf_KW32.xlsx", f)
+    publish_demo(client, break_period=True)
+    result = upload(client, "Demo_Abverkauf_KW32.xlsx", f)
     assert result["status"] == "error"
     assert "blijft ongewijzigd" in result["detail"]
 
     imports = client.get("/api/imports").json()
     assert [i["status"] for i in imports] == ["ingelezen"]
-    assert client.get("/api/douglas/dashboard").json()["available"]
-    assert not client.get("/api/douglas/dashboard").json()["empty"]
+    assert client.get("/api/demo/dashboard").json()["available"]
+    assert not client.get("/api/demo/dashboard").json()["empty"]
 
 
 def test_previously_loaded_file_survives_when_detection_turns_ambiguous(client):
-    f = publish_douglas(client)
-    assert upload(client, "Douglas_Abverkauf_KW32.xlsx", f)["status"] == "ingelezen"
+    f = publish_demo(client)
+    assert upload(client, "Demo_Abverkauf_KW32.xlsx", f)["status"] == "ingelezen"
     # A SECOND retailer ships a profile with the same glob and headers:
     # detection is now ambiguous -> the loaded import must stay untouched.
-    ship_profile("etos", douglas_definition())
-    result = upload(client, "Douglas_Abverkauf_KW32.xlsx", f)
+    ship_profile("etos", demo_definition())
+    result = upload(client, "Demo_Abverkauf_KW32.xlsx", f)
     assert result["status"] == "ingelezen"
     assert "blijft staan" in result["detail"]
     assert [i["status"] for i in client.get("/api/imports").json()] == ["ingelezen"]
@@ -165,11 +165,11 @@ def test_malformed_promo_confirmation_is_422(client):
 def test_test_endpoint_uses_shipped_profile(client):
     f = make_xlsx(DG_HEADERS, dg_rows(2026, [32]))
     # Zonder profiel: nette 404, geen crash.
-    assert client.post("/api/parser/douglas/test",
-                       files={"file": ("Douglas_Abverkauf_KW32.xlsx", f)}).status_code == 404
-    ship_profile("douglas", douglas_definition())
-    r = client.post("/api/parser/douglas/test",
-                    files={"file": ("Douglas_Abverkauf_KW32.xlsx", f)}).json()
+    assert client.post("/api/parser/demo/test",
+                       files={"file": ("Demo_Abverkauf_KW32.xlsx", f)}).status_code == 404
+    ship_profile("demo", demo_definition())
+    r = client.post("/api/parser/demo/test",
+                    files={"file": ("Demo_Abverkauf_KW32.xlsx", f)}).json()
     assert r["ok"] and r["rijen"] == 2
 
 
@@ -247,7 +247,7 @@ def test_cleanup_demo_keeps_real_imports_and_own_settings(client, tmp_path, monk
 def test_profile_publishing_is_no_longer_exposed(client):
     """Zelf mappen is bewust uit de app: profielen komen uit het project.
     De oude endpoints horen weg te zijn, niet alleen verborgen in de UI."""
-    r = client.post("/api/parser/douglas/profielen",
+    r = client.post("/api/parser/demo/profielen",
                     json={"definition": {"detection": {}}, "status": "live"})
     assert r.status_code in (404, 405)
     assert client.get("/api/parser/voorstel").status_code in (404, 405)
@@ -337,17 +337,17 @@ def test_duplicate_keys_within_one_flat_file_sum(client):
     exports splitsen een week soms over meerdere regels (bijv. promo en
     regulier). Dubbel tellen over bestanden heen kan niet: een herlevering
     vervangt eerst alle overlappende sleutels."""
-    ship_profile("douglas", douglas_definition())
+    ship_profile("demo", demo_definition())
     rows = [["2026-W32", "DG-1", "TWEEZERMAN", 10, 100.0],
             ["2026-W32", "DG-1", "TWEEZERMAN", 5, 50.0]]
     f = make_xlsx(DG_HEADERS, rows)
-    assert upload(client, "Douglas_Abverkauf_KW32.xlsx", f)["status"] == "ingelezen"
-    assert client.get("/api/douglas/dashboard").json()["kpi"]["omzet"]["waarde"] == 150.0
+    assert upload(client, "Demo_Abverkauf_KW32.xlsx", f)["status"] == "ingelezen"
+    assert client.get("/api/demo/dashboard").json()["kpi"]["omzet"]["waarde"] == 150.0
 
     # Herlevering van dezelfde week in een ander bestand: vervangt, telt niet op.
     f2 = make_xlsx(DG_HEADERS, [["2026-W32", "DG-1", "TWEEZERMAN", 12, 120.0]])
-    assert upload(client, "Douglas_Abverkauf_KW32_v2.xlsx", f2)["status"] == "ingelezen"
-    assert client.get("/api/douglas/dashboard").json()["kpi"]["omzet"]["waarde"] == 120.0
+    assert upload(client, "Demo_Abverkauf_KW32_v2.xlsx", f2)["status"] == "ingelezen"
+    assert client.get("/api/demo/dashboard").json()["kpi"]["omzet"]["waarde"] == 120.0
 
 
 def test_upload_path_in_filename_is_stripped(client):
@@ -436,29 +436,29 @@ def test_fractioneel_aantal_wordt_geweigerd_niet_stil_afgerond(client):
     from engine import parser as P
     from engine.profile import Profile
 
-    prof = Profile(id=1, retailer_id="douglas", version=1, status="live",
-                   definition=douglas_definition())
+    prof = Profile(id=1, retailer_id="demo", version=1, status="live",
+                   definition=demo_definition())
     for aantal in (10.5, 11.5, 0.4, 2.5):
         f = make_xlsx(DG_HEADERS, [["2026-W32", "A1", "TWEEZERMAN", aantal, 100.0]])
         with pytest.raises(P.ParseError) as exc:
-            P.parse_file("Douglas_Abverkauf_KW32.xlsx", f, prof)
+            P.parse_file("Demo_Abverkauf_KW32.xlsx", f, prof)
         fouten = exc.value.row_errors
         assert fouten and "niet heel" in fouten[0]["fout"], \
             f"aantal {aantal} hoort geweigerd te worden, kreeg {fouten}"
 
     # En via de importroute levert het een nette fout op, geen half resultaat.
-    ship_profile("douglas", douglas_definition())
+    ship_profile("demo", demo_definition())
     f = make_xlsx(DG_HEADERS, [["2026-W32", "A1", "TWEEZERMAN", 10.5, 100.0]])
-    r = upload(client, "Douglas_Abverkauf_KW32.xlsx", f)
+    r = upload(client, "Demo_Abverkauf_KW32.xlsx", f)
     assert r["status"] == "error"
-    assert client.get("/api/douglas/dashboard").json().get("empty") is not False
+    assert client.get("/api/demo/dashboard").json().get("empty") is not False
 
 
 def test_heel_aantal_als_float_blijft_gewoon_werken(client):
     """Tegenproef: 10.0 uit een Excel-getalcel is gewoon 10 stuks en mag
     niet ineens geweigerd worden."""
-    ship_profile("douglas", douglas_definition())
+    ship_profile("demo", demo_definition())
     f = make_xlsx(DG_HEADERS, [["2026-W32", "A1", "TWEEZERMAN", 10.0, 100.0]])
-    r = upload(client, "Douglas_Abverkauf_KW32.xlsx", f)
+    r = upload(client, "Demo_Abverkauf_KW32.xlsx", f)
     assert r["status"] == "ingelezen"
-    assert client.get("/api/douglas/dashboard").json()["kpi"]["volume"]["waarde"] == 10
+    assert client.get("/api/demo/dashboard").json()["kpi"]["volume"]["waarde"] == 10

@@ -52,6 +52,19 @@ const NIVEAU_UITLEG: Record<string, string> = {
     + "ingestelde aantal, geen telling uit de data zelf.",
 };
 
+/** Uitleg bij een niveau-label; "WINKELBESTAND T/M 2026-08" draagt de maand
+ *  in het label zelf en matcht dus op voorvoegsel. */
+function niveauUitleg(label: string): string | undefined {
+  if (label.startsWith("WINKELBESTAND T/M ")) {
+    return "Deze retailer levert de omzet per artikel en per winkel als twee "
+      + "aparte maandrapporten. Het winkelrapport loopt achter op het "
+      + "artikelrapport: het dashboard rekent t/m de maand in dit label, de "
+      + "artikelanalyse loopt verder. Zodra het winkelrapport van de nieuwe "
+      + "maand geladen is, verdwijnt dit label.";
+  }
+  return NIVEAU_UITLEG[label];
+}
+
 export function LevelStrip({ labels, uitleg, retailer }:
   { labels: string[]; uitleg?: string; retailer: string }) {
   if (!labels.length) return null;
@@ -62,7 +75,7 @@ export function LevelStrip({ labels, uitleg, retailer }:
         {labels.map((l) => (
           <span key={l} style={{ display: "inline-flex", alignItems: "center" }}>
             <span className="chip static">{l}</span>
-            {NIVEAU_UITLEG[l] && <Uitleg tekst={NIVEAU_UITLEG[l]} />}
+            {niveauUitleg(l) && <Uitleg tekst={niveauUitleg(l)!} />}
           </span>
         ))}
       </span>

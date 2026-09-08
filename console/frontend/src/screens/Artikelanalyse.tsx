@@ -30,7 +30,12 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
       </div>
     );
 
-  const isEuro = metric === "omzet";
+  // Zonder stuks in de feed (Douglas levert alleen netto-omzet) is er geen
+  // Volume-stand: de knop gaat uit en de detailgrafiek toont alleen omzet.
+  // Zelfde regel als op het dashboard.
+  const hasVolume = data.capabilities?.volume !== false;
+  const effMetric = !hasVolume && metric === "volume" ? "omzet" : metric;
+  const isEuro = effMetric === "omzet";
   const pWord = data.periode_type === "maand" ? "Maand" : "Week";
   // Beide soorten signalen tellen mee. Stond hier alleen `a.status`, dan viel
   // een artikel met enkel een datagat buiten het aantal én uit de lijst zodra
@@ -97,8 +102,10 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h2>Sellout per artikel</h2>
         <div className="seg">
-          <button className={metric === "volume" ? "on" : ""} onClick={() => setMetric("volume")}>Volume</button>
-          <button className={metric === "omzet" ? "on" : ""} onClick={() => setMetric("omzet")}>Omzet</button>
+          <button className={effMetric === "volume" ? "on" : ""} disabled={!hasVolume}
+            title={hasVolume ? undefined : "Deze retailer levert geen volumedata"}
+            onClick={() => setMetric("volume")}>Volume</button>
+          <button className={effMetric === "omzet" ? "on" : ""} onClick={() => setMetric("omzet")}>Omzet</button>
         </div>
       </div>
       {/* Met de distributiekolommen erbij past de tabel niet meer op elk
@@ -139,7 +146,7 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
                 {fmtPeriode(a.on_counter)}
               </td>
               <td>
-                <Sparkline ytd={toSeries(a.sparkline.ytd, metric)} lytd={toSeries(a.sparkline.lytd, metric)}
+                <Sparkline ytd={toSeries(a.sparkline.ytd, effMetric)} lytd={toSeries(a.sparkline.lytd, effMetric)}
                   isEuro={isEuro} periodWord={pWord} jaar={data.jaar} />
               </td>
               {/* Het percentage is op het vergelijkbare venster van het merk
@@ -181,8 +188,8 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
                   <DeltaTag pct={a.distributie?.twee_maanden?.delta_pct ?? null} />
                 </td>
               </>}
-              <td style={{ whiteSpace: "nowrap" }}>{fmt(a.laatste_periode[metric])}</td>
-              <td style={{ whiteSpace: "nowrap" }}>{fmt(a.totaal_ytd[metric])}</td>
+              <td style={{ whiteSpace: "nowrap" }}>{fmt(a.laatste_periode[effMetric])}</td>
+              <td style={{ whiteSpace: "nowrap" }}>{fmt(a.totaal_ytd[effMetric])}</td>
             </tr>
           ))}
         </tbody>
@@ -193,8 +200,8 @@ export default function Artikelanalyse({ ctx }: { ctx: ShellCtx }) {
         <div className="card" style={{ marginTop: 20 }}>
           <div className="eyebrow">Detail</div>
           <h3 style={{ margin: "6px 0 14px" }}>{chosen.naam} <span className="mono sub">{chosen.ean}</span></h3>
-          <div className="grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
-            {(["volume", "omzet"] as const).map((m) => (
+          <div className="grid" style={{ gridTemplateColumns: hasVolume ? "1fr 1fr" : "1fr" }}>
+            {(hasVolume ? ["volume", "omzet"] as const : ["omzet"] as const).map((m) => (
               <div key={m}>
                 <div className="eyebrow" style={{ marginBottom: 8 }}>{m} per {pWord.toLowerCase()}, jaar op jaar</div>
                 <TrendChart
