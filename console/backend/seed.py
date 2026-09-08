@@ -117,6 +117,51 @@ def make_dwh_xlsx(rows: list[dict], weeks: list[str] | None = None,
     return buf.getvalue()
 
 
+def make_douglas_xlsx(rijen: list[dict], soort: str = "sku", maand: str = "Aug-26") -> bytes:
+    """Genereer een werkboek in het ECHTE Douglas iCube-formaat ("Advanced
+    Sell Out NET"): één koprij, samengevoegde naamblokken (International
+    Article over vijf cellen, Store II over vier), en vier bedragkolommen
+    zonder volume — zodat tests de ingebouwde parser precies zo raken als
+    een productie-export.
+
+    soort "sku":    rijen [{land, kanaal, merk, lijn, naam, inhoud, eenheid,
+                            kleur, ean, omzet, omzet_ly, cum, cum_ly}]
+    soort "winkel": rijen [{land, kanaal, merk, winkel, stad, straat, nr,
+                            omzet, omzet_ly, cum, cum_ly}]
+    land/kanaal zoals iCube ze schrijft ("Netherlands", "Brick & Mortar");
+    ontbrekende bedragen blijven leeg, zoals in het echte bestand.
+    """
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    bedragen = ["Sell-Out NET EUR", "Sell-Out NET LY EUR",
+                "Sell-Out NET CY Cum EUR", "Sell-Out NET CY Cum LY EUR"]
+    if soort == "sku":
+        ws.title = "iCube_Package_Advanced_SKU_NET"
+        ws.append(["Country II", "Channel II", "International Brand", "International Article",
+                   None, None, None, None, "EAN", "Month", *bedragen])
+        for r in rijen:
+            ws.append([r.get("land", "Netherlands"), r.get("kanaal", "Brick & Mortar"),
+                       r.get("merk", "COLLISTAR"), r.get("lijn", "BODY"), r.get("naam", "CREAM"),
+                       r.get("inhoud", 50), r.get("eenheid", "ML"), r.get("kleur"),
+                       str(r["ean"]), r.get("maand", maand),
+                       r.get("omzet"), r.get("omzet_ly"), r.get("cum"), r.get("cum_ly")])
+    elif soort == "winkel":
+        ws.title = "iCube_Package_Advanced_Store_NE"
+        ws.append(["Country II", "Channel II", "International Brand", "Store II",
+                   None, None, None, "Month", *bedragen])
+        for r in rijen:
+            ws.append([r.get("land", "Netherlands"), r.get("kanaal", "Brick & Mortar"),
+                       r.get("merk", "COLLISTAR"), r["winkel"], r.get("stad", "Utrecht"),
+                       r.get("straat", "Vredenburg"), r.get("nr", "3"), r.get("maand", maand),
+                       r.get("omzet"), r.get("omzet_ly"), r.get("cum"), r.get("cum_ly")])
+    else:
+        raise ValueError(f"onbekende soort {soort!r}")
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def _kv_demo_rows(weeks: list[str], factor=1.0) -> list[dict]:
     items = [("31210001", "4049469072773", "Tweezerman Slant Tweezer", "TWEEZERMAN", 18.0),
              ("31210002", "4049469083120", "Tweezerman Nail Clipper", "TWEEZERMAN", 13.0),
@@ -319,8 +364,8 @@ def build_seed_files() -> list[tuple[str, bytes]]:
                   make_etos_xlsx(_etos_demo_artikelen(
                       [f"2026{wk:02d}" for wk in range(30, 33)]))))
 
-    h, d = _read_standin(SEED / "douglas_Abverkauf_KW32.csv")
-    files.append(("Douglas_Abverkauf_KW32.xlsx",
+    h, d = _read_standin(SEED / "demo_Abverkauf_KW32.csv")
+    files.append(("Demo_Abverkauf_KW32.xlsx",
                   _to_xlsx(h, d, "Sheet1", 1,
                            {"Absatz": "int", "Umsatz": "float"})))
     return files
@@ -458,7 +503,7 @@ def seed():
     statuses = {r["filename"]: r["status"] for r in results}
     assert statuses["DWH__Sales_volume__sales_Tweezerman_KVNL_32_demo.xlsx"] == "ingelezen", statuses
     assert statuses["Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__demo.xlsx"] == "ingelezen", statuses
-    assert statuses["Douglas_Abverkauf_KW32.xlsx"] == "profiel_nodig", statuses
+    assert statuses["Demo_Abverkauf_KW32.xlsx"] == "profiel_nodig", statuses
     print("[seed] klaar — alle verwachte statussen kloppen")
 
 

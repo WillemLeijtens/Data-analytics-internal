@@ -3,6 +3,9 @@
 export type Capabilities = {
   periode: "week" | "maand";
   merk: boolean; artikel: boolean; winkel: boolean; banner: boolean; land: boolean;
+  /** false bij een feed zonder stuks (Douglas levert alleen netto-omzet):
+   *  dan geen Volume-stand, geen prijsindex en geen rotatie. */
+  volume?: boolean;
 };
 
 export type Resolution = { level_used: Record<string, string>; labels: string[] };

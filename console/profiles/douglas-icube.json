@@ -1,0 +1,26 @@
+{
+  "retailer_id": "douglas",
+  "version": 1,
+  "status": "live",
+  "builtin": "douglas_icube",
+  "detection": {
+    "filename_glob": "*SO_Advanced_*Sell_Out*.xlsx",
+    "sheet": null,
+    "header_row": 1,
+    "required_headers": ["Country II", "Channel II", "International Brand", "Month"],
+    "filetype": "xlsx",
+    "csv_delimiter": null,
+    "decimal": "."
+  },
+  "period": {
+    "type": "maand",
+    "source_column": "Month",
+    "format": "mmm-yy"
+  },
+  "mapping": [],
+  "constants": {},
+  "online_banners": ["ONLINE"],
+  "thresholds": {
+    "promo_price_drop": 0.05
+  }
+}

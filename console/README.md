@@ -201,7 +201,7 @@ console/
     main.py          # FastAPI-endpoints
     seed.py          # seeds in ECHT formaat door de echte pipeline
   frontend/          # tabs boven, donkere sidebar, 9 schermen
-  profiles/          # de vier handoff-profielen (kruidvat/etos/ici/douglas)
+  profiles/          # de ingebouwde parserprofielen (kruidvat/etos/ici NL+BE/douglas)
   seed/              # stand-ins + contracts.json
   design/            # tokens, fonts, logo (referentie)
 ```
@@ -690,6 +690,65 @@ winkels verloren (`conclusie.DISTRIBUTIE_DREMPEL`). Artikelen met minder dan
 vijf winkels in de vergelijkingsperiode blijven buiten die melding — van 2 naar
 0,7 winkels is -65%, maar het is geen distributieverhaal.
 
+### Douglas: twee maandrapporten die dezelfde omzet verdelen
+
+Douglas levert per maand twee iCube-exports ("Advanced Sell Out NET"), allebei
+zonder volume en allebei met vier bedragen per regel: deze maand, dezelfde
+maand vorig jaar, YTD-cumulatief en YTD-cumulatief vorig jaar.
+
+* **SKU-rapport** — land × kanaal × merk × EAN × maand. Geen winkel.
+* **Winkelrapport** — land × kanaal × merk × winkel × maand. Geen artikel.
+
+Ze tellen op tot precies hetzelfde totaal. Naast elkaar in `sellout_facts`
+zou de omzet verdubbelen, en de korrelwissel-regel van de importer grijpt
+niet in omdat het winkelrapport geen EAN heeft. Daarom (`engine/douglas_icube.py`,
+migratie `023_niveau.sql`):
+
+* Elke regel krijgt een **`niveau`**: `artikel` of `winkel`. Alle andere
+  retailers houden `NULL`. `analytics.load_facts(..., niveau=)` leest er één;
+  standaard `artikel` (artikelanalyse, promoties, assortiment, datagaten),
+  het dashboard en het distributiesignaal lezen `winkel` zodra dat rapport er
+  is — daar komen omzet en winkel-ID uit dezelfde rijen, dus omzet per winkel,
+  de tijdlijn en de decompositie kloppen vanzelf. Zonder winkelrapport valt
+  het dashboard terug op de artikelregels met handmatige winkelaantallen
+  (label SCHATTING).
+* De importer vervangt bij een gesplitste feed de **hele scope-maand** op dat
+  niveau (een rapport is per merk × land × kanaal × maand compleet), slaat de
+  korrelwissel-regel over, en toetst na het inserten of beide niveaus per
+  scope-maand nog tot hetzelfde optellen. Een verschil staat in de
+  importstatus. Loopt het ene rapport achter op het andere, dan meldt de
+  import dat en krijgt het dashboard het label `WINKELBESTAND T/M <maand>`.
+* De **LY-kolom** gaat mee als eigen regel voor dezelfde maand vorig jaar,
+  dus de jaarvergelijking werkt uit één bestand. Een écht bestand van vorig
+  jaar heeft dezelfde sleutel en vervangt die regels. De **Cum-kolommen**
+  gaan niet als feit mee (er is geen maandverdeling van te maken); is er
+  meer cumulatief dan deze maand terwijl er geen eerdere maand van dit jaar
+  geladen is, dan meldt de import dat er maandbestanden ontbreken.
+* Kanaal wordt de formule: Brick & Mortar → `FYSIEK`, E-Commerce → `ONLINE`.
+  De webshop staat in het winkelrapport als pseudo-winkel (105 NL, 598 BE).
+  Via het profielveld `online_banners` houdt het dashboard die formules
+  buiten **alles wat per winkel rekent** (teller én noemer): de kaart heet
+  dan "Omzet per fysieke winkel". In omzet, YTD en de uitsplitsingen tellen
+  ze gewoon mee. Zonder dit tilt de webshop de kop "per winkel" met de helft
+  op en staat één lege webshopmaand bovenaan de stille winkels.
+* Land staat in het bestand (Netherlands/Belgium → NL/BE), dus één retailer
+  met een landfilter — het Kruidvat-patroon, niet de ICI-splitsing.
+* Geen volume: geen prijsindex (promoties op de handmatige stand), geen
+  rotatie (assortimentsanalyse meldt `GEEN VOLUMEDATA`), geen Volume-knop.
+
+**Dunne historie.** Douglas levert per bestand één maand plus dezelfde maand
+vorig jaar. Met alleen augustus 2025 geladen zegt "vorig jaar niets" alleen
+iets over augustus. Daarom gelden pas vanaf drie geladen maanden van vorig
+jaar (`analytics.MIN_VORIGJAAR_MAANDEN`) de oordelen NIEUW en DELISTED in de
+artikelanalyse en "toegevoegde winkels" in de winkelanalyse. Om dezelfde
+reden lopen het voortschrijdende winkelvenster en het "recente" venster van
+de artikelanalyse nu over de **kalender** (`analytics.kalendervenster`) en
+niet over de geleverde periodes: anders reikt "de laatste drie maanden" over
+de jaargrens heen en telt het winkelaantal van augustus beide jaren op.
+
+De oefenretailer voor het mapping-profiel-pad in de tests heet `demo`
+(`tests/test_parser_flow.py`); die rij bestaat alleen in de testdatabase.
+
 ### Winkeltargets
 
 Per merk-land(-formule) is in Instellingen → Doelstellingen een **target per
@@ -931,11 +990,11 @@ leegtrekken.
 
 1. ✅ Nieuwe retailer = één profiel — bewezen door `test_fifth_retailer_pure_profile`.
 2. ✅ ICI toont merkniveau + maandniveau mét labels; Etos omzet/winkel = SCHATTING.
-3. ✅ Seed herkent vier bestanden automatisch; Douglas ⇒ PROFIEL NODIG (assert in seed.py).
+3. ✅ Seed herkent de demo-bestanden automatisch; het fictieve Demo-bestand ⇒ PROFIEL NODIG (assert in seed.py).
 4. ✅ Atomair: `test_import_atomic_one_bad_row_zero_facts`.
 5. ✅ Uplift stabiel na herimport van bevestigde actieperiode: `test_uplift_stable_after_reimport_of_confirmed_period`.
 6. ✅ pytest dekt capability-afleiding, 4 terugvalregels, periodeformaten, komma/punt-decimalen, detectie incl. conflicten.
-7. ✅ Visuele steekproef via Playwright-screenshots (radar, dashboard, parser, lege staat Douglas).
+7. ✅ Visuele steekproef via Playwright-screenshots (radar, dashboard, parser, lege staat).
 
 Bekende beperkingen: mailregels zijn CRUD-stubs (geen echte poller aan de
 console gekoppeld); contractanalyse vereist `ANTHROPIC_API_KEY` (zonder

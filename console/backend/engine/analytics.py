@@ -59,13 +59,43 @@ def _facts(conn, retailer_id: str, include_test: bool, extra: str = "", params: 
     return conn.execute(sql, (retailer_id, *params)).fetchall()
 
 
-def load_facts(conn, retailer_id: str, merk=None, land=None, banner=None):
+NIVEAUS = ("artikel", "winkel")
+
+
+def heeft_winkelslice(conn, retailer_id: str) -> bool:
+    """Levert deze retailer zijn omzet óók als aparte winkelverdeling?
+
+    Alleen waar voor gesplitste feeds (Douglas: een artikelrapport en een
+    winkelrapport die tot hetzelfde totaal optellen). Net als `_facts` alleen
+    over ingelezen imports: een achterhaalde testimport mag de keuze van de
+    slice niet omgooien.
+    """
+    return conn.execute(
+        "SELECT 1 FROM sellout_facts f JOIN imports im ON im.id = f.import_id "
+        "AND im.status IN ('ingelezen','test') "
+        "WHERE f.retailer_id = ? AND f.niveau = 'winkel' LIMIT 1",
+        (retailer_id,)).fetchone() is not None
+
+
+def load_facts(conn, retailer_id: str, merk=None, land=None, banner=None,
+               niveau: str = "artikel"):
+    """De feiten van een retailer, in ÉÉN decompositie.
+
+    `niveau` kiest welke slice van een gesplitste feed meekomt, náást de
+    rijen zonder niveau (alle andere retailers). Standaard 'artikel': dat is
+    de omzetwaarheid voor artikelen, promoties en assortiment. Het dashboard
+    vraagt 'winkel', want daar moeten omzet en winkel_id uit dezelfde rijen
+    komen. Beide slices van dezelfde retailer tegelijk laden is precies de
+    dubbeltelling die migratie 023 voorkomt — daarom bestaat die optie niet.
+    """
+    if niveau not in NIVEAUS:
+        raise ValueError(f"onbekend niveau {niveau!r}")
     # Feiten uit een test-profiel tellen alleen mee zolang dát profiel het
     # actieve is; zodra er een live versie staat, horen oude testcijfers niet
     # meer in de analyses thuis.
     prof = active_profile(conn, retailer_id)
     include_test = bool(prof and prof.status == "test")
-    conds, params = [], []
+    conds, params = ["AND (f.niveau IS NULL OR f.niveau = ?)"], [niveau]
     for col, vals in (("merk", merk), ("land", land), ("banner", banner)):
         if vals:
             conds.append(f"AND f.{col} IN ({','.join('?' * len(vals))})")
@@ -167,6 +197,25 @@ def periode_einddatum(periode: str) -> dt.date:
 VENSTER = {"maand": 3, "week": 13}
 
 
+def kalendervenster(periodes: list[str], i: int, n: int) -> list[str]:
+    """De laatste `n` KALENDERperiodes t/m periodes[i], voor zover geleverd.
+
+    Niet `periodes[i-n+1:i+1]`: dat pakt de vorige geleverde periodes, wat
+    hetzelfde is zolang de historie aaneengesloten is — en iets heel anders
+    zodra ze dat niet is. Douglas levert per bestand één maand plus dezelfde
+    maand vorig jaar; met alleen augustus 2025 en augustus 2026 geladen zou
+    het venster van augustus 2026 dan augustus 2025 meenemen en het
+    winkelaantal van beide jaren optellen.
+    """
+    aanwezig = set(periodes)
+    uit, p = [], periodes[i]
+    for _ in range(n):
+        if p in aanwezig:
+            uit.append(p)
+        p = vorige_periode(p)
+    return list(reversed(uit))
+
+
 def winkels_per_periode(conn, retailer_id: str, caps: dict, rows, periodes: list[str],
                         settings: list[dict] | None = None,
                         historie: list[dict] | None = None) -> dict[str, tuple]:
@@ -189,7 +238,7 @@ def winkels_per_periode(conn, retailer_id: str, caps: dict, rows, periodes: list
                 per_periode[r["periode"]].add(r["winkel_id"])
         out = {}
         for i, p in enumerate(periodes):
-            venster = periodes[max(0, i - n + 1):i + 1]
+            venster = kalendervenster(periodes, i, n)
             winkels = set().union(*[per_periode.get(v, set()) for v in venster]) \
                 if venster else set()
             out[p] = (len(winkels) or None, "feiten")
@@ -281,6 +330,12 @@ MIN_ACTIEVE_PERIODES = 4
 MIN_WEKEN_MAAND = 2
 
 
+# Onder dit aantal geladen maanden van vorig jaar is "geen omzet vorig jaar"
+# geen waarneming over de winkel maar over de data, en blijft de lijst met
+# toegevoegde winkels leeg.
+MIN_VORIGJAAR_MAANDEN = 3
+
+
 def signaal_drempels(conn, retailer_id: str) -> tuple[int, int]:
     """(let op vanaf, gestopt vanaf) in periodes, uit de instellingen."""
     r = conn.execute(
@@ -321,8 +376,14 @@ def winkelanalyse(rows, caps: dict, jaar: int,
         m = period_number(r["periode"])
         bucket[m] = bucket.get(m, 0.0) + r["omzet"]
 
+    # Alleen periodes waarin er winkelregels zijn. Een gesplitste feed
+    # (Douglas) kan een nieuwere maand alleen op artikelniveau hebben; die
+    # maand meetellen zou élke winkel in één klap "let op" of "gestopt"
+    # maken terwijl het winkelrapport gewoon nog moet komen.
     maanden = sorted({period_number(r["periode"]) for r in rows
-                      if period_year(r["periode"]) == jaar})
+                      if r["winkel_id"] and period_year(r["periode"]) == jaar})
+    vorig_maanden = sorted({period_number(r["periode"]) for r in rows
+                            if r["winkel_id"] and period_year(r["periode"]) == jaar - 1})
     # Merken zonder vorig jaar in de database: dan is "vorig jaar geen omzet"
     # geen waarneming maar een gat in de data, en zou élke winkel als nieuw
     # gemeld worden (op de echte ICI-data 244 in plaats van 2).
@@ -333,7 +394,8 @@ def winkelanalyse(rows, caps: dict, jaar: int,
         "beschikbaar": True, "jaar": jaar, "gestopt": [], "signalen": [],
         "toegevoegd": [], "gemiste_omzet": 0.0,
         "gestopt_vanaf": gestopt_vanaf, "letop_vanaf": letop_vanaf,
-        "historie_ontbreekt": zonder_historie, "actiepunt": ACTIEPUNT_GESTOPT}
+        "historie_ontbreekt": zonder_historie, "actiepunt": ACTIEPUNT_GESTOPT,
+        "vorig_jaar_maanden": len(vorig_maanden)}
     if not maanden:
         return leeg_resultaat
     laatste = maanden[-1]
@@ -394,7 +456,12 @@ def winkelanalyse(rows, caps: dict, jaar: int,
                 gestopt.append(regel)
             elif is_letop:
                 signalen.append(regel)
-        elif met_omzet and not vorig_totaal and w["merk"] in met_historie:
+        elif (met_omzet and not vorig_totaal and w["merk"] in met_historie
+              and len(vorig_maanden) >= MIN_VORIGJAAR_MAANDEN):
+            # "Toegevoegd" betekent: dit jaar omzet, vorig jaar in DEZELFDE
+            # maanden niets. Met maar één of twee maanden vorig jaar geladen
+            # (Douglas levert per bestand één maand plus dezelfde maand vorig
+            # jaar) zegt dat niets over het winkelbestand — dan geen lijst.
             toegevoegd.append({
                 "winkel_id": w["winkel_id"], "winkel_naam": w["winkel_naam"],
                 "merk": w["merk"], "eerste_maand": met_omzet[0],
@@ -421,10 +488,44 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
     res = fallback.resolve(caps, week=True, winkel=True, banner=True)
     labels = base_labels + res.labels
 
+    # Gesplitste feed (Douglas, migratie 023): het dashboard leest de
+    # WINKELverdeling. Daar komen omzet en winkel_id uit dezelfde rijen, dus
+    # teller en noemer van "omzet per winkel", de tijdlijn en de
+    # decompositie kloppen vanzelf; de totalen zijn per scope-maand gelijk
+    # aan de artikelverdeling, dus de KPI's ook. Zonder winkelrapport valt
+    # het terug op de artikelverdeling met handmatige winkelaantallen.
+    gesplitst = heeft_winkelslice(conn, retailer_id)
+    niveau = "winkel" if gesplitst else "artikel"
+    niveaus = None
+    if gesplitst:
+        # Loopt het ene rapport achter op het andere, dan hoort dat in
+        # beeld: het dashboard stopt bij de laatste maand van het
+        # winkelrapport terwijl de artikelanalyse verder kan lopen.
+        niveaus = {r["niveau"]: r["laatste"] for r in conn.execute(
+            "SELECT niveau, MAX(periode) AS laatste FROM sellout_facts "
+            "WHERE retailer_id = ? AND niveau IS NOT NULL GROUP BY niveau",
+            (retailer_id,))}
+        if (niveaus.get("artikel") or "") > (niveaus.get("winkel") or ""):
+            labels.append(f"WINKELBESTAND T/M {niveaus['winkel']}")
+    # Formules die geen winkel zijn (de webshop als pseudo-winkel in het
+    # Douglas-winkelrapport). Ze tellen mee in omzet, YTD en de
+    # uitsplitsingen, maar niet in "per winkel": twee webshops van EUR 49k
+    # naast tweehonderd winkels van EUR 870 tillen die kop met de helft op
+    # en zetten één lege webshopmaand bovenaan de stille winkels. Uit het
+    # profiel, niet uit caps: caps zegt wat het formaat kan, dit is een
+    # keuze over de inhoud.
+    prof = active_profile(conn, retailer_id)
+    online = set((prof.definition.get("online_banners") if prof else None) or [])
+
+    def fys(rs):
+        """Alleen de fysieke winkels — de noemer én de teller van alles wat
+        per winkel rekent."""
+        return [r for r in rs if r["banner"] not in online] if online else rs
+
     # Eén query; het merk/land/banner/categorie-filter is een Python-subset
     # zodat de filterlijsten (uit all_rows) en de cijfers nooit uiteen
     # kunnen lopen.
-    all_rows = load_facts(conn, retailer_id)
+    all_rows = load_facts(conn, retailer_id, niveau=niveau)
     rows = [r for r in all_rows
             if (not merk or r["merk"] in merk)
             and (not land or r["land"] in land)
@@ -449,7 +550,10 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
     _scope_winkels: dict = {}
 
     def scope_winkels(sleutel: tuple, rs) -> int | None:
-        """Het winkelaantal van één merk x land x formule, gecachet."""
+        """Het winkelaantal van één merk x land x formule, gecachet. Een
+        online-formule heeft geen winkels om een target op te wegen."""
+        if sleutel[2] in online:
+            return 0
         if sleutel not in _scope_winkels:
             _scope_winkels[sleutel] = store_count(
                 conn, retailer_id, caps, rs, None, settings)[0]
@@ -569,8 +673,9 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
             per_groep[r[dim] or "ONBEKEND"].append(r)
         out = []
         for sleutel, brows in per_groep.items():
-            n, uit_feiten = store_count(conn, retailer_id, caps, brows, periode, settings)
-            rev = sum(r["omzet"] for r in brows if r["periode"] == periode)
+            frows = fys(brows)
+            n, uit_feiten = store_count(conn, retailer_id, caps, frows, periode, settings)
+            rev = sum(r["omzet"] for r in frows if r["periode"] == periode)
             # Ook op land en formule: die uitsplitsing telt de omzet van de
             # merken in dat land al bij elkaar op, dus hoort de lat waar dat
             # tegen afgezet wordt daar net zo bij.
@@ -598,10 +703,10 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
                             if caps.get(d) and len({r[d] for r in rows if r[d]}) > 1]
 
     kpi = agg(latest_rows)
-    n_stores, from_facts = store_count(conn, retailer_id, caps, rows, latest, settings)
+    n_stores, from_facts = store_count(conn, retailer_id, caps, fys(rows), latest, settings)
     if not from_facts and fallback.LABEL_SCHATTING not in labels:
         labels.append(fallback.LABEL_SCHATTING)
-    per_store = (kpi["omzet"] / n_stores) if n_stores else None
+    per_store = (agg(fys(latest_rows))["omzet"] / n_stores) if n_stores else None
 
     # YTD vs LYTD: same period window (1..latest number) in this and prior
     # year — geteld t/m de laatste AFGESLOTEN periode.
@@ -702,7 +807,7 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
         if not year_rows:
             return None, False
         final = max((r["periode"] for r in year_rows), key=sort_key)
-        return store_count(conn, retailer_id, caps, year_rows, final, settings)
+        return store_count(conn, retailer_id, caps, fys(year_rows), final, settings)
 
     # Omzet per winkel YTD is puur een vergelijkingskaart: reken hem op de
     # vergelijkbare merken. Zonder vergelijkbare basis toont "nu" alsnog
@@ -710,8 +815,8 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
     basis_now = comp_now if vergelijkbaar else now_rows
     stores_now, facts_now = stores_for(basis_now)
     stores_prior, facts_prior = stores_for(comp_prior)
-    per_store_now = agg(basis_now)["omzet"] / stores_now if stores_now else None
-    per_store_prior = comp_prior_agg["omzet"] / stores_prior if stores_prior else None
+    per_store_now = agg(fys(basis_now))["omzet"] / stores_now if stores_now else None
+    per_store_prior = agg(fys(comp_prior))["omzet"] / stores_prior if stores_prior else None
 
     def delta(now, prev):
         # `prev > 0`, niet `prev`: bij een negatieve basis (per saldo meer
@@ -730,8 +835,9 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
     vorige_rows = [r for r in rows if r["periode"] == vorige]
     if vorige_rows:
         vorige_kpi = agg(vorige_rows)
-        vorige_n_stores, _ = store_count(conn, retailer_id, caps, rows, vorige, settings)
-        vorige_per_store = (vorige_kpi["omzet"] / vorige_n_stores) if vorige_n_stores else None
+        vorige_n_stores, _ = store_count(conn, retailer_id, caps, fys(rows), vorige, settings)
+        vorige_per_store = ((agg(fys(vorige_rows))["omzet"] / vorige_n_stores)
+                            if vorige_n_stores else None)
     else:
         vorige_kpi = {"omzet": None, "volume": None}
         vorige_per_store = None
@@ -799,17 +905,25 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
     # noemer laten vallen en de reeks laten stuiteren. Het aantal is binnen
     # een jaar dus voor elke periode gelijk — één keer per jaar tellen.
     rows_by_year = defaultdict(list)
-    for r in rows:
+    for r in fys(rows):
         rows_by_year[period_year(r["periode"])].append(r)
     count_by_year = {
         y: store_count(conn, retailer_id, caps, rows_by_year[y],
                        max((r["periode"] for r in rows_by_year[y]), key=sort_key),
                        settings)[0]
-        for y in years}
+        for y in years if rows_by_year.get(y)}
+    # Teller ook over de fysieke winkels: online-omzet over de fysieke
+    # winkels uitsmeren is net zo fout als de webshop als winkel tellen.
+    omzet_fys: dict = {y: defaultdict(float) for y in years}
+    for r in fys(rows):
+        y = period_year(r["periode"])
+        if y in omzet_fys:
+            omzet_fys[y][period_number(r["periode"])] += r["omzet"]
     per_winkel: dict = {}
-    for y, perline in trend["series"]["omzet"].items():
+    for y in years:
         count = count_by_year.get(y)
-        per_winkel[y] = {p: value / count for p, value in perline.items()} if count else {}
+        per_winkel[y] = ({p: value / count for p, value in omzet_fys[y].items()}
+                         if count else {})
     trend["series"]["per_winkel"] = per_winkel
     # Merken waarvan de feed vóór de algemene laatste periode stopt: de som
     # zakt vanaf dat punt zonder dat er minder verkocht is. De grafiek meldt
@@ -857,7 +971,7 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
             # Bij een voortschrijdend winkelaantal hoort een voortschrijdende
             # omzet: 1 maand omzet delen door 3 maanden winkels zou het
             # gemiddelde kunstmatig omlaag halen (in de proef 31 -> 21).
-            venster = tijdlijn_periodes[max(0, i - n_venster + 1):i + 1]
+            venster = kalendervenster(tijdlijn_periodes, i, n_venster)
             o_venster = sum(omzet_p.get(v, 0.0) for v in venster) / len(venster)
             per_winkel.append(round(o_venster / aantal, 2) if aantal else None)
             bron.append(herkomst)
@@ -877,8 +991,8 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
     per_merk_reeks = []
     for m in sorted({r["merk"] for r in rows}, key=lambda x: (x is None, x or "")):
         rs = [r for r in rows if r["merk"] == m]
-        per_merk_reeks.append({"merk": m or "ONBEKEND", **targets_voor(rs), **reeks(rs)})
-    totaal_reeks = reeks(rows)
+        per_merk_reeks.append({"merk": m or "ONBEKEND", **targets_voor(rs), **reeks(fys(rs))})
+    totaal_reeks = reeks(fys(rows))
 
     # Het opgetelde target voor de TOTAAL-stand. Eén winkel voert de merken
     # naast elkaar, dus de norm voor die winkel is de som van de merknormen —
@@ -954,6 +1068,9 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
                        "breakdowns": {d: dim_breakdown(latest_rows, "volume", d)
                                       for d in dimensies}},
             "omzet_per_winkel": {"waarde": per_store, "winkels": n_stores,
+                                 # Formules die buiten "per winkel" vallen
+                                 # (de webshop); leeg voor de rest.
+                                 "exclusief": sorted(online),
                                  "delta_pct": delta(per_store, vorige_per_store)
                                               if per_store is not None else None,
                                  "vorige_periode": vorige if vorige_rows else None,
@@ -1017,8 +1134,10 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
         },
         "trend": trend,
         "tijdlijn": tijdlijn,
-        "winkelanalyse": winkelanalyse(rows, caps, y_now,
+        "winkelanalyse": winkelanalyse(fys(rows), caps, y_now,
                                        signaal_drempels(conn, retailer_id)),
+        # Gesplitste feed: tot waar loopt elk rapport (None voor de rest).
+        "niveaus": niveaus,
         "filters": filters,
         # Bevestigde acties als markering op de trendgrafiek: een piek in de
         # lijn hoort zichzelf te verklaren op de plek waar je hem ziet, niet
@@ -1080,7 +1199,9 @@ def _artikel_status(tot, ltot, ltot_jaar, recent_omzet, n_recent, n_stores, peri
             return None, None, None
         return "nieuw", f"geen omzet in heel {jaar - 1}, dit jaar wel", None
     if ltot["omzet"] and not tot["omzet"]:
-        if not merk_heeft_dit_jaar:
+        # Ook hier de historie-guard: met één maand vorig jaar geladen is
+        # "vorig jaar wel, dit jaar niets" een uitspraak over die ene maand.
+        if not merk_heeft_dit_jaar or not merk_heeft_vorig_jaar:
             return None, None, None
         return "delisted", f"wel omzet in {jaar - 1}, dit jaar niets", None
 
@@ -1145,8 +1266,17 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
         merk_eerste[m] = eigen_as[0]
         # Het "recente venster": ongeveer drie maanden, in de korrel van de
         # feed — gemeten op de as van het merk zelf.
-        merk_recent[m] = set(eigen_as[-n_terug:])
-        merk_lytd[m] = any(period_year(q) == y_now - 1 for q in ps)
+        # Op de kalender, niet op index: met alleen augustus 2025 en 2026
+        # geladen zou "de laatste drie periodes" anders over de jaargrens
+        # heen reiken en vorig jaar als "recent" meetellen.
+        merk_recent[m] = set(kalendervenster(eigen_as, len(eigen_as) - 1, n_terug))
+        # Minstens een paar periodes vorig jaar: met alleen augustus 2025
+        # geladen (Douglas levert per bestand één maand plus dezelfde maand
+        # vorig jaar) is "geen omzet vorig jaar" een uitspraak over augustus,
+        # niet over het jaar — en dan heet de helft van het assortiment
+        # ineens NIEUW of DELISTED. Zelfde drempel als bij de winkels.
+        merk_lytd[m] = (len({q for q in ps if period_year(q) == y_now - 1})
+                        >= MIN_VORIGJAAR_MAANDEN)
         merk_dit_jaar[m] = any(period_year(q) == y_now for q in ps)
         # Vergelijkingsvenster: de periodenummers die BEIDE jaren hebben,
         # dezelfde doorsnede-regel als het dashboard.
@@ -1193,7 +1323,31 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
     # Winkelaantal voor de "verdwijnt uit het schap"-toets: uit de feiten als
     # de retailer winkelniveau levert, anders het handmatige aantal.
     settings = manual_store_settings(conn, retailer_id)
-    n_stores, _uit_feiten = store_count(conn, retailer_id, caps, rows, latest, settings)
+    # Distributie is een TELLING uit deze rijen: alleen als hier winkel-ID's
+    # in staan. Niet uit caps["winkel"] — bij een gesplitste feed (Douglas)
+    # zegt die vlag dat het WINKELrapport winkels heeft, terwijl de
+    # artikelregels hier er geen hebben; dan zou de kolom vol nullen staan.
+    distributie_beschikbaar = any(r["winkel_id"] for r in rows)
+    # Gesplitste feed: het winkelaantal per scope komt uit het winkelrapport,
+    # anders valt de delist-drempel per winkel per week stil terug op de
+    # handmatige instellingen die er voor zo'n retailer niet zijn.
+    winkels_per_scope: dict[tuple, int] = {}
+    if not distributie_beschikbaar and heeft_winkelslice(conn, retailer_id):
+        per_scope: dict[tuple, set] = defaultdict(set)
+        for r in load_facts(conn, retailer_id, niveau="winkel"):
+            if r["winkel_id"] and r["omzet"] and period_year(r["periode"]) == y_now:
+                per_scope[(r["merk"], r["land"], r["banner"])].add(r["winkel_id"])
+        winkels_per_scope = {k: len(v) for k, v in per_scope.items()}
+
+    def winkels_van(rs) -> int | None:
+        """Het winkelbestand van deze rijen: uit het winkelrapport per scope
+        als dat er is, anders zoals altijd (feiten of instellingen)."""
+        if winkels_per_scope:
+            scopes = {(r["merk"], r["land"], r["banner"]) for r in rs}
+            return sum(winkels_per_scope.get(k, 0) for k in scopes) or None
+        return store_count(conn, retailer_id, caps, rs, latest, settings)[0]
+
+    n_stores = winkels_van(rows)
 
     # Gaten in de aanlevering: een land of formule die eerder stopt, later
     # begint of een gat heeft, vertekent elk artikel dat daar verkocht wordt.
@@ -1280,8 +1434,7 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
         # De "verdwijnt uit het schap"-drempel deelt door de winkels van de
         # EIGEN scope van dit artikel; het retailer-brede totaal telt ook
         # landen en formules mee waar het artikel helemaal niet ligt.
-        art_stores, _ = store_count(conn, retailer_id, caps, a["rijen"],
-                                    latest, settings)
+        art_stores = winkels_van(a["rijen"])
         # ON COUNTER: de eerste periode waarin voor dit artikel omzet gemeten
         # is, in de korrel die de retailer levert (week bij Etos/Kruidvat,
         # maand bij ICI). Over ALLE geladen jaren, niet alleen dit jaar —
@@ -1326,18 +1479,20 @@ def articles(conn, retailer_id: str, merk=None) -> dict:
             "status": status, "status_reden": reden,
             "dekking": dekking_mod.per_artikel(alle_gaten, a["rijen"], caps),
             "omzet_per_winkel_per_week": per_winkel_week,
-            "distributie": distributie_van(a) if caps.get("winkel") else None,
+            "distributie": distributie_van(a) if distributie_beschikbaar else None,
             "ytd_delta_pct": delta, "ytd_vergelijkbaar": vergelijkbaar})
     out.sort(key=lambda x: -x["totaal_ytd"]["omzet"])
     return {"available": True, "artikelen": out, "laatste_periode": latest,
             "filters": filters, "dekking": alle_gaten,
             # Zonder winkel-ID in de feed valt distributie niet te tellen; de
             # kolommen blijven dan weg in plaats van leeg.
-            "distributie_beschikbaar": bool(caps.get("winkel")),
+            "distributie_beschikbaar": distributie_beschikbaar,
             # Het jaar hoort bij de data, niet bij de kalender van vandaag:
             # de grafieklegenda gebruikt dit in plaats van vaste jaartallen.
             "jaar": y_now,
             "periode_type": caps["periode"], "labels": base_labels + res.labels,
+            # Voor het scherm: zonder volume geen Volume-stand.
+            "capabilities": caps,
             "resolution": res.as_dict()}
 
 
@@ -1713,6 +1868,12 @@ def assortment(conn, retailer_id: str) -> dict:
     res = fallback.resolve(caps, artikel=True, winkel=True)
     if res.level_used.get("detail") != "artikel":
         return {"available": False, "reason": "GEGEVENS NIET BESCHIKBAAR",
+                "resolution": res.as_dict(), "labels": base_labels + res.labels}
+    if caps.get("volume") is False:
+        # Rotatie is stuks per winkel per week. Zonder volume (Douglas
+        # levert alleen netto-omzet) zou elk artikel hier "Geen verkoop dit
+        # jaar" heten — een oordeel over data die er niet is.
+        return {"available": False, "reason": "GEEN VOLUMEDATA",
                 "resolution": res.as_dict(), "labels": base_labels + res.labels}
     labels = base_labels + res.labels
 

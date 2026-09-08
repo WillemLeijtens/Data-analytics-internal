@@ -17,7 +17,7 @@ CANONICAL_FIELDS = {
 REQUIRED_ALWAYS = {"volume", "omzet"}
 PERIOD_FORMATS = {
     "week": {"yyyyww", "yyyy-Www"},
-    "maand": {"mm-yyyy", "yyyy-mm", "yyyymm"},
+    "maand": {"mm-yyyy", "yyyy-mm", "yyyymm", "mmm-yy"},
 }
 NORMALIZERS = {None, "", "upper"}
 
@@ -40,6 +40,13 @@ BUILTIN_CAPS = {
     "etos_datagrid": {"periode": "week", "merk": True, "artikel": True,
                       "winkel": True, "banner": False, "land": True,
                       "volume": True},
+    # Douglas: twee maandrapporten die dezelfde omzet per artikel én per
+    # winkel verdelen (zie migratie 023, kolom niveau). Kanaal (fysiek /
+    # online) is de formule, land staat in het bestand. Geen volume: de
+    # rapporten bevatten alleen netto-omzet.
+    "douglas_icube": {"periode": "maand", "merk": True, "artikel": True,
+                      "winkel": True, "banner": True, "land": True,
+                      "volume": False},
 }
 
 

@@ -5,6 +5,18 @@
 export type ChangelogEntry = { datum: string; titel: string; tekst: string };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { datum: "2026-09-08", titel: "Douglas aangesloten",
+    tekst: "Douglas levert per maand twee rapporten die dezelfde omzet "
+      + "verdelen: per artikel en per winkel, allebei zonder stuks. De app "
+      + "leest ze nu allebei zonder de omzet dubbel te tellen: het dashboard "
+      + "rekent op de winkels, de artikelanalyse op de artikelen, en na elke "
+      + "import wordt getoetst of beide rapporten nog op elkaar aansluiten. "
+      + "Vorig jaar komt mee uit de LY-kolom, dus de jaarvergelijking werkt "
+      + "uit één bestand. Het kanaal wordt de formule (FYSIEK / ONLINE); de "
+      + "webshop telt mee in de omzet maar niet in \"omzet per fysieke "
+      + "winkel\". Zonder stuks is er geen prijsindex, geen rotatie en geen "
+      + "Volume-knop — dat staat er dan bij. Ontbreken er maandbestanden, "
+      + "dan zegt de import welke." },
   { datum: "2026-08-30", titel: "Fix: vinkjes bij promoties gingen vanzelf aan en uit",
     tekst: "Een vinkje aanzetten kon een ander vinkje omzetten dat je niet had "
       + "aangeraakt — en dat verdween dan ook echt uit de database. Oorzaak: "

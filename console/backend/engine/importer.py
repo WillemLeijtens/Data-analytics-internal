@@ -53,7 +53,35 @@ def _grove_sleutel(fact: dict) -> str:
         + "\x1f" + str(fact["periode"])
 
 
-def _replace_redelivered_facts(conn, retailer_id: str, facts: list[dict]):
+def _vervang_scope_maanden(conn, retailer_id: str, niveau: str, facts: list[dict]):
+    """Vervanging voor een GESPLITSTE feed (Douglas, zie migratie 023).
+
+    Zo'n rapport is per merk x land x formule x maand compleet: alle
+    artikelen (of alle winkels) van die scope staan erin. Daarom vervalt de
+    hele scope-maand op dit niveau, niet alleen de sleutels die het bestand
+    opnieuw levert. Alleen op exacte sleutel vervangen zou bij een correctie
+    een verdwenen winkel stil laten staan — en dan lopen de artikel- en de
+    winkelverdeling van dezelfde maand uiteen, precies wat dit ontwerp niet
+    mag laten gebeuren.
+
+    Het andere niveau blijft onaangeroerd: de artikelregels van augustus
+    zijn niet "dezelfde verkoop anders geteld" in de zin van de
+    korrelwissel hieronder, ze zijn de andere helft van het ontwerp.
+    Rijen zonder niveau (een retailer die van ongesplitst naar gesplitst
+    overstapt) vervallen wél voor dezelfde scope-maand: die zouden anders
+    naast beide slices blijven staan.
+    """
+    scopes = sorted({(f["merk"], f["land"], f["banner"], f["periode"]) for f in facts},
+                    key=lambda t: tuple("" if v is None else str(v) for v in t))
+    for merk, land, banner, periode in scopes:
+        conn.execute(
+            "DELETE FROM sellout_facts WHERE retailer_id = ? AND merk IS ? AND land IS ? "
+            "AND banner IS ? AND periode = ? AND (niveau IS NULL OR niveau = ?)",
+            (retailer_id, merk, land, banner, periode, niveau))
+
+
+def _replace_redelivered_facts(conn, retailer_id: str, facts: list[dict],
+                               niveau: str | None = None):
     """Verwijder bestaande feiten die dit bestand opnieuw levert.
 
     Een retailer stuurt regelmatig een correctie of een bestand dat een
@@ -84,7 +112,16 @@ def _replace_redelivered_facts(conn, retailer_id: str, facts: list[dict]):
     verdwijnt de artikelniveau-regel van diezelfde combinatie, en andersom.
     Dat kan nooit twee ECHTE regels raken — het is per definitie dezelfde
     verkoop, anders geteld. Regels die dit bestand niet levert (andere weken,
-    andere merken) blijven staan, dus historie op de oude korrel blijft."""
+    andere merken) blijven staan, dus historie op de oude korrel blijft.
+
+    Feiten mét een `niveau` (gesplitste feed) volgen een andere regel, zie
+    _vervang_scope_maanden: daar is "artikel zonder winkel" tegen "winkel
+    zonder artikel" geen korrelwissel maar het ontwerp zelf, en de
+    korrelwissel-DELETE zou de artikelregels wegvegen zodra het
+    winkelrapport binnenkomt."""
+    if niveau:
+        _vervang_scope_maanden(conn, retailer_id, niveau, facts)
+        return
     conn.execute("DROP TABLE IF EXISTS temp._nieuwe_sleutels")
     conn.execute("DROP TABLE IF EXISTS temp._nieuwe_grof")
     conn.execute("CREATE TEMP TABLE _nieuwe_sleutels (sleutel TEXT PRIMARY KEY)")
@@ -115,6 +152,80 @@ def _replace_redelivered_facts(conn, retailer_id: str, facts: list[dict]):
         (retailer_id, retailer_id))
     conn.execute("DROP TABLE temp._nieuwe_sleutels")
     conn.execute("DROP TABLE temp._nieuwe_grof")
+
+
+def _gesplitste_feed_meldingen(conn, retailer_id: str, result: dict) -> list[str]:
+    """Wat er bij een gesplitste feed te melden valt, vóór het inserten van de
+    nieuwe regels (de vergelijking met de andere slice gebruikt dus wat er al
+    STOND).
+
+    * Ontbrekende maanden: staat er meer cumulatief dan deze maand terwijl
+      er van dit jaar geen eerdere maand geladen is, dan bestaan er
+      maandbestanden die nog niet geleverd zijn.
+    * Achterlopende andere slice: het dashboard rekent op de winkelslice en
+      stopt dus bij de laatste maand daarvan; de artikelanalyse gaat door.
+      Dat hoort zichtbaar te zijn.
+    """
+    uit: list[str] = []
+    niveau = result["niveau"]
+    ander = "winkel" if niveau == "artikel" else "artikel"
+    periodes = result["periodes"]
+    laatste = periodes[-1] if periodes else None
+    cum = result.get("cumulatief") or {}
+    if laatste and cum.get("totaal", 0) > cum.get("maand", 0) + 1.0:
+        jaar = laatste[:4]
+        eerder = conn.execute(
+            "SELECT 1 FROM sellout_facts WHERE retailer_id = ? AND niveau = ? "
+            "AND periode < ? AND periode >= ? LIMIT 1",
+            (retailer_id, niveau, laatste, f"{jaar}-01")).fetchone()
+        if not eerder:
+            uit.append(
+                f"de eerdere maanden van {jaar} ontbreken: cumulatief EUR {cum['totaal']:,.0f} "
+                f"tegen EUR {cum['maand']:,.0f} in {laatste} — vraag de eerdere "
+                "maandbestanden op".replace(",", "."))
+    if laatste:
+        ander_max = conn.execute(
+            "SELECT MAX(periode) FROM sellout_facts WHERE retailer_id = ? AND niveau = ?",
+            (retailer_id, ander)).fetchone()[0]
+        if ander_max is None:
+            uit.append(f"het {ander}rapport is nog niet geladen; " + (
+                "het dashboard rekent tot dan met handmatige winkelaantallen"
+                if ander == "winkel" else
+                "de artikelanalyse blijft tot dan leeg"))
+        elif ander_max < laatste:
+            uit.append(f"het {ander}rapport loopt achter: t/m {ander_max}, dit bestand "
+                       f"is {laatste}")
+    return uit
+
+
+def _afstemming(conn, retailer_id: str, periodes: list[str]) -> list[str]:
+    """Na het inserten: tellen beide slices per scope-maand nog op tot
+    hetzelfde? Dit is de aanname waar het hele ontwerp op rust; een stil
+    verschil zou betekenen dat het dashboard en de artikelanalyse elk een
+    andere omzet tonen. Zelfde tolerantie als de ICI-reconciliatie."""
+    if not periodes:
+        return []
+    marks = ",".join("?" * len(periodes))
+    rijen = conn.execute(
+        "SELECT merk, land, banner, periode, "
+        "  SUM(CASE WHEN niveau='artikel' THEN omzet END) AS a, "
+        "  SUM(CASE WHEN niveau='winkel' THEN omzet END) AS w "
+        f"FROM sellout_facts WHERE retailer_id = ? AND periode IN ({marks}) "
+        "AND niveau IS NOT NULL GROUP BY merk, land, banner, periode",
+        (retailer_id, *periodes)).fetchall()
+    scheef = []
+    for r in rijen:
+        if r["a"] is None or r["w"] is None:
+            continue
+        if abs(r["a"] - r["w"]) > max(1.0, 0.005 * abs(r["w"])):
+            scheef.append(f"{r['merk']} {r['land']} {r['banner']} {r['periode']}: "
+                          f"artikelen EUR {r['a']:,.0f} tegen winkels EUR {r['w']:,.0f}"
+                          .replace(",", "."))
+    if not scheef:
+        return []
+    return [f"artikel- en winkelrapport sluiten niet op elkaar aan voor "
+            f"{len(scheef)} scope/maand-combinatie(s): {'; '.join(scheef[:3])}"
+            + (" …" if len(scheef) > 3 else "")]
 
 
 def run_import(conn, filename: str, content: bytes,
@@ -208,12 +319,15 @@ def run_import(conn, filename: str, content: bytes,
         f["merk"] = merken.normaliseer(f.get("merk"))
 
     replace_existing()
-    _replace_redelivered_facts(conn, profile.retailer_id, result["facts"])
+    _replace_redelivered_facts(conn, profile.retailer_id, result["facts"],
+                               niveau=result.get("niveau"))
     status = "test" if profile.status == "test" else "ingelezen"
     periodes = result["periodes"]
     periode_txt = periodes[0] if len(periodes) == 1 else \
         f"{periodes[0]} t/m {periodes[-1]} ({len(periodes)})"
-    warnings = result.get("warnings") or []
+    warnings = list(result.get("warnings") or [])
+    if result.get("niveau"):
+        warnings += _gesplitste_feed_meldingen(conn, profile.retailer_id, result)
     cur = conn.execute(
         "INSERT INTO imports (retailer_id, profile_id, filename, file_hash, periode_type, "
         "periode, row_count, status, error_detail) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -221,16 +335,27 @@ def run_import(conn, filename: str, content: bytes,
          periode_txt, len(result["facts"]), status,
          json.dumps({"warnings": warnings}, ensure_ascii=False) if warnings else None))
     import_id = cur.lastrowid
+    # niveau: alleen een gesplitste feed (Douglas) levert dit; zie migratie
+    # 023. Voor alle andere parsers blijft het NULL.
+    niveau = result.get("niveau")
     conn.executemany(
         "INSERT INTO sellout_facts (retailer_id, import_id, periode_type, periode, land, "
         "banner, winkel_id, winkel_naam, merk, artikel_ean, artikel_naam, categorie, "
-        "volume, omzet) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "volume, omzet, niveau) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [(profile.retailer_id, import_id, result["periode_type"], f["periode"], f["land"],
           f["banner"], f["winkel_id"], f["winkel_naam"], f["merk"], f["artikel_ean"],
           # categorie: alleen de Etos-parser levert dit vandaag; andere
           # profielen laten het veld gewoon leeg (.get, geen KeyError).
-          f["artikel_naam"], f.get("categorie"), f["volume"], f["omzet"])
+          f["artikel_naam"], f.get("categorie"), f["volume"], f["omzet"], niveau)
          for f in result["facts"]])
+    if niveau:
+        # Pas na het inserten te toetsen: beide slices moeten er staan.
+        scheef = _afstemming(conn, profile.retailer_id,
+                             sorted({f["periode"] for f in result["facts"]}))
+        if scheef:
+            warnings += scheef
+            conn.execute("UPDATE imports SET error_detail = ? WHERE id = ?",
+                         (json.dumps({"warnings": warnings}, ensure_ascii=False), import_id))
     return {"import_id": import_id, "status": status, "filename": filename,
             "retailer_id": profile.retailer_id, "profile_version": profile.version,
             "periode": periode_txt, "rows": len(result["facts"]),

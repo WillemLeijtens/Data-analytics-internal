@@ -40,7 +40,7 @@ LEGACY_DEMO_SETTINGS = {
     },
 }
 
-DEMO_FILE_MARKERS = ("_demo.xlsx", "etos_sales_wk", "Douglas_Abverkauf_KW",
+DEMO_FILE_MARKERS = ("_demo.xlsx", "etos_sales_wk", "Demo_Abverkauf_KW",
                      "ICIP_ALL_MTH_", "DWH_sellout_TWEEZERMAN_NL_wk",
                      "Maandelijkse_resultaten__Tweezerman__Depend_ICI_Paris_XL__20")
 

@@ -75,8 +75,8 @@ def test_capability_derivation_etos_constants_count():
     assert caps["artikel"] and not caps["winkel"] and not caps["banner"]
 
 
-def test_capability_derivation_douglas_unmapped():
-    d = load_profile("douglas.concept.json").definition
+def test_capability_derivation_demo_unmapped():
+    d = load_profile("demo.concept.json").definition
     caps = capabilities(d)
     assert not any([caps["merk"], caps["artikel"], caps["winkel"], caps["banner"]])
     assert missing_required(d) == {"volume", "omzet"}
@@ -158,8 +158,8 @@ def test_detection_by_filename(conn):
 
 
 def test_detection_concept_never_matches():
-    douglas = load_profile("douglas.concept.json")
-    assert parser_mod.detect("Douglas_Abverkauf_KW32.xlsx", b"", [douglas]) is None
+    demo = load_profile("demo.concept.json")
+    assert parser_mod.detect("Demo_Abverkauf_KW32.xlsx", b"", [demo]) is None
 
 
 def _other_retailer(profile: Profile, retailer_id: str) -> Profile:

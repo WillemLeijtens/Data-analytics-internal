@@ -8,6 +8,17 @@ export default function Assortiment({ ctx }: { ctx: ShellCtx }) {
   if (!data) return <LoadState error={error} reload={reload} />;
   if (!data.available && data.reason === "PARSER PROFIEL ONTBREEKT")
     return <EmptyProfileCard retailer={ctx.retailer} go={ctx.go} />;
+  if (!data.available && data.reason === "GEEN VOLUMEDATA")
+    return (
+      <div className="card empty-card">
+        <div className="eyebrow">Gegevens niet beschikbaar</div>
+        <h2 style={{ marginTop: 10 }}>Geen volumedata voor deze retailer</h2>
+        <p className="sub">Rotatie is stuks per winkel per week; deze retailer levert
+          alleen omzet in euro's, geen stuks. Zonder stuks is er geen rotatie
+          en dus geen oordeel per artikel.
+          {" "}<Link to={`/${ctx.retailer}/parser`}>Bekijk het profiel</Link>.</p>
+      </div>
+    );
   if (!data.available)
     return (
       <div className="card empty-card">
