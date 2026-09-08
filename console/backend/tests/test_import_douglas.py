@@ -23,11 +23,13 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from echte_bestanden import MAP, vereist  # noqa: E402
 from engine import douglas_icube  # noqa: E402
 from engine.periods import parse_period  # noqa: E402
 from test_parser_flow import upload  # noqa: E402
 
-MAP = Path("/root/.claude/uploads/54377bab-ac94-5cbf-8750-c3a4d90899e0")
+# Via echte_bestanden, niet via Path.exists(): dat pad ligt onder /root en
+# gooit in GitHub Actions een PermissionError die de hele collectie afbreekt.
 ECHT_SKU = MAP / "7ae00ead-Doulgas_SO_Advanced_SKU_Sell_Out_Net_2026YTD08.xlsx"
 ECHT_WINKEL = MAP / "d3529537-Douglas_SO_Advanced_Store_Sell_Out_Net_2026YTD08.xlsx"
 
@@ -318,8 +320,7 @@ def test_distributiesignaal_zonder_winkelrapport_is_grijs(client):
 
 # ---------------------------------------------------------------- echte bestanden
 
-@pytest.mark.skipif(not (ECHT_SKU.exists() and ECHT_WINKEL.exists()),
-                    reason="echte Douglas-bestanden niet aanwezig")
+@vereist(ECHT_SKU, ECHT_WINKEL)
 def test_echte_bestanden(client):
     r1 = upload(client, "Doulgas_SO_Advanced_SKU_Sell_Out_Net_2026YTD08.xlsx", ECHT_SKU.read_bytes())
     r2 = upload(client, "Douglas_SO_Advanced_Store_Sell_Out_Net_2026YTD08.xlsx", ECHT_WINKEL.read_bytes())
