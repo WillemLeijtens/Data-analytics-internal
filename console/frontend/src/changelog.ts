@@ -5,6 +5,14 @@
 export type ChangelogEntry = { datum: string; titel: string; tekst: string };
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { datum: "2026-09-28", titel: "De app is een stuk sneller",
+    tekst: "Schermen staan nu meestal al klaar als je ze opent: na een import, "
+      + "een instelling of een vinkje rekent de app op de achtergrond alle "
+      + "schermen en de losse merkfilters alvast uit, in plaats van de eerste "
+      + "gebruiker te laten wachten. De conclusie rekent niet meer alles "
+      + "dubbel (5,5 s naar onder de seconde), en een filter dat toch alles "
+      + "kiest, zoals land NL bij Etos, is meteen klaar. Een rondgang langs "
+      + "alle schermen ging in de test van ruim 20 naar 3,5 seconden wachten." },
   { datum: "2026-09-08", titel: "Douglas aangesloten",
     tekst: "Douglas levert per maand twee rapporten die dezelfde omzet "
       + "verdelen: per artikel en per winkel, allebei zonder stuks. De app "

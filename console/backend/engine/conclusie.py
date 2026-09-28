@@ -29,10 +29,10 @@ import json
 import os
 import re
 
-from . import analytics, signals
+from . import analytics, geheugen, signals
 from .contracts import STANDAARD_MODEL, haal_api_key
 
-# Zelfde drempel en zelfde reden als _data_versie in main.py: kleine tabellen
+# Zelfde drempel en zelfde reden als data_versie in engine/geheugen.py: kleine tabellen
 # worden IN PLAATS bijgewerkt, dus tellen en MAX(rowid) zien een gewijzigde
 # drempel of target niet. Die gaan op inhoud mee.
 _KLEIN = 200
@@ -352,8 +352,13 @@ def bevindingen(conn, retailer_id: str) -> dict:
     nodig. Bewust NIET uit de zware reeksen (sparkline, tijdlijn.per_merk,
     trend.series, gestopt[].reeks): daar zit het leeuwendeel van de bytes en
     niets wat een conclusie nodig heeft.
+
+    Via de analysecache (engine/geheugen.py), met dezelfde sleutels als de
+    schermen: wat het dashboard al uitrekende, rekent de conclusie niet
+    opnieuw uit. Eerst rechtstreeks aangeroepen kostte dit op Etos-schaal
+    5,5 s, waarvan de helft dubbel werk.
     """
-    d = analytics.dashboard(conn, retailer_id)
+    d = geheugen.dashboard(conn, retailer_id)
     if not d.get("available"):
         return {"beschikbaar": False, "reden": d.get("reason") or "GEEN PROFIEL",
                 "context": {}, "bevindingen": []}
@@ -364,11 +369,11 @@ def bevindingen(conn, retailer_id: str) -> dict:
     pwoord = "maand" if d.get("periode_type") == "maand" else "week"
     uit: list = []
     _omzet_bevindingen(uit, d, pwoord)
-    art = analytics.articles(conn, retailer_id)
-    _assortiment_bevindingen(uit, analytics.assortment(conn, retailer_id), art)
+    art = geheugen.artikelen(conn, retailer_id)
+    _assortiment_bevindingen(uit, geheugen.assortiment(conn, retailer_id), art)
     _distributie_bevindingen(uit, art)
     _winkel_bevindingen(uit, d, pwoord)
-    _promotie_bevindingen(uit, analytics.promotions(conn, retailer_id), pwoord)
+    _promotie_bevindingen(uit, geheugen.promoties(conn, retailer_id), pwoord)
 
     naam = conn.execute("SELECT naam FROM retailers WHERE id=?", (retailer_id,)).fetchone()
     return {
@@ -391,7 +396,7 @@ def bevindingen(conn, retailer_id: str) -> dict:
 def _retailer_tabellen(conn) -> list[str]:
     """Tabellen met een retailer_id, uit de database gelezen.
 
-    Zelfde reden als bij _data_versie in main.py: een handmatige lijst mist
+    Zelfde reden als bij data_versie in engine/geheugen.py: een handmatige lijst mist
     vroeg of laat een tabel, en dan blijft een conclusie stil actueel heten
     terwijl de cijfers eronder veranderd zijn.
     """

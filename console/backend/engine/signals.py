@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from . import analytics
+from . import analytics, geheugen
 from .periods import period_number, period_year
 from .profile import active_profile, capabilities
 
@@ -103,7 +103,8 @@ def data_signal(conn, retailer_id: str) -> tuple[str, str]:
 
 
 def assortment_signal(conn, retailer_id: str) -> tuple[str, str]:
-    result = analytics.assortment(conn, retailer_id)
+    # Via de cache: dezelfde berekening als het assortimentsscherm.
+    result = geheugen.assortiment(conn, retailer_id)
     if not result.get("available"):
         return "grey", "n.v.t."
     stats = result["stats"]
@@ -139,6 +140,13 @@ def distributie_signal(conn, retailer_id: str) -> tuple[str, str]:
         # De winkelverdeling (bij een gesplitste feed het winkelrapport), en
         # zonder de online-formules: een lege webshopmaand is geen gestopte
         # winkel — dezelfde uitzondering als op het dashboard.
+        #
+        # Bewust NIET via het hele dashboard: het Overzicht wordt bij elke
+        # navigatie opgevraagd, en koud alle dashboards laten uitrekenen
+        # kostte gemeten 4 s in plaats van 1,2 s. Wel met de drempels uit
+        # Instellingen, net als het dashboard — eerder gebruikte dit signaal
+        # de standaarddrempels en kon het Overzicht iets anders melden dan de
+        # stille-winkels-tabel.
         online = set(prof.definition.get("online_banners") or [])
         rows = [r for r in analytics.load_facts(conn, retailer_id, niveau="winkel")
                 if r["banner"] not in online]
@@ -147,7 +155,8 @@ def distributie_signal(conn, retailer_id: str) -> tuple[str, str]:
         if not any(r["winkel_id"] for r in rows):
             return "grey", "Nog geen winkelbestand"
         jaar = max(period_year(r["periode"]) for r in rows)
-        w = analytics.winkelanalyse(rows, caps, jaar)
+        w = analytics.winkelanalyse(rows, caps, jaar,
+                                    analytics.signaal_drempels(conn, retailer_id))
         gestopt = len(w.get("gestopt", []))
         if not gestopt:
             return "green", "Geen winkels stilgevallen"

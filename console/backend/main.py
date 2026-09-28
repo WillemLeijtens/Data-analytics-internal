@@ -12,6 +12,7 @@ import re
 import secrets
 import sys
 import zipfile
+from contextlib import asynccontextmanager
 from ipaddress import ip_address
 from pathlib import Path
 
@@ -25,8 +26,8 @@ from pydantic import BaseModel
 import db
 from engine import (analytics, conclusie as conclusie_mod, contracts, datagaten,
                     importer, projecten, signals, winkelhistorie, winkelniveau)
+from engine import geheugen
 from engine import parser as parser_mod
-from engine.periods import sort_key
 from engine.profile import active_profile, capabilities, get_profiles
 
 # Eén regel per bericht, met tijdstip en niveau — bruikbaar voor
@@ -36,7 +37,17 @@ from engine.profile import active_profile, capabilities, get_profiles
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [console] %(message)s")
 logger = logging.getLogger("console")
 
-app = FastAPI(title="Retailer Console")
+@asynccontextmanager
+async def _levensduur(_app):
+    """De cache alvast vullen, zodat de eerste gebruiker na een herstart of
+    deploy niet op alle berekeningen wacht (zie engine/geheugen.py). Tests
+    starten de app zonder lifespan (TestClient zonder `with`), en
+    CONSOLE_OPWARMEN=0 zet hem uit."""
+    geheugen.start_opwarmer(db.get_conn)
+    yield
+
+
+app = FastAPI(title="Retailer Console", lifespan=_levensduur)
 
 # ---------------------------------------------------------------- access
 # ONE switch decides how the console is protected, so the settings can never
@@ -172,128 +183,39 @@ def _retailer_or_404(conn, retailer_id: str):
 @app.get("/api/overview")
 def overview():
     with db.get_conn() as conn:
-        return _gecachet(("overview",), lambda: signals.overview(conn), conn)
+        return geheugen.overzicht(conn)
 
 
 # ---------------------------------------------------------------- analyses
 
-# De analyses lezen álle feiten van een retailer in geheugen en lopen daar
-# een stuk of tien keer overheen. Gemeten: ~28 ms per 1000 feitregels, dus
-# 104k regels kost bijna drie seconden — en elke schermwissel rekent alles
-# opnieuw. Deze cache haalt de herhaalkosten weg zonder aan de rekenlogica
-# te komen.
-#
-# Invalidatie is bewust op de DATA gebaseerd, niet op een teller die dit
-# proces zelf bijhoudt: seed.py, cleanup_demo.py, cleanup_duplicates.py en
-# tools/ schrijven buiten dit proces om. Een teller zou die missen en
-# stilzwijgend verouderde cijfers blijven tonen — precies het soort stille
-# fout dat deze app juist probeert te vermijden.
-#
-# Ook NIET op de bestandstijd van de database: in WAL-modus raakt élke
-# lezende verbinding het -wal-bestand, waardoor de stempel bij elk verzoek
-# verandert en de cache nooit raakt (gemeten: 0% winst).
-#
-# Wel: een telling per tabel. COUNT(*) én MAX(rowid), want alleen MAX mist
-# een verwijdering (cleanup_duplicates) en alleen COUNT mist een even groot
-# verwijder-en-invoegen (de herlevering van feiten).
-#
-# De tabellen worden UIT DE DATABASE gehaald, niet uit een lijst hier. Een
-# handmatige lijst was de eerste opzet en die miste meteen
-# contract_documents, waardoor een geüpload contract het Overzicht niet
-# ververste. Een tabel vergeten mag geen stille fout kunnen zijn.
-#
-# De datum hoort er ook bij: `is_afgesloten()` bepaalt of de laatste periode
-# nog loopt, en dat verandert met de klok en niet met de data. Zonder de
-# datum zou een dashboard van gisteren vandaag nog "week loopt nog" melden.
-_ANALYSE_CACHE: dict = {}
-_CACHE_MAX = 64
-
-
-# Boven dit aantal rijen wordt een tabel niet op inhoud gehashd. Feitentabellen
-# (honderdduizenden rijen) groeien alleen door inserts, en die ziet de telling
-# hieronder al. Instellingentabellen zijn klein en worden wél IN PLAATS
-# bijgewerkt; die moeten op inhoud vergeleken worden.
-_KLEIN = 200
-
-# Tabellen die GEEN invoer van een analyse zijn en dus helemaal buiten de
-# dataversie blijven — niet op inhoud én niet op rijtelling.
-#
-#   * `anthropic_config`: de API-sleutel. Meedragen in de cachesleutel voegt
-#     niets toe en de analyses hangen er niet van af.
-#   * `retailer_conclusies`: een conclusie is juist een GEVOLG van de
-#     analyses. Telde hij mee, dan zou elke opgeslagen conclusie de cache van
-#     álle analyses van álle retailers leegtrekken — en omdat de tabel van nul
-#     rijen af groeit, is alleen de inhoudshash overslaan niet genoeg: de
-#     rijtelling verandert dan nog steeds (gepind in test_conclusie.py).
-_BUITEN_DATAVERSIE = {"anthropic_config", "retailer_conclusies"}
-
-
-def _data_versie(conn) -> tuple:
-    from engine.periods import _vandaag_nl
-
-    tabellen = [r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' "
-        "AND name NOT LIKE 'sqlite_%' ORDER BY name")
-        if r[0] not in _BUITEN_DATAVERSIE]
-    if not tabellen:
-        return (_vandaag_nl().isoformat(), (), ())
-    vraag = " UNION ALL ".join(
-        f"SELECT COUNT(*), COALESCE(MAX(rowid), 0) FROM {t}" for t in tabellen)
-    tellingen = tuple(tuple(r) for r in conn.execute(vraag))
-
-    # Alleen tellen en MAX(rowid) volstaat niet: een UPDATE op een bestaande
-    # rij verandert geen van beide. Een drempel die van 2 naar 6 gaat zou dan
-    # onzichtbaar blijven en het dashboard oude cijfers blijven tonen — precies
-    # wat er gebeurde toen de winkelsignaal-drempels erbij kwamen. Kleine
-    # tabellen gaan daarom op inhoud mee.
-    inhoud = []
-    for naam, (aantal, _) in zip(tabellen, tellingen):
-        if aantal > _KLEIN:
-            continue
-        inhoud.append((naam, tuple(tuple(r) for r in conn.execute(f"SELECT * FROM {naam}"))))
-    return (_vandaag_nl().isoformat(), tellingen, tuple(inhoud))
-
-
-def _gecachet(sleutel: tuple, bereken, conn):
-    versie = _data_versie(conn)
-    gevonden = _ANALYSE_CACHE.get(sleutel)
-    if gevonden is not None and gevonden[0] == versie:
-        return gevonden[1]
-    uitkomst = bereken()
-    if len(_ANALYSE_CACHE) >= _CACHE_MAX:
-        _ANALYSE_CACHE.clear()          # klein en zeldzaam: geen LRU nodig
-    _ANALYSE_CACHE[sleutel] = (versie, uitkomst)
-    return uitkomst
+# De analysecache staat in engine/geheugen.py: daar kan ook de engine erdoor
+# (de conclusie en het overzicht hergebruiken zo de berekening van het
+# dashboard), met single-flight en een opwarmer. Deze namen blijven hier voor
+# tests en tools die ze al gebruiken.
+_data_versie = geheugen.data_versie
+_gecachet = geheugen.gecachet
 
 
 @app.get("/api/{retailer_id}/dashboard")
 def dashboard(retailer_id: str, merk: str | None = None, land: str | None = None,
               banner: str | None = None, categorie: str | None = None):
-    split = lambda v: v.split(",") if v else None  # noqa: E731
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-        return _gecachet(
-            ("dashboard", retailer_id, merk, land, banner, categorie),
-            lambda: analytics.dashboard(conn, retailer_id, split(merk), split(land),
-                                        split(banner), split(categorie)), conn)
+        return geheugen.dashboard(conn, retailer_id, merk, land, banner, categorie)
 
 
 @app.get("/api/{retailer_id}/artikelen")
 def artikelen(retailer_id: str, merk: str | None = None):
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-        return _gecachet(
-            ("artikelen", retailer_id, merk),
-            lambda: analytics.articles(conn, retailer_id,
-                                       merk.split(",") if merk else None), conn)
+        return geheugen.artikelen(conn, retailer_id, merk)
 
 
 @app.get("/api/{retailer_id}/promoties")
 def promoties(retailer_id: str):
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-        return _gecachet(("promoties", retailer_id),
-                         lambda: analytics.promotions(conn, retailer_id), conn)
+        return geheugen.promoties(conn, retailer_id)
 
 
 class PromoConfirmations(BaseModel):
@@ -368,8 +290,7 @@ def save_promoties(retailer_id: str, body: PromoConfirmations):
 def assortiment(retailer_id: str):
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-        return _gecachet(("assortiment", retailer_id),
-                         lambda: analytics.assortment(conn, retailer_id), conn)
+        return geheugen.assortiment(conn, retailer_id)
 
 
 # ---------------------------------------------------------------- datagaten
@@ -381,16 +302,7 @@ def lees_datagaten(retailer_id: str):
     op te maken is."""
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-
-        def bereken():
-            caps, _ = analytics.retailer_caps(conn, retailer_id)
-            if caps is None:
-                return {"beschikbaar": False, "gaten": []}
-            rows = analytics.load_facts(conn, retailer_id)
-            return {"beschikbaar": True,
-                    "gaten": datagaten.met_oordeel(conn, retailer_id, rows, caps)}
-
-        return _gecachet(("datagaten", retailer_id), bereken, conn)
+        return geheugen.datagaten(conn, retailer_id)
 
 
 @app.get("/api/{retailer_id}/conclusie")
@@ -402,8 +314,7 @@ def lees_conclusie(retailer_id: str):
     bij, want die veranderen buiten de dataversie om."""
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-        bev = _gecachet(("conclusie-bevindingen", retailer_id),
-                        lambda: conclusie_mod.bevindingen(conn, retailer_id), conn)
+        bev = geheugen.bevindingen(conn, retailer_id)
         return conclusie_mod.lees(conn, retailer_id, bev)
 
 
@@ -706,56 +617,71 @@ def list_imports(retailer_id: str | None = None, limit: int = 50):
 def import_status(retailer_id: str | None = None):
     """Feed freshness per retailer: per merk (feed) the newest period."""
     with db.get_conn() as conn:
-        retailers = conn.execute("SELECT * FROM retailers ORDER BY aangesloten DESC, rowid").fetchall()
-        out = []
-        for r in retailers:
-            if retailer_id and r["id"] != retailer_id:
-                continue
-            prof = active_profile(conn, r["id"])
-            caps = analytics.retailer_caps(conn, r["id"])[0] if prof else None
-            statuses = ("ingelezen", "test") if prof and prof.status == "test" else ("ingelezen",)
-            rows = conn.execute(
-                "SELECT f.merk, f.land, f.banner, f.niveau, f.periode, im.created_at AS ts "
-                "FROM sellout_facts f JOIN imports im ON im.id=f.import_id "
-                f"AND im.status IN ({','.join('?' * len(statuses))}) WHERE f.retailer_id=?",
-                (*statuses, r["id"])).fetchall()
-            # Per feed de LAATSTE periode tonen. De oude query groepeerde op
-            # merk maar liet een willekeurige periode zien met het totaal
-            # aantal rijen over alle periodes erbij — dat las als "actueel"
-            # terwijl het over de hele historie ging.
-            # Ook per niveau: bij een gesplitste feed zijn het artikel- en
-            # het winkelrapport twee leveringen, en een achterlopend
-            # winkelrapport hoort hier als eigen regel te staan.
-            grouped: dict[tuple, list] = {}
-            for row in rows:
-                key = (row["merk"], row["land"],
-                       row["banner"] if caps and caps["banner"] else None,
-                       row["niveau"])
-                grouped.setdefault(key, []).append(row)
-            feeds = []
-            for (merk, land, banner, niveau), feed_rows in sorted(
-                    grouped.items(), key=lambda kv: tuple(x or "" for x in kv[0])):
-                latest = max((row["periode"] for row in feed_rows), key=sort_key)
-                latest_rows = [row for row in feed_rows if row["periode"] == latest]
-                scope = "per winkel" if caps and caps["winkel"] and not caps["banner"] else \
-                    "/".join(x for x in (land, banner) if x) or "—"
-                if niveau:
-                    scope = f"{scope} · {niveau}rapport"
-                # Versheid per feed, niet alleen per retailer: één merk dat
-                # weken achterloopt hoort hier rood te staan, ook als de rest
-                # actueel is. Zelfde drempels als signals.data_signal.
-                achter = signals.periods_behind(latest, caps["periode"]) if caps else 0
-                feeds.append({"feed": merk or "—", "scope": scope, "periode": latest,
-                              "ts": max(row["ts"] for row in latest_rows),
-                              "rijen": len(latest_rows), "achter": achter,
-                              "signaal": ("green" if achter <= 1 else
-                                          "orange" if achter <= 4 else "red")})
-            out.append({"retailer": r["id"], "naam": r["naam"],
-                        "profiel": {"versie": prof.version, "status": prof.status} if prof else None,
-                        "periode_type": caps["periode"] if caps else None,
-                        "feeds": feeds,
-                        "signaal": signals.data_signal(conn, r["id"])[0]})
-        return out
+        # Gecachet: de pagina opent bij elk bezoek, en alles hier hangt
+        # alleen af van de data en de datum (beide in de dataversie).
+        return geheugen.gecachet(("import-status", retailer_id),
+                                 lambda: _import_status(conn, retailer_id), conn)
+
+
+def _import_status(conn, retailer_id: str | None) -> list:
+    retailers = conn.execute("SELECT * FROM retailers ORDER BY aangesloten DESC, rowid").fetchall()
+    out = []
+    for r in retailers:
+        if retailer_id and r["id"] != retailer_id:
+            continue
+        prof = active_profile(conn, r["id"])
+        caps = analytics.retailer_caps(conn, r["id"])[0] if prof else None
+        statuses = ("ingelezen", "test") if prof and prof.status == "test" else ("ingelezen",)
+        # Per feed de LAATSTE periode tonen, niet een willekeurige met het
+        # totaal over de hele historie erbij. Ook per niveau: bij een
+        # gesplitste feed zijn het artikel- en het winkelrapport twee
+        # leveringen, en een achterlopend winkelrapport hoort hier als eigen
+        # regel te staan.
+        #
+        # In SQL gegroepeerd. Eerst haalde dit álle feitregels naar Python
+        # (gemeten 0,4 s bij elk bezoek aan Import status op 120k regels).
+        # MAX(periode) mag lexicografisch: het formaat ('2026-W07',
+        # '2026-07') heeft een vaste breedte en loopt gelijk met sort_key.
+        st = ",".join("?" * len(statuses))
+        met_banner = 1 if caps and caps["banner"] else 0
+        groepen = conn.execute(
+            "SELECT f.merk, f.land, CASE WHEN ? THEN f.banner END AS banner, f.niveau, "
+            "MAX(f.periode) AS periode FROM sellout_facts f "
+            f"JOIN imports im ON im.id=f.import_id AND im.status IN ({st}) "
+            "WHERE f.retailer_id=? GROUP BY 1, 2, 3, 4",
+            (met_banner, *statuses, r["id"])).fetchall()
+        feeds = []
+        for g in sorted(groepen, key=lambda g: tuple(
+                x or "" for x in (g["merk"], g["land"], g["banner"], g["niveau"]))):
+            merk, land, banner, niveau, latest = (g["merk"], g["land"], g["banner"],
+                                                  g["niveau"], g["periode"])
+            # Alleen de regels van die ene periode: via de index op
+            # (retailer, periode_type, periode, merk).
+            laatst = conn.execute(
+                "SELECT COUNT(*) AS rijen, MAX(im.created_at) AS ts FROM sellout_facts f "
+                f"JOIN imports im ON im.id=f.import_id AND im.status IN ({st}) "
+                "WHERE f.retailer_id=? AND f.periode=? AND f.merk IS ? AND f.land IS ? "
+                "AND (? = 0 OR f.banner IS ?) AND f.niveau IS ?",
+                (*statuses, r["id"], latest, merk, land, met_banner, banner,
+                 niveau)).fetchone()
+            scope = "per winkel" if caps and caps["winkel"] and not caps["banner"] else \
+                "/".join(x for x in (land, banner) if x) or "—"
+            if niveau:
+                scope = f"{scope} · {niveau}rapport"
+            # Versheid per feed, niet alleen per retailer: één merk dat
+            # weken achterloopt hoort hier rood te staan, ook als de rest
+            # actueel is. Zelfde drempels als signals.data_signal.
+            achter = signals.periods_behind(latest, caps["periode"]) if caps else 0
+            feeds.append({"feed": merk or "—", "scope": scope, "periode": latest,
+                          "ts": laatst["ts"], "rijen": laatst["rijen"], "achter": achter,
+                          "signaal": ("green" if achter <= 1 else
+                                      "orange" if achter <= 4 else "red")})
+        out.append({"retailer": r["id"], "naam": r["naam"],
+                    "profiel": {"versie": prof.version, "status": prof.status} if prof else None,
+                    "periode_type": caps["periode"] if caps else None,
+                    "feeds": feeds,
+                    "signaal": signals.data_signal(conn, r["id"])[0]})
+    return out
 
 
 # ---------------------------------------------------------------- parser
@@ -820,65 +746,73 @@ def _getelde_winkels(conn, retailer_id: str) -> list[dict]:
 
 @app.get("/api/{retailer_id}/instellingen")
 def get_settings(retailer_id: str):
+    # Via de cache: de feed-tellingen hieronder (artikelen en winkels per
+    # scope) lopen over alle feitregels, gemeten 0,2 s per bezoek op
+    # Etos-schaal. Instellingen zelf zijn kleine tabellen en zitten op inhoud
+    # in de dataversie, dus een opgeslagen wijziging maakt dit meteen vers.
     with db.get_conn() as conn:
         _retailer_or_404(conn, retailer_id)
-        prof = active_profile(conn, retailer_id)
-        # Aan de feiten getoetst: met de ruwe profielvlag zou het scherm het
-        # handmatige winkelaantal blokkeren ("uit feed") terwijl het
-        # dashboard zonder winkelbestand juist op dat aantal rekent.
-        caps = analytics.retailer_caps(conn, retailer_id)[0] if prof else None
-        return {
-            "capabilities": caps,
-            # Welke merk/land/banner-combinaties er daadwerkelijk in de feed
-            # zitten: het instellingenscherm biedt daarvoor kant-en-klare
-            # "rij toevoegen"-knoppen, zodat een verse installatie niet
-            # doodloopt op een lege tabel.
-            "feed_combinaties": [dict(r) for r in conn.execute(
-                "SELECT DISTINCT merk, land, banner FROM sellout_facts "
-                "WHERE retailer_id=? ORDER BY merk, land, banner", (retailer_id,))],
-            "winkels_targets": [dict(r) for r in conn.execute(
-                "SELECT * FROM retailer_settings WHERE retailer_id=? ORDER BY merk, land, banner",
-                (retailer_id,))],
-            # De artikelen die deze retailer per merk-land(-formule) levert,
-            # met het eventueel ingestelde winkelaantal. Uit de feed, niet
-            # handmatig: een artikel dat niet geleverd wordt kan ook geen
-            # winkelaantal hebben.
-            "feed_artikelen": [dict(r) for r in conn.execute(
-                "SELECT merk, land, banner, artikel_ean, "
-                "       MAX(artikel_naam) AS artikel_naam, "
-                "       MAX(periode) AS laatste_periode "
-                "  FROM sellout_facts WHERE retailer_id=? AND artikel_ean IS NOT NULL "
-                " GROUP BY merk, land, banner, artikel_ean "
-                " ORDER BY merk, land, banner, artikel_naam", (retailer_id,))],
-            # Winkelaantallen die de app zelf kan TELLEN, omdat de feed
-            # winkelniveau levert (ICI, en Etos zodra de export Store/City
-            # bevat). Dan hoeft niemand ze in te vullen — en belangrijker:
-            # een handmatig getal dat afwijkt van de telling zou stilletjes
-            # winnen in schermen die het wél gebruiken. Het jaar staat erbij,
-            # want dit is het aantal winkels MET omzet in dat jaar.
-            "feed_winkels": _getelde_winkels(conn, retailer_id),
-            # Vanaf hoeveel lege periodes een winkel "let op" is en vanaf
-            # hoeveel "gestopt". In PERIODES, dus bij een weekfeed betekent 2
-            # iets heel anders dan bij een maandfeed.
-            "winkelsignaal": dict(zip(("letop_vanaf", "gestopt_vanaf"),
-                                      analytics.signaal_drempels(conn, retailer_id))),
-            "artikel_winkels": [dict(r) for r in conn.execute(
-                "SELECT merk, land, banner, artikel_ean, aantal_winkels "
-                "FROM artikel_winkelaantallen WHERE retailer_id=?", (retailer_id,))],
-            # Elke wijziging van een winkelaantal, zodat het scherm kan tonen
-            # dat een merk in minder winkels ligt dan eerst.
-            "winkels_historie": [dict(r) for r in conn.execute(
-                "SELECT id, merk, land, banner, aantal_winkels, geldig_vanaf, gemeten_op "
-                "FROM winkelaantal_historie WHERE retailer_id=? "
-                "ORDER BY merk, land, banner, geldig_vanaf", (retailer_id,))],
-            "rotatie_targets": [dict(r) for r in conn.execute(
-                "SELECT * FROM rotatie_targets WHERE retailer_id=? ORDER BY merk", (retailer_id,))],
-            "mail_rules": [dict(r) for r in conn.execute(
-                "SELECT * FROM mail_rules WHERE retailer_id=? ORDER BY id", (retailer_id,))],
-            "documenten": [_contract_doc(r) for r in conn.execute(
-                "SELECT * FROM contract_documents WHERE retailer_id=? ORDER BY naam", (retailer_id,))],
-        }
+        return geheugen.gecachet(("instellingen", retailer_id),
+                                 lambda: _instellingen(conn, retailer_id), conn)
 
+
+def _instellingen(conn, retailer_id: str) -> dict:
+    prof = active_profile(conn, retailer_id)
+    # Aan de feiten getoetst: met de ruwe profielvlag zou het scherm het
+    # handmatige winkelaantal blokkeren ("uit feed") terwijl het
+    # dashboard zonder winkelbestand juist op dat aantal rekent.
+    caps = analytics.retailer_caps(conn, retailer_id)[0] if prof else None
+    return {
+        "capabilities": caps,
+        # Welke merk/land/banner-combinaties er daadwerkelijk in de feed
+        # zitten: het instellingenscherm biedt daarvoor kant-en-klare
+        # "rij toevoegen"-knoppen, zodat een verse installatie niet
+        # doodloopt op een lege tabel.
+        "feed_combinaties": [dict(r) for r in conn.execute(
+            "SELECT DISTINCT merk, land, banner FROM sellout_facts "
+            "WHERE retailer_id=? ORDER BY merk, land, banner", (retailer_id,))],
+        "winkels_targets": [dict(r) for r in conn.execute(
+            "SELECT * FROM retailer_settings WHERE retailer_id=? ORDER BY merk, land, banner",
+            (retailer_id,))],
+        # De artikelen die deze retailer per merk-land(-formule) levert,
+        # met het eventueel ingestelde winkelaantal. Uit de feed, niet
+        # handmatig: een artikel dat niet geleverd wordt kan ook geen
+        # winkelaantal hebben.
+        "feed_artikelen": [dict(r) for r in conn.execute(
+            "SELECT merk, land, banner, artikel_ean, "
+            "       MAX(artikel_naam) AS artikel_naam, "
+            "       MAX(periode) AS laatste_periode "
+            "  FROM sellout_facts WHERE retailer_id=? AND artikel_ean IS NOT NULL "
+            " GROUP BY merk, land, banner, artikel_ean "
+            " ORDER BY merk, land, banner, artikel_naam", (retailer_id,))],
+        # Winkelaantallen die de app zelf kan TELLEN, omdat de feed
+        # winkelniveau levert (ICI, en Etos zodra de export Store/City
+        # bevat). Dan hoeft niemand ze in te vullen — en belangrijker:
+        # een handmatig getal dat afwijkt van de telling zou stilletjes
+        # winnen in schermen die het wél gebruiken. Het jaar staat erbij,
+        # want dit is het aantal winkels MET omzet in dat jaar.
+        "feed_winkels": _getelde_winkels(conn, retailer_id),
+        # Vanaf hoeveel lege periodes een winkel "let op" is en vanaf
+        # hoeveel "gestopt". In PERIODES, dus bij een weekfeed betekent 2
+        # iets heel anders dan bij een maandfeed.
+        "winkelsignaal": dict(zip(("letop_vanaf", "gestopt_vanaf"),
+                                  analytics.signaal_drempels(conn, retailer_id))),
+        "artikel_winkels": [dict(r) for r in conn.execute(
+            "SELECT merk, land, banner, artikel_ean, aantal_winkels "
+            "FROM artikel_winkelaantallen WHERE retailer_id=?", (retailer_id,))],
+        # Elke wijziging van een winkelaantal, zodat het scherm kan tonen
+        # dat een merk in minder winkels ligt dan eerst.
+        "winkels_historie": [dict(r) for r in conn.execute(
+            "SELECT id, merk, land, banner, aantal_winkels, geldig_vanaf, gemeten_op "
+            "FROM winkelaantal_historie WHERE retailer_id=? "
+            "ORDER BY merk, land, banner, geldig_vanaf", (retailer_id,))],
+        "rotatie_targets": [dict(r) for r in conn.execute(
+            "SELECT * FROM rotatie_targets WHERE retailer_id=? ORDER BY merk", (retailer_id,))],
+        "mail_rules": [dict(r) for r in conn.execute(
+            "SELECT * FROM mail_rules WHERE retailer_id=? ORDER BY id", (retailer_id,))],
+        "documenten": [_contract_doc(r) for r in conn.execute(
+            "SELECT * FROM contract_documents WHERE retailer_id=? ORDER BY naam", (retailer_id,))],
+    }
 
 class SettingsBody(BaseModel):
     winkels_targets: list[dict] | None = None   # [{merk, land, banner, aantal_winkels, target_per_winkel, niveau}]
@@ -1420,6 +1354,20 @@ def healthz():
 # ---------------------------------------------------------------- frontend
 # In the container the built SPA sits in backend/static; in local dev it is
 # absent and Vite serves the frontend on :5173 instead.
+
+@app.middleware("http")
+async def opwarmen_na_schrijven(request, call_next):
+    """Na elke geslaagde schrijfactie op /api/ is (een deel van) de cache
+    koud; de opwarmer rekent de schermen dan alvast opnieuw uit. Eén
+    middleware in plaats van een por per endpoint: een nieuw endpoint kan
+    niet vergeten worden, en een por zonder echte wijziging kost alleen één
+    versiecheck — de opwarmer ziet dan dezelfde versie en doet niets."""
+    response = await call_next(request)
+    if (request.method in ("POST", "PUT", "PATCH", "DELETE")
+            and request.url.path.startswith("/api/") and response.status_code < 400):
+        geheugen.por()
+    return response
+
 
 @app.middleware("http")
 async def cache_headers(request, call_next):
