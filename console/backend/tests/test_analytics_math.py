@@ -663,7 +663,8 @@ def test_dashboard_markeert_lopende_periode(client, monkeypatch):
     # geen van beide maar het GEDRAG van is_afgesloten — iets wat in
     # productie alleen bij een herstart gebeurt. Cache leegmaken hoort hier
     # dus bij het nabootsen van de klok, niet bij het omzeilen van een bug.
-    sys.modules["main"]._ANALYSE_CACHE.clear()
+    from engine import geheugen
+    geheugen.leeg()
     dash = client.get("/api/kruidvat/dashboard").json()
     assert dash["laatste_periode"] == "2026-W32"
     assert dash["laatste_periode_compleet"] is False

@@ -78,7 +78,7 @@ def heeft_winkelslice(conn, retailer_id: str) -> bool:
 
 
 def load_facts(conn, retailer_id: str, merk=None, land=None, banner=None,
-               niveau: str = "artikel"):
+               niveau: str = "artikel", categorie=None):
     """De feiten van een retailer, in ÉÉN decompositie.
 
     `niveau` kiest welke slice van een gesplitste feed meekomt, náást de
@@ -96,12 +96,29 @@ def load_facts(conn, retailer_id: str, merk=None, land=None, banner=None,
     prof = active_profile(conn, retailer_id)
     include_test = bool(prof and prof.status == "test")
     conds, params = ["AND (f.niveau IS NULL OR f.niveau = ?)"], [niveau]
-    for col, vals in (("merk", merk), ("land", land), ("banner", banner)):
+    for col, vals in (("merk", merk), ("land", land), ("banner", banner),
+                      ("categorie", categorie)):
         if vals:
             conds.append(f"AND f.{col} IN ({','.join('?' * len(vals))})")
             params.extend(vals)
     return _facts(conn, retailer_id, include_test=include_test,
                   extra=" ".join(conds), params=tuple(params))
+
+
+def filter_waarden(conn, retailer_id: str, niveau: str = "artikel") -> list[tuple]:
+    """De voorkomende (merk, land, banner, categorie)-combinaties, uit
+    dezelfde rijen als `load_facts` (zelfde imports, zelfde niveau), maar
+    zonder de feitregels zelf op te halen: 38 ms tegen 280 ms op
+    Etos-schaal. Voor de filterlijsten van een gefilterd dashboard."""
+    if niveau not in NIVEAUS:
+        raise ValueError(f"onbekend niveau {niveau!r}")
+    prof = active_profile(conn, retailer_id)
+    statuses = "('ingelezen','test')" if prof and prof.status == "test" else "('ingelezen')"
+    return [tuple(r) for r in conn.execute(
+        "SELECT DISTINCT f.merk, f.land, f.banner, f.categorie FROM sellout_facts f "
+        f"JOIN imports im ON im.id = f.import_id AND im.status IN {statuses} "
+        "WHERE f.retailer_id = ? AND (f.niveau IS NULL OR f.niveau = ?)",
+        (retailer_id, niveau))]
 
 
 def manual_store_settings(conn, retailer_id: str) -> list[dict]:
@@ -134,10 +151,17 @@ def stores_with_revenue(rows, jaar: int | None) -> set:
     hele jaar niets verkochten. Die meetellen in de noemer drukt de
     gemiddelde omzet per winkel kunstmatig omlaag. Het jaartotaal is de
     maatstaf, niet de losse maand: een winkel die in juli toevallig niets
-    verkocht hoort wél bij het winkelbestand van dat jaar."""
+    verkocht hoort wél bij het winkelbestand van dat jaar.
+
+    Het jaarfilter als voorvoegsel van de periode ('2026-W07', '2026-07') en
+    als eerste toets: dit loopt een dozijn keer per dashboard over alle
+    feitregels, en de functieaanroep per regel was het duurste deel
+    (gemeten 62 -> 27 ms per keer op Etos-schaal)."""
+    if jaar is None:
+        return {r["winkel_id"] for r in rows if r["winkel_id"] and r["omzet"]}
+    voorvoegsel = f"{jaar}-"
     return {r["winkel_id"] for r in rows
-            if r["winkel_id"] and r["omzet"]
-            and (jaar is None or period_year(r["periode"]) == jaar)}
+            if r["periode"].startswith(voorvoegsel) and r["winkel_id"] and r["omzet"]}
 
 
 def store_count(conn, retailer_id: str, caps: dict, rows, peil: str | None,
@@ -480,6 +504,10 @@ def winkelanalyse(rows, caps: dict, jaar: int,
 
 # ---------------------------------------------------------------- dashboard
 
+# Positie van een uitsplitsingsdimensie in de scopesleutel (merk, land, formule).
+_DIM_INDEX = {"merk": 0, "land": 1, "banner": 2}
+
+
 def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
              categorie=None) -> dict:
     caps, base_labels = retailer_caps(conn, retailer_id)
@@ -522,28 +550,28 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
         per winkel rekent."""
         return [r for r in rs if r["banner"] not in online] if online else rs
 
-    # Eén query; het merk/land/banner/categorie-filter is een Python-subset
-    # zodat de filterlijsten (uit all_rows) en de cijfers nooit uiteen
-    # kunnen lopen.
-    all_rows = load_facts(conn, retailer_id, niveau=niveau)
-    rows = [r for r in all_rows
-            if (not merk or r["merk"] in merk)
-            and (not land or r["land"] in land)
-            and (not banner or r["banner"] in banner)
-            and (not categorie or r["categorie"] in categorie)]
+    # Met een filter haalt SQL alleen de gefilterde rijen op (een merkchip
+    # bij Etos: 31k in plaats van 91k regels), en komen de filterlijsten uit
+    # een DISTINCT over dezelfde rijen — lijsten en cijfers lopen zo nog
+    # steeds nooit uiteen. Zonder filter volstaat één query voor beide.
+    if merk or land or banner or categorie:
+        rows = load_facts(conn, retailer_id, merk, land, banner, niveau=niveau,
+                          categorie=categorie)
+        combinaties = filter_waarden(conn, retailer_id, niveau)
+    else:
+        rows = load_facts(conn, retailer_id, niveau=niveau)
+        combinaties = {(r["merk"], r["land"], r["banner"], r["categorie"]) for r in rows}
     filters = {
-        "merk": sorted({r["merk"] for r in all_rows if r["merk"]}),
-        "land": sorted({r["land"] for r in all_rows if r["land"]}),
-        "banner": sorted({r["banner"] for r in all_rows if r["banner"]}),
-        # Alleen gevuld als de feed een categorie levert (vandaag: Etos met
-        # de Class-kolom) — anders verschijnt er nergens een zinloze knop.
-        "categorie": sorted({r["categorie"] for r in all_rows if r["categorie"]}),
+        dim: sorted({c[i] for c in combinaties if c[i]})
+        # categorie is alleen gevuld als de feed er een levert (vandaag: Etos
+        # met de Class-kolom) — anders verschijnt er nergens een zinloze knop.
+        for i, dim in enumerate(("merk", "land", "banner", "categorie"))
     }
     if not rows:
         # gefilterd=True: er ís data, alleen niet voor deze filterkeuze. De
         # filters gaan mee zodat het scherm de chips kan blijven tonen —
         # anders zit de gebruiker vast in "Nog geen data geïmporteerd".
-        return {"available": True, "empty": True, "gefilterd": bool(all_rows),
+        return {"available": True, "empty": True, "gefilterd": bool(combinaties),
                 "filters": filters, "resolution": res.as_dict(),
                 "labels": labels, "capabilities": caps}
     settings = manual_store_settings(conn, retailer_id)
@@ -569,7 +597,16 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
             return False
         return True
 
-    def targets_voor(rs) -> dict:
+    # Eén keer groeperen per merk x land x formule. targets_voor wordt per
+    # uitsplitsingsregel, per merk en voor het totaal aangeroepen (tien keer
+    # op een gewoon dashboard); elke aanroep groepeerde eerst alle rijen
+    # opnieuw — gemeten een kwart seconde per koud Etos-dashboard.
+    rijen_per_scope: dict[tuple, list] = defaultdict(list)
+    for r in rows:
+        rijen_per_scope[(r["merk"], r["land"], r["banner"])].append(r)
+    heeft_targets = any(s_.get("target_per_winkel") for s_ in settings)
+
+    def targets_voor(past=lambda scope: True) -> dict:
         """Het target per winkel voor een groep rijen: (som, per merk, zonder).
 
         Targets staan in Instellingen per merk x land x formule (EUR per
@@ -592,12 +629,14 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
           elkaar, dus de norm voor dat filiaal is de som van de merknormen.
 
         Merken zonder ingesteld target komen apart terug; ze stil overslaan
-        zou een te lage lat opleveren die er hard uitziet."""
-        per_scope: dict = defaultdict(list)
-        for r in rs:
-            per_scope[(r["merk"], r["land"], r["banner"])].append(r)
+        zou een te lage lat opleveren die er hard uitziet.
+
+        `past` kiest de scopes (merk, land, formule) waar het om gaat — alle
+        voor het totaal, één merk voor een merkregel, één land voor een
+        landregel."""
+        per_scope = {k: v for k, v in rijen_per_scope.items() if past(k)}
         gewogen: dict = defaultdict(lambda: {"som": 0.0, "winkels": 0, "max": 0.0})
-        for sleutel, srows in per_scope.items():
+        for sleutel, srows in (per_scope.items() if heeft_targets else ()):
             merk, land, banner = sleutel
             t = max((s_["target_per_winkel"] for s_ in settings
                      if s_.get("target_per_winkel") and scope_target(s_, merk, land, banner)),
@@ -611,7 +650,7 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
             g["max"] = max(g["max"], t)
         per_merk = {m: round(g["som"] / g["winkels"], 2) if g["winkels"] else g["max"]
                     for m, g in gewogen.items()}
-        merken = sorted({r["merk"] for r in rs}, key=lambda x: (x is None, x or ""))
+        merken = sorted({k[0] for k in per_scope}, key=lambda x: (x is None, x or ""))
         som = sum(per_merk[m] for m in merken if per_merk.get(m))
         return {"target": round(som, 2) or None,
                 "target_merken": [{"merk": m or "ONBEKEND", "target": per_merk[m]}
@@ -680,7 +719,11 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
             # merken in dat land al bij elkaar op, dus hoort de lat waar dat
             # tegen afgezet wordt daar net zo bij.
             item = {"label": sleutel, "winkels": n, "schatting": not uit_feiten,
-                    "waarde": (rev / n) if n else None, **targets_voor(brows)}
+                    "waarde": (rev / n) if n else None,
+                    # Dezelfde groepering als hierboven: dim-waarde of
+                    # ONBEKEND, op de juiste positie in de scope.
+                    **targets_voor(lambda k, i=_DIM_INDEX[dim], w=sleutel:
+                                   (k[i] or "ONBEKEND") == w)}
             if dim == "merk":
                 item["merk"] = sleutel
             out.append(item)
@@ -991,7 +1034,9 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
     per_merk_reeks = []
     for m in sorted({r["merk"] for r in rows}, key=lambda x: (x is None, x or "")):
         rs = [r for r in rows if r["merk"] == m]
-        per_merk_reeks.append({"merk": m or "ONBEKEND", **targets_voor(rs), **reeks(fys(rs))})
+        per_merk_reeks.append({"merk": m or "ONBEKEND",
+                               **targets_voor(lambda k, m=m: k[0] == m),
+                               **reeks(fys(rs))})
     totaal_reeks = reeks(fys(rows))
 
     # Het opgetelde target voor de TOTAAL-stand. Eén winkel voert de merken
@@ -1004,7 +1049,7 @@ def dashboard(conn, retailer_id: str, merk=None, land=None, banner=None,
     # overslaan zou een te lage lat opleveren die er hard uitziet: de
     # totaallijn zou een target halen dat de helft van het assortiment niet
     # eens meetelt.
-    totaal_target = targets_voor(rows)
+    totaal_target = targets_voor()
     totaal_reeks.update(totaal_target)
 
     def decomponeer(serie: dict, nu_i: int, toen_i: int) -> dict | None:
@@ -1518,7 +1563,11 @@ def promo_markers(conn, retailer_id: str, rows, caps: dict) -> list[dict]:
 
     zichtbaar = {_promo_scope_key(caps)(r) for r in rows}
     uit = []
-    for u in promotions(conn, retailer_id).get("uplift", []):
+    # Via de cache: dezelfde berekening als het promotiescherm, en de
+    # conclusie vraagt hem ook op. Rechtstreeks aangeroepen rekende elk
+    # koud dashboard de hele prijsindex opnieuw uit.
+    from . import geheugen
+    for u in geheugen.promoties(conn, retailer_id).get("uplift", []):
         scope = (u["merk"], u["land"], u["banner"] if caps.get("banner") else None)
         if scope not in zichtbaar:
             continue

@@ -624,7 +624,7 @@ delist-kandidaat.
 
 Een wijziging in Instellingen werkt direct door: `retailer_settings` en
 `artikel_winkelaantallen` zijn kleine tabellen en gaan op inhoud mee in de
-dataversie van de analysecache (`main._data_versie`), dus de analyse wordt
+dataversie van de analysecache (`engine/geheugen.data_versie`), dus de analyse wordt
 opnieuw gerekend zodra er iets verandert.
 
 ### Bevestigen van acties
@@ -937,6 +937,43 @@ die toegang ooit breder wordt dan het kleine team waarvoor deze app is
 gebouwd (zie ook de sectie over autorisatie hierboven — dezelfde
 overweging geldt hier).
 
+### Prestaties: de analysecache en de opwarmer
+
+Alle analyses (dashboard, artikelen, promoties, assortiment, datagaten,
+conclusie, overzicht, instellingen, import-status) gaan door één cache in
+`engine/geheugen.py`, ongeldig zodra de data verandert (tellingen per tabel,
+kleine tabellen op inhoud, de datum en het databasepad). Drie dingen maken
+dat die cache in de praktijk warm is:
+
+* **Eén berekening, overal hergebruikt.** De conclusie en het overzicht
+  vragen dashboard, artikelen, promoties en assortiment op via dezelfde
+  sleutels als de schermen, in plaats van alles opnieuw uit te rekenen.
+  Twee gelijktijdige verzoeken om hetzelfde koude scherm wachten op één
+  berekening (single-flight). Bij meer dan 256 sleutels valt de langst niet
+  gebruikte eruit (LRU), niet alles tegelijk.
+* **De opwarmer.** Een achtergrondthread rekent na het opstarten, na elke
+  schrijfactie in de app en elke vijf minuten als de data veranderd is
+  (middernacht, `tools/`) alle ongefilterde schermen van elke retailer uit,
+  en daarna de losse filterchips (één merk, land of formule; hoogstens 12
+  per retailer). Uit te zetten met `CONSOLE_OPWARMEN=0`.
+* **Filterchips.** Een filter dat alle voorkomende waarden kiest (`land=NL`
+  bij Etos) is hetzelfde dashboard als ongefilterd; de chipvolgorde telt
+  niet. Een echt filter laadt alleen de gefilterde rijen uit SQL.
+
+Gemeten op een database op productieschaal (±120k feitregels), een sessie
+van 45 verzoeken langs alle schermen:
+
+| | voor | na, koud | na, opgewarmd |
+|---|---|---|---|
+| hele sessie (wachttijd) | 20,5 s | 14,5 s | 3,5 s |
+| Etos conclusie | 5,5 s | 0,8 s | 19 ms |
+| Etos dashboard, één merk | 0,9 s | 0,9 s | 20 ms |
+| Etos dashboard, `land=NL` | 2,4 s | 20 ms | 20 ms |
+| import-status | 0,38 s | 0,3 s | < 20 ms |
+
+Bewust geen cache van de ruwe feitregels: +108 MB voor 120k regels in een
+container van 1 GB, en de data groeit elke week.
+
 ## Conclusie per retailer
 
 Het scherm **Conclusie** (Analyses) vat per retailer samen wat de cijfers
@@ -965,12 +1002,12 @@ conclusie narekenbaar blijft óók nadat de data veranderd is.
 `vingerafdruk()` legt de staat van de data van déze retailer vast, zónder
 datum erin. Wijkt de huidige vingerafdruk af van die bij het schrijven, dan is
 de tekst verouderd en werkt het scherm hem bij zodra je hem opent. Bewust niet
-opgehangen aan de analysecache-versie uit `main.py`: die bevat de datum van
+opgehangen aan de analysecache-versie uit `engine/geheugen.py`: die bevat de datum van
 vandaag, en dan zou élke nacht elke conclusie van elke retailer herschreven
 worden zonder dat er iets veranderd is. En bewust per retailer: een import
 voor Kruidvat veroudert de conclusie van Etos niet.
 
-`retailer_conclusies` staat in `_BUITEN_DATAVERSIE` (`main.py`). Een conclusie
+`retailer_conclusies` staat in `BUITEN_DATAVERSIE` (`engine/geheugen.py`). Een conclusie
 is een *gevolg* van de analyses; telde de tabel mee in de dataversie, dan zou
 elke opgeslagen conclusie de cache van álle analyses van álle retailers
 leegtrekken.
